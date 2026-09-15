@@ -1,0 +1,321 @@
+import shutil
+from socket import timeout
+from base_methods import *
+
+from sys import argv
+import zipfile
+from shutil import rmtree
+
+import os
+import time
+import urllib.request
+import urllib.error
+import http.client
+from math import floor
+
+
+def downloader(file_url, file_path, file_name, skip=False, max_attempts=10):
+
+    file_url = furl(file_url)
+
+    full_path = os.path.join(file_path, file_name)
+    os.makedirs(file_path, exist_ok=True)
+
+    print(f"Downloading {file_name}...")
+    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
+    attempt = 0
+    chunk_size = 16384
+    timeout = 5
+
+    while attempt < max_attempts:
+        try:
+            total_length = None
+
+            # 1. Быстро узнаем размер файла через HEAD-запрос (без скачивания тела)
+            try:
+                head_req = urllib.request.Request(file_url, headers=headers, method='HEAD')
+                with urllib.request.urlopen(head_req, timeout=timeout) as resp:
+                    total_length = resp.info().get('Content-Length')
+                    if total_length is not None:
+                        total_length = int(total_length)
+            except Exception:
+                total_length = -1
+
+            # 2. Проверяем, скачан ли уже файл полностью
+            if skip and total_length and os.path.exists(full_path):
+                if os.path.getsize(full_path) == total_length:
+                    print(f"\nFile {file_name} already exists and is complete. Skipping.")
+                    return full_path
+
+            # 3. Настраиваем докачку (Range Request)
+            downloaded = 0
+            write_mode = 'wb'
+            req_headers = headers.copy()
+
+            if skip and os.path.exists(full_path):
+                downloaded = os.path.getsize(full_path)
+                if downloaded > 0:
+                    req_headers['Range'] = f'bytes={downloaded}-'
+                    write_mode = 'ab'
+
+            req = urllib.request.Request(file_url, headers=req_headers)
+
+            # 4. Основной запрос на получение данных
+            with urllib.request.urlopen(req, timeout=timeout) as response:
+                status = response.getcode()
+
+                # Защита от повреждения: если сервер проигнорировал Range и вернул 200 вместо 206,
+                # значит докачка не поддерживается. Сбрасываем запись на начало файла ('wb')
+                if write_mode == 'ab' and status != 206:
+                    write_mode = 'wb'
+                    downloaded = 0
+
+                # Если не получили размер из HEAD, берем из текущего ответа
+                if total_length is None or status == 206 or total_length == 0:
+                    content_len = response.info().get('Content-Length')
+                    if content_len is not None:
+                        total_length = downloaded + int(content_len) if status == 206 else int(content_len)
+
+                # Если размер так и остался неизвестным, ставим заглушку
+                if total_length is None or total_length <= 0:
+                    total_length = None
+
+                percent = 0
+
+                with open(full_path, write_mode) as out_file:
+                    while True:
+                        try:
+                            # Читаем данные чанками
+                            chunk = response.read(chunk_size)
+                        except http.client.IncompleteRead as e:
+                            # Важно: если связь оборвалась на полуслове, спасаем то, что успело прийти
+                            chunk = e.partial
+
+                        if not chunk:
+                            break
+
+                        out_file.write(chunk)
+                        downloaded += len(chunk)
+
+                        # Вывод прогресс-бара
+                        if total_length:
+                            last_percent = percent
+                            percent = int((downloaded / total_length) * 100)
+                            if last_percent != percent:
+                                mb_total = total_length // 1048576
+                                bar = '#' * int(percent / 5)
+                                spaces = ' ' * (20 - int(percent / 5))
+                                print(f"\r[{bar}{spaces}] {percent}% ({mb_total} MB)   ", end='', flush=True)
+                        else:
+                            print(f'\rDownloaded: {downloaded// 1048576}MB', end='')
+
+                # Проверяем целостность скачанного файла по размеру
+                if total_length is None or downloaded >= total_length:
+                    print("\nDownloaded successfully.")
+                    return full_path
+                else:
+                    raise Exception("Connection closed prematurely (size mismatch).")
+
+        except (urllib.error.URLError, ConnectionError, TimeoutError, http.client.HTTPException, OSError) as e:
+            attempt += 1
+            print(f'\nNetwork issue: {e}. Retrying ({attempt}/{max_attempts})...')
+            time.sleep(1)
+
+    print(f"\nFailed to download {file_name} after {max_attempts} attempts.")
+    return None
+
+
+def unziper(file_url, name, file_paths=[], skip=False, wanted_paths=None):
+    """wanted_paths: if specified (set of normalized destination paths),
+    process only entries whose destination is included in it."""
+
+    file_url = furl(file_url)
+
+    installed = []
+
+    cache_file = CACHE_DIR / name
+    extract_dir = TEMP_FILES_DIR / f"{name}dir"
+
+    if wanted_paths is not None:
+        file_paths = [
+            fp for fp in file_paths
+            if os.path.normpath(
+                os.path.join(fp[1], os.path.basename(fp[0]))
+            ) in wanted_paths
+        ]
+
+        if not file_paths:
+            print(f'[skip] {name}: no files needed, archive not downloaded')
+            return installed
+
+    # Remove cached archive when skip=False
+    if cache_file.exists() and not skip:
+        cache_file.unlink()
+
+    # Create working directories
+    CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    TEMP_FILES_DIR.mkdir(parents=True, exist_ok=True)
+
+    # Remove old extraction directory if left from interrupted run
+    if extract_dir.exists():
+        shutil.rmtree(extract_dir, ignore_errors=True)
+
+    # Download archive to AppData cache
+    downloaded_file = downloader(
+        file_url,
+        str(CACHE_DIR),
+        name,
+        skip=True
+    )
+
+    if not downloaded_file:
+        raise RuntimeError(f"Failed to download archive: {name}")
+
+    # Extract archive
+    with zipfile.ZipFile(cache_file, 'r') as zip_ref:
+        zip_ref.extractall(extract_dir)
+
+    # Install requested files
+    for file_path in file_paths:
+        temp_name = extract_dir / file_path[0]
+        dest = Path(file_path[1])
+
+        assert temp_name.exists(), f"No such file or directory: {temp_name}"
+
+        if temp_name.is_file():
+            print(temp_name)
+
+            dest.mkdir(parents=True, exist_ok=True)
+
+            shutil.copy2(temp_name, dest)
+
+            dest_file = dest / temp_name.name
+            installed.append(os.path.normpath(str(dest_file)))
+
+        else:
+            if dest.exists():
+                shutil.rmtree(dest)
+
+            shutil.copytree(temp_name, dest)
+
+            installed.extend(
+                os.path.normpath(str(dest).rstrip('/\\') + p)
+                for p in get_relative_paths(str(dest))
+            )
+
+    # Delete extraction files, but KEEP archive in AppData cache
+    shutil.rmtree(extract_dir, ignore_errors=True)
+
+    return installed
+
+
+def download(conf_file, skip=False, wanted_paths=None):
+    """wanted_paths: если задан (set нормализованных путей назначения) —
+    из .dconf обрабатываются только записи, дающие хотя бы один из этих
+    путей. 'f'-записи вне набора пропускаются вообще без сети,
+    'a'-записи — без скачивания и распаковки архива, если внутри него
+    нет ни одного нужного файла."""
+
+    arr = [None]
+
+    try:
+        all_installed = []
+
+        with open(conf_file, 'r') as pack_file:
+            pack_list = pack_file.read().split('\n')
+
+            for (i, _) in enumerate(pack_list):
+                installed = []
+
+                if ';' in _:
+                    arr = _.split(';')
+
+                    if arr[0] == "a":
+
+                        files = []
+                        url, name = arr[2], arr[1]
+
+                        for start, end in zip(arr[3::2], arr[4::2]):
+                            files.append([start, end])
+
+                        installed = unziper(furl(url), name, files, skip=skip, wanted_paths=wanted_paths)
+
+                    elif arr[0] == 'f':
+
+                        file_name = arr[1]
+                        file_url = furl(arr[2])
+                        dest_dir = Path(arr[3])
+
+                        dest_path = os.path.normpath(
+                            os.path.join(arr[3], file_name)
+                        )
+
+                        if wanted_paths is not None and dest_path not in wanted_paths:
+                            print(f'[skip] {file_name}: file not needed')
+
+                        else:
+                            # ----------------------------------------------------
+                            # 1. Download/store file in persistent AppData cache
+                            # ----------------------------------------------------
+
+                            CACHE_DIR.mkdir(parents=True, exist_ok=True)
+
+                            cached_file = downloader(
+                                file_url,
+                                str(CACHE_DIR),
+                                file_name,
+                                skip=skip
+                            )
+
+                            if not cached_file:
+                                raise RuntimeError(
+                                    f"Failed to download file: {file_name}"
+                                )
+
+                            cached_file = Path(cached_file)
+
+                            # ----------------------------------------------------
+                            # 2. Copy cached file to its actual destination
+                            # ----------------------------------------------------
+
+                            dest_dir.mkdir(parents=True, exist_ok=True)
+
+                            destination = dest_dir / file_name
+
+                            print(f"Installing {file_name} -> {destination}")
+
+                            shutil.copy2(
+                                cached_file,
+                                destination
+                            )
+
+                            installed.append(
+                                os.path.normpath(str(destination))
+                            )
+
+                    else:
+
+                        raise TypeError (f"Incorrect datatype: {arr[0]} in {arr[1]}")
+
+                all_installed.extend(installed)
+
+        return all_installed
+
+    except Exception as err:
+        print(f'[log] {err}')
+        print(f"[error] not installed {arr[1]}")
+        if arr[0] == 'a':
+            extract_dir = TEMP_FILES_DIR / f"{arr[1]}dir"
+            if extract_dir.exists():
+                shutil.rmtree(extract_dir, ignore_errors=True)
+        caption()
+
+
+if __name__ == "__main__":
+    download_conf = argv[1]
+    if len(argv) >= 3 and argv[2] == "skip":
+        s = True
+    else:
+        s = False
+
+    download(download_conf, skip=s)
