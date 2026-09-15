@@ -1,0 +1,38 @@
+# ============================================================
+# Q3ELITE PROJECT
+# ============================================================
+
+# Ignore base Quake 3 files
+/Main/baseQ3/
+
+# Ignore everything inside Q3Elite
+/Main/Q3Elite/*
+
+# Keep Launcher directory
+!/Main/Q3Elite/Launcher/
+!/Main/Q3Elite/Launcher/**
+
+# ============================================================
+# GENERAL
+# ============================================================
+
+# Python cache
+__pycache__/
+*.py[cod]
+*.pyo
+
+# Logs
+*.log
+
+# Temporary files
+*.tmp
+*.temp
+*.bak
+
+# Windows
+Thumbs.db
+Desktop.ini
+
+# IDE
+.vscode/
+.idea/
