@@ -3,14 +3,14 @@
 # ============================================================
 
 # Ignore base Quake 3 files
-/Main/baseQ3/
+/BaseQ3/
 
 # Ignore everything inside Q3Elite
-/Main/Q3Elite/*
+/Q3Elite/*
 
 # Keep Launcher directory
-!/Main/Q3Elite/Launcher/
-!/Main/Q3Elite/Launcher/**
+!/Q3Elite/Launcher/
+!/Q3Elite/Launcher/**
 
 # ============================================================
 # GENERAL
@@ -32,6 +32,7 @@ __pycache__/
 # Windows
 Thumbs.db
 Desktop.ini
+Q3Elite.lnk
 
 # IDE
 .vscode/
