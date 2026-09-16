@@ -182,8 +182,6 @@ set "TARGET=%LAUNCHER%\launch.bat"
 set "ICON=%LAUNCHER%\icons\b3.ico"
 set "WORKDIR=%LAUNCHER%"
 
-:: Export variables for PowerShell
-setx_dummy=1
 
 :: ============================================================
 :: CREATE DESKTOP SHORTCUT
