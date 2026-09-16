@@ -12,8 +12,13 @@
 !/Q3Elite/Launcher/
 !/Q3Elite/Launcher/**
 
-# Ignore Python cache
+# Ignore cache files
 /Q3Elite/Launcher/python/pyen/*
+/Q3Elite/Launcher/temp_files/*
+/Q3Elite/Launcher/python/pyenv/bin/*.exe
+/Q3Elite/Launcher/python/pyenv/uv.exe
+/Q3Elite/Launcher/python/pyenv/uvw.exe
+/Q3Elite/Launcher/python/pyenv/uvx.exe
 
 # ============================================================
 # GENERAL

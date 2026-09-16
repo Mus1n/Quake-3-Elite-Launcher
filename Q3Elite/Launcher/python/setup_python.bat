@@ -57,13 +57,7 @@ if not defined BASE_PYTHON (
     echo ERROR: could not find base Python interpreter.
     exit /b 1
 )
-for %%F in ("%BASE_PYTHON%") do set "BASE_PY_DIR=%%~dpF"
-set "REAL_PYTHONW=%BASE_PY_DIR%pythonw.exe"
-if not exist "%REAL_PYTHONW%" (
-    echo ERROR: pythonw.exe not found next to base python.exe.
-    echo Path: %REAL_PYTHONW%
-    exit /b 1
-)
+
 
 if not exist "%VENV_DIR%\Scripts\python.exe" (
     echo Creating virtual environment...
@@ -84,6 +78,10 @@ if exist "%REQUIREMENTS%" (
 )
 
 set "VIRTUAL_ENV=%VENV_DIR%"
-set "PYTHONPATH=%VENV_DIR%\Lib\site-packages"
-start "" "%REAL_PYTHONW%" %*
-exit
+
+echo.
+echo Starting Q3Elite installation...
+
+start "" "%VENV_DIR%\Scripts\pythonw.exe" %*
+
+exit /b 0
