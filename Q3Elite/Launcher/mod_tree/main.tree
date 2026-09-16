@@ -1,9 +1,10 @@
 OSP2-BE
 	..
-		baseq3
-			mods
-				osp
-					zz-osp-pak8be.pk3
+		..
+			baseq3
+				mods
+					osp
+						zz-osp-pak8be.pk3
 oDFe
 	engine.txt
 	oDFe.vk.x64.exe

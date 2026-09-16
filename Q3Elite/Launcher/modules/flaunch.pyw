@@ -25,7 +25,7 @@ os.chdir(LAUNCHER_DIR)
 
 import download_tools as dt
 
-from upd_tools import autoupdate
+from upd_tools import get_updates, update
 from pak_verifier import verify_paks
 from bmods_tools import *
 from base_methods import *
@@ -687,12 +687,6 @@ class FDownload(QtCore.QThread):
                     "could not be verified or repaired."
                 )
 
-            # ============================================================
-            # EXISTING LAUNCHER/MOD UPDATE SYSTEM
-            # ============================================================
-
-            autoupdate()
-
             self.result_ready.emit(True)
 
         except Exception as error:
@@ -705,6 +699,150 @@ class FDownload(QtCore.QThread):
 
             self.result_ready.emit(False)
             
+            
+# ============================================================================
+# POST-INSTALL UPDATE
+# ============================================================================
+
+class PostInstallUpdate(QtCore.QThread):
+
+    result_ready = pyqtSignal(bool)
+
+    def run(self):
+
+        try:
+
+            print()
+            print("========================================")
+            print(" Checking OSP2-BE")
+            print("========================================")
+            print()
+
+            osp_file = (
+                BASEQ3_DIR
+                / "mods"
+                / "osp"
+                / "zz-osp-pak8be.pk3"
+            )
+
+            # ================================================================
+            # CHECK FILE
+            # ================================================================
+
+            osp_file_exists = osp_file.is_file()
+
+            if osp_file_exists:
+
+                print(
+                    f"Installed file: {osp_file}"
+                )
+
+            else:
+
+                print(
+                    f"OSP2-BE file is missing: {osp_file}"
+                )
+
+            # ================================================================
+            # CHECK VERSION
+            # ================================================================
+
+            updates = get_updates()
+
+            osp_update_available = (
+                "OSP2-BE" in updates
+            )
+
+            # ================================================================
+            # UPDATE / REPAIR
+            # ================================================================
+
+            if osp_update_available:
+
+                print()
+                print(
+                    "New OSP2-BE version available."
+                )
+                print(
+                    "Updating OSP2-BE..."
+                )
+                print()
+
+                update(
+                    "OSP2-BE"
+                )
+
+            elif not osp_file_exists:
+
+                print()
+                print(
+                    "OSP2-BE version is current, "
+                    "but the PK3 file is missing."
+                )
+                print(
+                    "Repairing OSP2-BE..."
+                )
+                print()
+
+                osp_dconf = (
+                    DOWNLOAD_CONFS_DIR
+                    / "OSP2-BE.dconf"
+                )
+
+                if not osp_dconf.is_file():
+                    raise FileNotFoundError(
+                        f"OSP2-BE.dconf not found: {osp_dconf}"
+                    )
+
+                dt.download(
+                    str(osp_dconf),
+                    skip=True
+                )
+
+            else:
+
+                print()
+                print(
+                    "OSP2-BE is up to date."
+                )
+
+            # ================================================================
+            # FINAL FILE CHECK
+            # ================================================================
+
+            if not osp_file.is_file():
+
+                raise RuntimeError(
+                    "OSP2-BE installation finished, but "
+                    "zz-osp-pak8be.pk3 is still missing."
+                )
+
+            print()
+            print(
+                f"OSP2-BE verified: {osp_file}"
+            )
+
+            print()
+            print("========================================")
+            print(" OSP2-BE check complete")
+            print("========================================")
+            print()
+
+            self.result_ready.emit(
+                True
+            )
+
+        except Exception as error:
+
+            print()
+            print(
+                f"[error] OSP2-BE update failed: {error}"
+            )
+            print()
+
+            self.result_ready.emit(
+                False
+            )
 
 # ============================================================================
 # MOD LIST DOWNLOAD
@@ -745,8 +883,11 @@ def mdlist_check():
 install_state = {
     "base_done": False,
     "base_ok": False,
+
     "q3elite_done": False,
     "q3elite_ok": False,
+
+    "post_update_started": False,
 }
 
 
@@ -766,14 +907,14 @@ def q3elite_install_result(success):
 
 def check_install_finished():
 
-    # Wait until BOTH installers report a result.
+    # Wait for PAK verification AND Q3Elite extraction.
     if not (
         install_state["base_done"]
         and install_state["q3elite_done"]
     ):
         return
 
-    # Do not continue to launch.pyw if either installation failed.
+    # One of the two installation stages failed.
     if not (
         install_state["base_ok"]
         and install_state["q3elite_ok"]
@@ -792,6 +933,39 @@ def check_install_finished():
 
         return
 
+    # Prevent starting the post-update thread twice.
+    if install_state["post_update_started"]:
+        return
+
+    install_state["post_update_started"] = True
+
+    print()
+    print("========================================")
+    print(" Base installation complete")
+    print(" Starting post-install updates...")
+    print("========================================")
+    print()
+
+    post_update.start()
+
+
+def post_update_result(success):
+
+    if not success:
+
+        print()
+        print("========================================")
+        print(" Post-install update FAILED")
+        print("========================================")
+        print()
+
+        window.qerror(
+            "Q3Elite update failed.\n"
+            "Check the installation log."
+        )
+
+        return
+
     print()
     print("========================================")
     print(" Q3Elite installation complete")
@@ -799,6 +973,7 @@ def check_install_finished():
     print()
 
     window.close_terminal()
+
 
 if __name__ == "__main__":
 
@@ -861,6 +1036,7 @@ if __name__ == "__main__":
         fdownload = FDownload()
         mdownload = MDownload()
         q3elite_download = Q3EliteDownload()
+        post_update = PostInstallUpdate()
 
         mdownload.finished.connect(
             mdlist_check
@@ -872,6 +1048,10 @@ if __name__ == "__main__":
 
         q3elite_download.result_ready.connect(
             q3elite_install_result
+        )
+
+        post_update.result_ready.connect(
+            post_update_result
         )
 
         # --------------------------------------------------------------------
