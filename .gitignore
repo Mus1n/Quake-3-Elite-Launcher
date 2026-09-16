@@ -12,6 +12,9 @@
 !/Q3Elite/Launcher/
 !/Q3Elite/Launcher/**
 
+# Ignore Python cache
+/Q3Elite/Launcher/python/pyen/*
+
 # ============================================================
 # GENERAL
 # ============================================================
