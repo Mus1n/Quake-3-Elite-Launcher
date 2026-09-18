@@ -14,82 +14,298 @@ import http.client
 from math import floor
 
 
-def downloader(file_url, file_path, file_name, skip=False, max_attempts=10):
+# Shared launcher-wide controller/callback.  This keeps old callers such as
+# upd_tools.update() compatible while still letting the unified launcher pause
+# every transfer that eventually goes through downloader().
+_DEFAULT_DOWNLOAD_CONTROL = None
+_DEFAULT_PROGRESS_CALLBACK = None
+
+
+def set_default_download_control(control):
+    global _DEFAULT_DOWNLOAD_CONTROL
+    _DEFAULT_DOWNLOAD_CONTROL = control
+
+
+def set_default_progress_callback(callback):
+    global _DEFAULT_PROGRESS_CALLBACK
+    _DEFAULT_PROGRESS_CALLBACK = callback
+
+
+class DownloadControl:
+    """
+    Thread-safe cooperative download controller.
+
+    The same controller can be shared by Q3Elite, PAK and OSP workers:
+        control.pause()
+        control.resume()
+        control.cancel()
+
+    Pause does not delete downloaded data. The active downloader stops reading
+    new chunks while paused and continues when resume() is called.
+    """
+
+    def __init__(self):
+        import threading
+        self._resume_event = threading.Event()
+        self._resume_event.set()
+        self._cancel_event = threading.Event()
+
+    def pause(self):
+        self._resume_event.clear()
+
+    def resume(self):
+        self._resume_event.set()
+
+    def cancel(self):
+        self._cancel_event.set()
+        # Wake a paused downloader so it can notice cancellation.
+        self._resume_event.set()
+
+    def reset(self):
+        self._cancel_event.clear()
+        self._resume_event.set()
+
+    @property
+    def paused(self):
+        return not self._resume_event.is_set()
+
+    @property
+    def cancelled(self):
+        return self._cancel_event.is_set()
+
+    def wait_if_paused(self):
+        while not self._resume_event.wait(0.2):
+            if self._cancel_event.is_set():
+                return False
+        return not self._cancel_event.is_set()
+
+
+class DownloadCancelled(Exception):
+    pass
+
+
+def _remote_size(file_url, headers, timeout_value):
+    """Best-effort remote size lookup. Returns None when the server hides it."""
+    try:
+        req = urllib.request.Request(
+            file_url,
+            headers=headers,
+            method="HEAD"
+        )
+        with urllib.request.urlopen(req, timeout=timeout_value) as response:
+            value = response.headers.get("Content-Length")
+            if value is not None:
+                return int(value)
+    except Exception:
+        pass
+    return None
+
+
+def _content_range_total(response):
+    """Parse total size from Content-Range, e.g. 'bytes 100-199/1000'."""
+    value = response.headers.get("Content-Range")
+    if not value or "/" not in value:
+        return None
+
+    total = value.rsplit("/", 1)[1].strip()
+    if total == "*":
+        return None
+
+    try:
+        return int(total)
+    except (TypeError, ValueError):
+        return None
+
+
+def _call_progress(callback, downloaded, total, speed, file_name):
+    if callback is None:
+        return
+
+    try:
+        callback(downloaded, total, speed, file_name)
+    except TypeError:
+        # Keep it convenient for older/simple callbacks.
+        try:
+            callback(downloaded, total)
+        except Exception:
+            pass
+    except Exception:
+        pass
+
+
+def downloader(
+    file_url,
+    file_path,
+    file_name,
+    skip=False,
+    max_attempts=10,
+    control=None,
+    progress_callback=None,
+    expected_size=None,
+    use_part_file=True,
+    timeout_value=10,
+):
+    """
+    Download a file with resume, pause/resume control and progress reporting.
+
+    Backwards compatible:
+        downloader(url, path, name, skip=True)
+
+    New optional arguments:
+        control             DownloadControl shared with GUI/workers.
+        progress_callback   callback(downloaded, total, bytes_per_second, name)
+        expected_size       trusted total size (pCloud metadata is ideal).
+        use_part_file       store incomplete data as <name>.part.
+
+    Incomplete downloads use <name>.part by default for every launcher download
+    (Q3Elite, official PAKs, OSP2-BE and updater files). The final filename is
+    created only after the transfer reaches the expected remote size.
+    """
 
     file_url = furl(file_url)
 
-    full_path = os.path.join(file_path, file_name)
+    final_path = os.path.join(file_path, file_name)
+    working_path = final_path + ".part" if use_part_file else final_path
+
     os.makedirs(file_path, exist_ok=True)
 
     print(f"Downloading {file_name}...")
-    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
-    attempt = 0
-    chunk_size = 16384
-    timeout = 5
 
-    while attempt < max_attempts:
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
+    }
+
+    chunk_size = 256 * 1024
+    attempt = 0
+
+    if control is None:
+        control = _DEFAULT_DOWNLOAD_CONTROL
+
+    if control is None:
+        control = DownloadControl()
+
+    if progress_callback is None:
+        progress_callback = _DEFAULT_PROGRESS_CALLBACK
+
+    # A trusted caller-provided size wins over HEAD.
+    total_length = None
+    if expected_size is not None:
         try:
+            total_length = int(expected_size)
+        except (TypeError, ValueError):
             total_length = None
 
-            # 1. Быстро узнаем размер файла через HEAD-запрос (без скачивания тела)
+    if total_length is None or total_length <= 0:
+        total_length = _remote_size(file_url, headers, timeout_value)
+
+    # If an old final file already exists and we now use .part, accept it when
+    # complete; otherwise move it to .part so it can be resumed safely.
+    if use_part_file and os.path.exists(final_path):
+        final_size = os.path.getsize(final_path)
+
+        if total_length and final_size == total_length:
+            print(f"\nFile {file_name} already exists and is complete. Skipping.")
+            return final_path
+
+        if skip and not os.path.exists(working_path):
             try:
-                head_req = urllib.request.Request(file_url, headers=headers, method='HEAD')
-                with urllib.request.urlopen(head_req, timeout=timeout) as resp:
-                    total_length = resp.info().get('Content-Length')
-                    if total_length is not None:
-                        total_length = int(total_length)
-            except Exception:
-                total_length = -1
+                os.replace(final_path, working_path)
+            except OSError:
+                pass
 
-            # 2. Проверяем, скачан ли уже файл полностью
-            if skip and total_length and os.path.exists(full_path):
-                if os.path.getsize(full_path) == total_length:
-                    print(f"\nFile {file_name} already exists and is complete. Skipping.")
-                    return full_path
+    # Complete cached legacy file: never send Range at EOF. This fixes the
+    # common HTTP 416 case seen with OSP2-BE/mod metadata.
+    if skip and os.path.exists(working_path) and total_length:
+        local_size = os.path.getsize(working_path)
 
-            # 3. Настраиваем докачку (Range Request)
-            downloaded = 0
-            write_mode = 'wb'
-            req_headers = headers.copy()
+        if local_size == total_length:
+            if use_part_file:
+                os.replace(working_path, final_path)
+            print(f"\nFile {file_name} already exists and is complete. Skipping.")
+            return final_path
 
-            if skip and os.path.exists(full_path):
-                downloaded = os.path.getsize(full_path)
-                if downloaded > 0:
-                    req_headers['Range'] = f'bytes={downloaded}-'
-                    write_mode = 'ab'
+        if local_size > total_length:
+            print(
+                f"\nLocal {file_name} is larger than the remote file. "
+                "Restarting download."
+            )
+            with open(working_path, "wb"):
+                pass
 
-            req = urllib.request.Request(file_url, headers=req_headers)
+    while attempt < max_attempts:
+        if control.cancelled:
+            print(f"\nDownload cancelled: {file_name}")
+            return None
 
-            # 4. Основной запрос на получение данных
-            with urllib.request.urlopen(req, timeout=timeout) as response:
+        if not control.wait_if_paused():
+            print(f"\nDownload cancelled: {file_name}")
+            return None
+
+        downloaded = (
+            os.path.getsize(working_path)
+            if skip and os.path.exists(working_path)
+            else 0
+        )
+
+        request_headers = headers.copy()
+        append_requested = skip and downloaded > 0
+
+        if append_requested:
+            request_headers["Range"] = f"bytes={downloaded}-"
+
+        request = urllib.request.Request(file_url, headers=request_headers)
+
+        try:
+            with urllib.request.urlopen(
+                request,
+                timeout=timeout_value
+            ) as response:
+
                 status = response.getcode()
 
-                # Защита от повреждения: если сервер проигнорировал Range и вернул 200 вместо 206,
-                # значит докачка не поддерживается. Сбрасываем запись на начало файла ('wb')
-                if write_mode == 'ab' and status != 206:
-                    write_mode = 'wb'
+                # Server ignored Range. Restart instead of appending duplicate
+                # bytes to the existing file.
+                if append_requested and status != 206:
+                    print(
+                        f"\nServer ignored resume request for {file_name}; "
+                        "restarting from zero."
+                    )
                     downloaded = 0
+                    write_mode = "wb"
+                else:
+                    write_mode = "ab" if append_requested else "wb"
 
-                # Если не получили размер из HEAD, берем из текущего ответа
-                if total_length is None or status == 206 or total_length == 0:
-                    content_len = response.info().get('Content-Length')
-                    if content_len is not None:
-                        total_length = downloaded + int(content_len) if status == 206 else int(content_len)
+                range_total = _content_range_total(response)
+                if range_total:
+                    total_length = range_total
 
-                # Если размер так и остался неизвестным, ставим заглушку
-                if total_length is None or total_length <= 0:
-                    total_length = None
+                if not total_length:
+                    content_length = response.headers.get("Content-Length")
+                    if content_length is not None:
+                        content_length = int(content_length)
+                        total_length = (
+                            downloaded + content_length
+                            if status == 206
+                            else content_length
+                        )
 
-                percent = 0
+                percent = -1
+                speed_window_start = time.monotonic()
+                speed_window_bytes = downloaded
+                current_speed = 0.0
 
-                with open(full_path, write_mode) as out_file:
+                with open(working_path, write_mode) as out_file:
                     while True:
+                        if control.cancelled:
+                            raise DownloadCancelled()
+
+                        if not control.wait_if_paused():
+                            raise DownloadCancelled()
+
                         try:
-                            # Читаем данные чанками
                             chunk = response.read(chunk_size)
-                        except http.client.IncompleteRead as e:
-                            # Важно: если связь оборвалась на полуслове, спасаем то, что успело прийти
-                            chunk = e.partial
+                        except http.client.IncompleteRead as error:
+                            chunk = error.partial
 
                         if not chunk:
                             break
@@ -97,35 +313,149 @@ def downloader(file_url, file_path, file_name, skip=False, max_attempts=10):
                         out_file.write(chunk)
                         downloaded += len(chunk)
 
-                        # Вывод прогресс-бара
+                        now = time.monotonic()
+                        elapsed = now - speed_window_start
+
+                        if elapsed >= 0.5:
+                            current_speed = (
+                                downloaded - speed_window_bytes
+                            ) / elapsed
+                            speed_window_start = now
+                            speed_window_bytes = downloaded
+
+                            _call_progress(
+                                progress_callback,
+                                downloaded,
+                                total_length,
+                                current_speed,
+                                file_name,
+                            )
+
                         if total_length:
-                            last_percent = percent
-                            percent = int((downloaded / total_length) * 100)
-                            if last_percent != percent:
-                                mb_total = total_length // 1048576
-                                bar = '#' * int(percent / 5)
-                                spaces = ' ' * (20 - int(percent / 5))
-                                print(f"\r[{bar}{spaces}] {percent}% ({mb_total} MB)   ", end='', flush=True)
+                            new_percent = min(
+                                100,
+                                int(downloaded * 100 / total_length)
+                            )
+
+                            if new_percent != percent:
+                                percent = new_percent
+                                mb_done = downloaded / 1048576
+                                mb_total = total_length / 1048576
+                                bar_count = min(20, int(percent / 5))
+                                bar = "#" * bar_count
+                                spaces = " " * (20 - bar_count)
+
+                                print(
+                                    f"\r[{bar}{spaces}] {percent}% "
+                                    f"({mb_done:.1f}/{mb_total:.1f} MB)   ",
+                                    end="",
+                                    flush=True,
+                                )
                         else:
-                            print(f'\rDownloaded: {downloaded// 1048576}MB', end='')
+                            print(
+                                f"\rDownloaded: {downloaded / 1048576:.1f} MB",
+                                end="",
+                                flush=True,
+                            )
 
-                # Проверяем целостность скачанного файла по размеру
-                if total_length is None or downloaded >= total_length:
-                    print("\nDownloaded successfully.")
-                    return full_path
-                else:
-                    raise Exception("Connection closed prematurely (size mismatch).")
+                # Validate completion whenever the total is known.
+                if total_length is not None and downloaded < total_length:
+                    raise ConnectionError(
+                        "Connection closed prematurely (size mismatch)."
+                    )
 
-        except (urllib.error.URLError, ConnectionError, TimeoutError, http.client.HTTPException, OSError) as e:
+                if (
+                    expected_size is not None
+                    and downloaded != int(expected_size)
+                ):
+                    raise ConnectionError(
+                        f"Downloaded size mismatch. "
+                        f"Expected {int(expected_size)}, got {downloaded}."
+                    )
+
+                _call_progress(
+                    progress_callback,
+                    downloaded,
+                    total_length,
+                    current_speed,
+                    file_name,
+                )
+
+                if use_part_file:
+                    os.replace(working_path, final_path)
+
+                print("\nDownloaded successfully.")
+                return final_path
+
+        except DownloadCancelled:
+            print(f"\nDownload cancelled: {file_name}")
+            return None
+
+        except urllib.error.HTTPError as error:
+            # Range at EOF / stale local partial. If sizes match, the file is
+            # actually complete. Otherwise restart safely from zero.
+            if error.code == 416 and os.path.exists(working_path):
+                local_size = os.path.getsize(working_path)
+
+                remote_total = total_length
+                content_range = error.headers.get("Content-Range")
+                if content_range and "/" in content_range:
+                    try:
+                        remote_total = int(content_range.rsplit("/", 1)[1])
+                    except (TypeError, ValueError):
+                        pass
+
+                if remote_total and local_size == remote_total:
+                    if use_part_file:
+                        os.replace(working_path, final_path)
+                    print(
+                        f"\nFile {file_name} is already complete "
+                        "(HTTP 416 at EOF)."
+                    )
+                    return final_path
+
+                print(
+                    f"\nResume position for {file_name} is invalid "
+                    "(HTTP 416). Restarting from zero."
+                )
+                try:
+                    with open(working_path, "wb"):
+                        pass
+                except OSError:
+                    pass
+
+                attempt += 1
+                continue
+
             attempt += 1
-            print(f'\nNetwork issue: {e}. Retrying ({attempt}/{max_attempts})...')
+            print(
+                f"\nNetwork issue: HTTP {error.code}: {error.reason}. "
+                f"Retrying ({attempt}/{max_attempts})..."
+            )
             time.sleep(1)
 
-    print(f"\nFailed to download {file_name} after {max_attempts} attempts.")
+        except (
+            urllib.error.URLError,
+            ConnectionError,
+            TimeoutError,
+            http.client.HTTPException,
+            OSError,
+        ) as error:
+            attempt += 1
+            print(
+                f"\nNetwork issue: {error}. "
+                f"Retrying ({attempt}/{max_attempts})..."
+            )
+            time.sleep(1)
+
+    print(
+        f"\nFailed to download {file_name} "
+        f"after {max_attempts} attempts."
+    )
     return None
 
 
-def unziper(file_url, name, file_paths=[], skip=False, wanted_paths=None):
+def unziper(file_url, name, file_paths=[], skip=False, wanted_paths=None, control=None, progress_callback=None):
     """wanted_paths: if specified (set of normalized destination paths),
     process only entries whose destination is included in it."""
 
@@ -165,7 +495,9 @@ def unziper(file_url, name, file_paths=[], skip=False, wanted_paths=None):
         file_url,
         str(CACHE_DIR),
         name,
-        skip=True
+        skip=True,
+        control=control,
+        progress_callback=progress_callback
     )
 
     if not downloaded_file:
@@ -209,7 +541,7 @@ def unziper(file_url, name, file_paths=[], skip=False, wanted_paths=None):
     return installed
 
 
-def download(conf_file, skip=False, wanted_paths=None):
+def download(conf_file, skip=False, wanted_paths=None, control=None, progress_callback=None):
     """wanted_paths: если задан (set нормализованных путей назначения) —
     из .dconf обрабатываются только записи, дающие хотя бы один из этих
     путей. 'f'-записи вне набора пропускаются вообще без сети,
@@ -238,7 +570,7 @@ def download(conf_file, skip=False, wanted_paths=None):
                         for start, end in zip(arr[3::2], arr[4::2]):
                             files.append([start, end])
 
-                        installed = unziper(furl(url), name, files, skip=skip, wanted_paths=wanted_paths)
+                        installed = unziper(furl(url), name, files, skip=skip, wanted_paths=wanted_paths, control=control, progress_callback=progress_callback)
 
                     elif arr[0] == 'f':
 
@@ -264,7 +596,9 @@ def download(conf_file, skip=False, wanted_paths=None):
                                 file_url,
                                 str(CACHE_DIR),
                                 file_name,
-                                skip=skip
+                                skip=skip,
+                                control=control,
+                                progress_callback=progress_callback
                             )
 
                             if not cached_file:

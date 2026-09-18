@@ -439,7 +439,9 @@ def restore_from_cache(
 def download_and_install_pak(
     file_name,
     file_url,
-    expected_hash
+    expected_hash,
+    control=None,
+    progress_callback=None
 ):
     """
     Download PAK to AppData cache, verify SHA-256,
@@ -459,15 +461,23 @@ def download_and_install_pak(
     cached_file = get_cached_pak(file_name)
     installed_file = get_installed_pak(file_name)
 
-    # We only reach this function when the cache is known
-    # to be missing or invalid.
-    if cached_file.exists():
+    # We only reach this function when the final cache is missing or invalid.
+    # Preserve an interrupted legacy download as .part so downloader() can
+    # validate its size against the server and resume it with HTTP Range.
+    part_file = Path(str(cached_file) + ".part")
 
+    if cached_file.exists():
         try:
-            cached_file.unlink()
+            if part_file.exists():
+                part_file.unlink()
+            cached_file.replace(part_file)
+            print(
+                f"[cache] Preserving incomplete {file_name} for resume: "
+                f"{part_file}"
+            )
         except OSError as error:
             print(
-                f"[error] Could not remove invalid cache "
+                f"[error] Could not preserve partial cache "
                 f"{cached_file}: {error}"
             )
             return False
@@ -480,7 +490,10 @@ def download_and_install_pak(
         file_url,
         str(CACHE_DIR),
         file_name,
-        skip=True
+        skip=True,
+        control=control,
+        progress_callback=progress_callback,
+        use_part_file=True
     )
 
     if not downloaded:
@@ -546,7 +559,7 @@ def download_and_install_pak(
 # VERIFY ALL PAKS
 # ============================================================================
 
-def verify_paks():
+def verify_paks(control=None, progress_callback=None):
     """
     Verify pak0.pk3 - pak8.pk3.
 
@@ -698,15 +711,12 @@ def verify_paks():
         elif cached_file.exists():
 
             print(
-                f"[warning] Cached {file_name} is corrupted."
+                f"[warning] Cached {file_name} is incomplete or corrupted."
             )
-
-            try:
-                cached_file.unlink()
-            except OSError as error:
-                print(
-                    f"[warning] Could not remove corrupted cache: {error}"
-                )
+            print(
+                f"[cache] Keeping it temporarily so the downloader can "
+                f"attempt HTTP resume."
+            )
 
         # ====================================================================
         # 3. SEARCH EXISTING QUAKE III INSTALLATIONS
@@ -754,7 +764,9 @@ def verify_paks():
         if download_and_install_pak(
             file_name,
             file_url,
-            expected_hash
+            expected_hash,
+            control=control,
+            progress_callback=progress_callback
         ):
 
             print(
