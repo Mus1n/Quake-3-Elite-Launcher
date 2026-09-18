@@ -1297,11 +1297,11 @@ def launcher_self_update_result(action):
 
 
 
-class ModernLauncherWindow(MainWindow):
+class ModernLauncherWindow(QtWidgets.QMainWindow):
     """1368x768 frameless Q3Elite launcher. Backend stays in launch.pyw."""
 
     def __init__(self):
-        super().__init__()
+        QtWidgets.QMainWindow.__init__(self)
 
         self.setObjectName("launcherWindow")
         self.setWindowTitle("Quake 3 Elite Launcher")
@@ -1311,12 +1311,6 @@ class ModernLauncherWindow(MainWindow):
             | QtCore.Qt.WindowType.Window
         )
         self.setAttribute(QtCore.Qt.WidgetAttribute.WA_TranslucentBackground, True)
-
-        # Hide widgets from the legacy UI while preserving MainWindow.launch(),
-        # qerror() and the terminal object used by the backend.
-        central = self.centralWidget()
-        if central is not None:
-            central.hide()
 
         self._drag_pos = None
         self.pending_component_actions = []
@@ -1403,7 +1397,7 @@ class ModernLauncherWindow(MainWindow):
         root.addWidget(body, 1)
 
         self.show_page("home")
-        refresh_component_gui()
+        self._load_component_state_initial()
         self.load_settings_ui()
 
     def _nav_button(self, text, page):
@@ -1688,6 +1682,14 @@ class ModernLauncherWindow(MainWindow):
         for b in (self.homeNav, self.addonsNav, self.settingsNav, self.changelogNav, self.refreshButton):
             b.setEnabled(enabled)
 
+    def _load_component_state_initial(self):
+        """Load component state during __init__ without touching global `window`."""
+        state = q3components.load_state()
+        self.mapsBox.setChecked(bool(state.get("external_maps", False)))
+        self.musicBox.setChecked(bool(state.get("music_playlist", False)))
+        self.autoexecBox.setChecked(bool(state.get("autoexec_update", False)))
+        self.capture_component_baseline()
+
     def capture_component_baseline(self):
         self._component_baseline = {
             "maps": self.mapsBox.isChecked(),
@@ -1727,6 +1729,20 @@ class ModernLauncherWindow(MainWindow):
         self.autoLauncherBox.setChecked(launcher_settings.get("auto_update_launcher", True))
         self.autoOspBox.setChecked(launcher_settings.get("auto_update_osp", True))
         self.checkStartupBox.setChecked(launcher_settings.get("check_updates_on_startup", True))
+
+    def launch(self):
+        """Launch Q3Elite using the existing launch.bat entry point."""
+        launch_bat = LAUNCHER_DIR / "launch.bat"
+        if not launch_bat.is_file():
+            self.qerror(f"Could not find launcher entry point:\n{launch_bat}")
+            return
+        try:
+            os.startfile(str(launch_bat))
+        except Exception as error:
+            self.qerror(f"Could not start Q3Elite:\n{error}")
+
+    def qerror(self, text):
+        QtWidgets.QMessageBox.critical(self, "Q3Elite Launcher", str(text))
 
     def mousePressEvent(self, event):
         if event.button() == QtCore.Qt.MouseButton.LeftButton and event.position().y() < 70:
@@ -1902,7 +1918,10 @@ def post_update_result(success):
     set_gui_ready(offline=install_state["offline"])
 
 
-if __name__ == "__main__":
+def main():
+    global app, window, download_timer
+    global launcher_self_update, q3elite_update, fdownload, q3elite_download, post_update
+
     try:
         app = QApplication(sys.argv)
 
@@ -1924,10 +1943,6 @@ if __name__ == "__main__":
                     family = families[0]
 
         window = ModernLauncherWindow()
-        try:
-            window.terminal.set_font(family)
-        except Exception:
-            pass
 
         window.show()
 
@@ -1935,11 +1950,15 @@ if __name__ == "__main__":
         download_timer.timeout.connect(update_download_overlay)
         download_timer.start(200)
 
-        launcher_self_update = LauncherSelfUpdate()
+        # Create every worker BEFORE starting the first one.
+        # A very fast self-update check can emit "continue" immediately, and
+        # start_game_checks() expects q3elite_download/q3elite_update/fdownload
+        # to already exist.
         q3elite_update = Q3EliteUpdate()
         fdownload = FDownload()
         q3elite_download = Q3EliteDownload()
         post_update = PostInstallUpdate()
+        launcher_self_update = LauncherSelfUpdate()
 
         launcher_self_update.result_ready.connect(launcher_self_update_result)
         q3elite_update.result_ready.connect(q3elite_update_result)
@@ -1950,7 +1969,10 @@ if __name__ == "__main__":
         post_update.offline.connect(post_update_offline)
 
         set_gui_checking("Checking Launcher...")
-        launcher_self_update.start()
+
+        # Start only after QApplication enters its event loop. This removes the
+        # initialization race between the self-update signal and main().
+        QtCore.QTimer.singleShot(0, launcher_self_update.start)
 
         sys.exit(app.exec())
 
@@ -1964,3 +1986,8 @@ if __name__ == "__main__":
         except Exception:
             print(message)
             raise
+
+
+# Explicit entry point for the standalone .pyw launcher.
+if __name__ == "__main__":
+    main()
