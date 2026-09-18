@@ -5,8 +5,8 @@
 Q3Elite Launcher self-updater.
 
 Remote:
-  launcher_version.txt   -> lightweight version check
-  launcher_manifest.json -> SHA-256 manifest, fetched only when update/repair is needed
+  Launcher_Version.json  -> version/update type/changelog
+  Launcher_manifest.json -> SHA-256 manifest, fetched only when update/repair is needed
 
 Only Q3Elite/Launcher/ files may be updated.
 """
@@ -15,6 +15,7 @@ import hashlib
 import json
 import os
 import subprocess
+import shutil
 import sys
 import urllib.parse
 import urllib.request
@@ -32,16 +33,17 @@ REMOTE_ROOT = (
     f"https://raw.githubusercontent.com/"
     f"{GITHUB_OWNER}/{GITHUB_REPO}/{GITHUB_BRANCH}"
 )
-REMOTE_VERSION_URL = f"{REMOTE_ROOT}/launcher_version.txt"
-REMOTE_MANIFEST_URL = f"{REMOTE_ROOT}/launcher_manifest.json"
+REMOTE_VERSION_URL = f"{REMOTE_ROOT}/Q3Elite/Launcher/Launcher_Version.json"
+REMOTE_MANIFEST_URL = f"{REMOTE_ROOT}/Q3Elite/Launcher/Launcher_manifest.json"
 
-LOCAL_VERSION_FILE = LAUNCHER_DIR / "launcher_version.txt"
+LOCAL_VERSION_FILE = LAUNCHER_DIR / "Launcher_Version.json"
 
 SELF_UPDATE_DIR = Q3ELITE_LAUNCHER_DATA_DIR / "self_update"
 STAGING_DIR = SELF_UPDATE_DIR / "staging"
 PENDING_FILE = SELF_UPDATE_DIR / "pending_update.json"
 
-HELPER_PATH = MODULES_DIR / "launcher_update_helper.py"
+HELPER_SOURCE_PATH = MODULES_DIR / "launcher_update_helper.py"
+HELPER_RUN_PATH = SELF_UPDATE_DIR / "launcher_update_helper.py"
 LAUNCH_PATH = MODULES_DIR / "launch.pyw"
 
 ALLOWED_PREFIX = "Q3Elite/Launcher/"
@@ -71,14 +73,20 @@ def _read_json_url(url, timeout=10):
     return json.loads(_read_text_url(url, timeout=timeout))
 
 
-def _local_version():
+def _local_version_info():
     try:
-        version = LOCAL_VERSION_FILE.read_text(
-            encoding="utf-8-sig"
-        ).strip()
-        return version or "unknown"
-    except OSError:
-        return "unknown"
+        data = json.loads(
+            LOCAL_VERSION_FILE.read_text(encoding="utf-8-sig")
+        )
+        if not isinstance(data, dict):
+            raise ValueError("Local Launcher_Version.json is invalid.")
+        return data
+    except Exception:
+        return {"version": "unknown"}
+
+
+def _local_version():
+    return str(_local_version_info().get("version", "unknown")).strip() or "unknown"
 
 
 def _normalize_manifest_path(value):
@@ -131,11 +139,21 @@ def _parse_manifest(data):
     return parsed
 
 
-def get_remote_version():
-    version = _read_text_url(REMOTE_VERSION_URL)
+def get_remote_version_info():
+    data = _read_json_url(REMOTE_VERSION_URL)
+
+    if not isinstance(data, dict):
+        raise ValueError("Remote Launcher_Version.json is invalid.")
+
+    version = str(data.get("version", "")).strip()
     if not version:
-        raise ValueError("Remote launcher_version.txt is empty.")
-    return version
+        raise ValueError("Remote Launcher_Version.json has no version.")
+
+    return data
+
+
+def get_remote_version():
+    return str(get_remote_version_info()["version"]).strip()
 
 
 def get_remote_manifest():
@@ -171,7 +189,8 @@ def check_for_update():
     local_version = _local_version()
 
     try:
-        remote_version = get_remote_version()
+        remote_info = get_remote_version_info()
+        remote_version = str(remote_info["version"]).strip()
     except Exception as error:
         print(f"[offline] Launcher update check unavailable: {error}")
         return None
@@ -197,15 +216,16 @@ def check_for_update():
     # version write). Only synchronize the local version.
     if not changed:
         LOCAL_VERSION_FILE.write_text(
-            remote_version + "\n",
+            json.dumps(remote_info, indent=4, ensure_ascii=False) + "\n",
             encoding="utf-8",
         )
-        print("Launcher files are already current; version synchronized.")
+        print("Launcher files are already current; version metadata synchronized.")
         return None
 
     return {
         "local_version": local_version,
         "remote_version": remote_version,
+        "remote_version_info": remote_info,
         "files": changed,
     }
 
@@ -216,7 +236,8 @@ def check_for_repair():
     manifest and hashes all launcher files listed there.
     """
     try:
-        remote_version = get_remote_version()
+        remote_info = get_remote_version_info()
+        remote_version = str(remote_info["version"]).strip()
         manifest = get_remote_manifest()
         changed = _find_changed_files(manifest)
     except Exception as error:
@@ -230,6 +251,7 @@ def check_for_repair():
     return {
         "local_version": _local_version(),
         "remote_version": remote_version,
+        "remote_version_info": remote_info,
         "files": changed,
     }
 
@@ -292,6 +314,7 @@ def stage_update(update_info, control=None, progress_callback=None):
 
     pending = {
         "version": update_info["remote_version"],
+        "version_info": update_info["remote_version_info"],
         "launcher_dir": str(LAUNCHER_DIR),
         "launch_path": str(LAUNCH_PATH),
         "staging_dir": str(STAGING_DIR),
@@ -311,11 +334,18 @@ def launch_apply_helper(parent_pid=None):
     Start detached helper. Caller should quit its Qt application immediately
     after this succeeds.
     """
-    if not HELPER_PATH.is_file():
-        raise FileNotFoundError(f"Update helper not found: {HELPER_PATH}")
+    if not HELPER_SOURCE_PATH.is_file():
+        raise FileNotFoundError(
+            f"Update helper not found: {HELPER_SOURCE_PATH}"
+        )
 
     if not PENDING_FILE.is_file():
         raise FileNotFoundError(f"Pending update not found: {PENDING_FILE}")
+
+    # Run the helper from AppData, outside Q3Elite/Launcher. This allows the
+    # update to safely replace launcher_update_helper.py itself after exit.
+    SELF_UPDATE_DIR.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(HELPER_SOURCE_PATH, HELPER_RUN_PATH)
 
     if parent_pid is None:
         parent_pid = os.getpid()
@@ -330,7 +360,7 @@ def launch_apply_helper(parent_pid=None):
     subprocess.Popen(
         [
             sys.executable,
-            str(HELPER_PATH),
+            str(HELPER_RUN_PATH),
             "--apply",
             str(PENDING_FILE),
             "--wait-pid",

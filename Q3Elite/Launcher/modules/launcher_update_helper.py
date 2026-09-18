@@ -125,12 +125,16 @@ def apply_update(pending_path, wait_pid):
         destination = launcher_dir / entry["relative"]
         atomic_copy(source, destination)
 
-    # Commit the version LAST. If any file replacement above fails, the
-    # launcher is never falsely marked as current.
-    version_file = launcher_dir / "launcher_version.txt"
+    # Commit Launcher_Version.json LAST. If any file replacement above fails,
+    # the launcher is never falsely marked as current.
+    version_file = launcher_dir / "Launcher_Version.json"
     version_temp = version_file.with_name(version_file.name + ".new")
     version_temp.write_text(
-        str(data["version"]).strip() + "\n",
+        json.dumps(
+            data["version_info"],
+            indent=4,
+            ensure_ascii=False,
+        ) + "\n",
         encoding="utf-8",
     )
     os.replace(version_temp, version_file)

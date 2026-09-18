@@ -27,6 +27,7 @@ import download_tools as dt
 
 from osp_updater import check_and_update as check_and_update_osp
 from pak_verifier import verify_paks
+from launcher_updater import check_for_update as check_launcher_update, stage_update as stage_launcher_update, launch_apply_helper
 from base_methods import *
 from gui_tools import *
 
@@ -797,6 +798,61 @@ class PostInstallUpdate(QtCore.QThread):
 
 
 # ============================================================================
+# LAUNCHER SELF-UPDATE
+# ============================================================================
+
+class LauncherSelfUpdate(QtCore.QThread):
+
+    result_ready = pyqtSignal(str)
+
+    def run(self):
+        """
+        Check GitHub before PAK/OSP work.
+
+        Results:
+            "continue" -> no update / offline / failed check; continue startup
+            "restart"  -> update staged and helper started; close this launcher
+        """
+        try:
+            print()
+            print("========================================")
+            print(" Checking Launcher update")
+            print("========================================")
+            print()
+
+            update_info = check_launcher_update()
+
+            if not update_info:
+                self.result_ready.emit("continue")
+                return
+
+            print(
+                f"Launcher update available: "
+                f"{update_info['local_version']} -> "
+                f"{update_info['remote_version']}"
+            )
+            print(f"Changed files: {len(update_info['files'])}")
+            print()
+
+            stage_launcher_update(
+                update_info,
+                control=download_control,
+                progress_callback=download_progress_callback,
+            )
+
+            launch_apply_helper(os.getpid())
+            self.result_ready.emit("restart")
+
+        except Exception as error:
+            # Self-update must not brick an otherwise usable launcher.
+            print()
+            print(f"[warning] Launcher self-update unavailable: {error}")
+            print("Continuing normal startup.")
+            print()
+            self.result_ready.emit("continue")
+
+
+# ============================================================================
 # SHARED DOWNLOAD CONTROL
 # ============================================================================
 
@@ -988,6 +1044,44 @@ def start_local_check():
         set_gui_checking("Installing...")
         q3elite_download.start()
 
+def start_game_checks():
+    """Start the existing Q3Elite/PAK/OSP pipeline after self-update resolves."""
+    if q3elite_is_installed():
+        print()
+        print("Existing Q3Elite installation detected.")
+        print("Verifying local PAK files and checking OSP2-BE...")
+        print()
+
+        install_state["q3elite_done"] = True
+        install_state["q3elite_ok"] = True
+
+        set_gui_checking("Checking...")
+        fdownload.start()
+    else:
+        print()
+        print("Q3Elite is not installed.")
+        print("Starting first installation...")
+        print()
+
+        # Serialize first installation. The Q3Elite archive contains baseq3,
+        # therefore PAK verification must not write there at the same time.
+        install_state["q3elite_done"] = False
+        install_state["q3elite_ok"] = False
+        set_gui_checking("Installing...")
+        q3elite_download.start()
+
+
+def launcher_self_update_result(action):
+    if action == "restart":
+        print()
+        print("Launcher update staged. Restarting...")
+        print()
+        app.quit()
+        return
+
+    start_game_checks()
+
+
 # ============================================================================
 # MAIN
 # ============================================================================
@@ -1014,6 +1108,17 @@ def base_install_result(success):
 def q3elite_install_result(success):
     install_state["q3elite_done"] = True
     install_state["q3elite_ok"] = success
+
+    if not success:
+        check_install_finished()
+        return
+
+    # On first install PAK verification starts only AFTER the Q3Elite archive
+    # has finished writing baseq3.
+    if not install_state["base_done"] and not fdownload.isRunning():
+        set_gui_checking("Checking...")
+        fdownload.start()
+        return
 
     check_install_finished()
 
@@ -1180,9 +1285,14 @@ if __name__ == "__main__":
         # WORKERS
         # --------------------------------------------------------------------
 
+        launcher_self_update = LauncherSelfUpdate()
         fdownload = FDownload()
         q3elite_download = Q3EliteDownload()
         post_update = PostInstallUpdate()
+
+        launcher_self_update.result_ready.connect(
+            launcher_self_update_result
+        )
 
         fdownload.result_ready.connect(
             base_install_result
@@ -1204,31 +1314,10 @@ if __name__ == "__main__":
         # START
         # --------------------------------------------------------------------
 
-        # The merged launcher always starts and stays open.
-        # Network-dependent checks are background work and never gate startup.
-        if q3elite_is_installed():
-            print()
-            print("Existing Q3Elite installation detected.")
-            print("Verifying local PAK files and checking OSP2-BE...")
-            print()
-
-            install_state["q3elite_done"] = True
-            install_state["q3elite_ok"] = True
-
-            set_gui_checking("Checking...")
-            fdownload.start()
-        else:
-            # Temporary pre-redesign behavior: first installation still starts
-            # automatically. The next GUI pass will expose DOWNLOAD / PAUSE /
-            # RESUME buttons without changing this backend pipeline.
-            print()
-            print("Q3Elite is not installed.")
-            print("Starting first installation...")
-            print()
-
-            set_gui_checking("Installing...")
-            fdownload.start()
-            q3elite_download.start()
+        # Self-update always resolves before any PAK/OSP/game update workers.
+        # GitHub/network failure is non-fatal and falls through to normal startup.
+        set_gui_checking("Checking Launcher...")
+        launcher_self_update.start()
 
         sys.exit(
             app.exec()
