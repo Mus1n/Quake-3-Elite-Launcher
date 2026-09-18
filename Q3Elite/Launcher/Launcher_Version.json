@@ -1,7 +1,7 @@
 {
-    "version": "0.03",
+    "version": "0.04",
     "update_type": "optional",
     "changelog": [
-        "Background Image Update"
+        "Background Image Update, delete sticker"
     ]
 }

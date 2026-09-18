@@ -1,9 +1,10 @@
 {
     "format": 2,
     "files": {
-        "Q3Elite/Launcher/Launcher_Manifest.json": "cf4aee9ef39ee561dcc30537e0947ded2087557676b3af33feb6c867e4c699bb",
+        "Q3Elite/Launcher/Launcher_Manifest.json": "afd0aa1a01ebacd5cd8016f590fcf0faf84f432ef24d8576e733ba5e2a59e46f",
         "Q3Elite/Launcher/download_confs/Quake 3 Elite pcloud.dconf": "eb7829d1b7b7ddb89e38d3f8a079139111e845c4fa7110b1eec0baab4d13b28c",
         "Q3Elite/Launcher/download_confs/base.dconf": "967f791a225ea6f710aa3a20827237a2ea2fe2c20cb29acfd7a9b07eda0d33bf",
+        "Q3Elite/Launcher/icons/Back.png": "8bba8ca5e21f1275ea609cb2bb9934c1f1ff19e4ab2f4ae2532405e4c418fc57",
         "Q3Elite/Launcher/icons/anonimus.webp": "165ea864d6911b86345ba1c210067e9273c01a9ab8758c19bf1ad0b6e783a8d0",
         "Q3Elite/Launcher/icons/b3.ico": "8e8b4c764d9ba62da11f77c75b913f6b86c7435f201c0ace22bb93bf4418d718",
         "Q3Elite/Launcher/icons/b3.png": "83637c62586e915459d9d5911225ffd02ddc26956ac759d3898ddd67ee95a45b",
