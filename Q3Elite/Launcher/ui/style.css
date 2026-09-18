@@ -309,3 +309,64 @@ QToolTip {
     border: 1px solid #2a6f82;
     padding: 5px;
 }
+
+
+/* Website-inspired visual pass */
+QFrame#heroCard {
+    background-color: #07171d;
+    border: 1px solid rgba(43, 190, 224, 105);
+    border-radius: 16px;
+}
+QLabel#heroImage {
+    background-color: #061218;
+    border: none;
+    border-top-left-radius: 15px;
+    border-top-right-radius: 15px;
+    color: #67818c;
+    font-size: 11px;
+    letter-spacing: 3px;
+}
+QFrame#heroOverlay {
+    background-color: rgba(4, 17, 23, 248);
+    border: none;
+    border-top: 1px solid rgba(48, 200, 234, 65);
+    border-bottom-left-radius: 15px;
+    border-bottom-right-radius: 15px;
+}
+QLabel#heroKicker {
+    color: #f2fbff;
+    font-size: 19px;
+    font-weight: 800;
+    letter-spacing: 5px;
+}
+QLabel#heroTitle {
+    color: #62dfff;
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 4px;
+}
+QLabel#heroCounter {
+    color: #91acb7;
+    font-size: 11px;
+    letter-spacing: 2px;
+    padding-right: 6px;
+}
+QPushButton#sliderArrow {
+    background-color: rgba(6, 27, 35, 220);
+    border: 1px solid rgba(66, 206, 238, 80);
+    border-radius: 19px;
+    color: #dffaff;
+    font-size: 25px;
+    padding: 0;
+}
+QPushButton#sliderArrow:hover {
+    background-color: rgba(17, 77, 94, 230);
+    border-color: #35d9ff;
+}
+QFrame#featureCard:hover {
+    background-color: rgba(14, 45, 57, 235);
+    border-color: rgba(53, 217, 255, 135);
+}
+QFrame#sidebar { background-color: rgba(2, 10, 14, 248); }
+QPushButton#playButton { letter-spacing: 5px; }
+QLabel#brand { letter-spacing: 4px; }

@@ -8,6 +8,11 @@ import zipfile
 
 from pathlib import Path
 
+from PyQt6 import QtCore, QtGui, QtWidgets, QtNetwork
+from PyQt6.QtCore import QLockFile, pyqtSignal
+from PyQt6.QtWidgets import QApplication
+from PyQt6.QtGui import QFontDatabase
+
 
 # ============================================================================
 # PATHS
@@ -15,6 +20,7 @@ from pathlib import Path
 
 LAUNCHER_DIR = Path(__file__).resolve().parent.parent
 GAME_ROOT = LAUNCHER_DIR.parent.parent
+ASSETS_DIR = LAUNCHER_DIR / "assets"
 
 os.chdir(LAUNCHER_DIR)
 
@@ -31,7 +37,6 @@ from q3elite_updater import check_and_update as check_and_update_q3elite
 from pak_verifier import verify_paks
 from launcher_updater import check_for_update as check_launcher_update, stage_update as stage_launcher_update, launch_apply_helper
 from base_methods import *
-from gui_tools import *
 
 
 # ============================================================================
@@ -1400,6 +1405,23 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
         self._load_component_state_initial()
         self.load_settings_ui()
 
+        # Screenshot set shared with the public Q3Elite website.
+        self._hero_urls = [
+            "https://i.imgur.com/2fRzLTO.png", "https://i.imgur.com/LdHeuau.png",
+            "https://i.imgur.com/GF6zwPt.png", "https://i.imgur.com/cgYryat.png",
+            "https://i.imgur.com/mWc8Kq2.png", "https://i.imgur.com/YNBOXne.png",
+            "https://i.imgur.com/UQNArcD.png", "https://i.imgur.com/QosQqFM.png",
+            "https://i.imgur.com/5fOcRHo.png", "https://i.imgur.com/UQ7J66U.png",
+            "https://i.imgur.com/U8UN1dj.png", "https://i.imgur.com/Jmj7Ftm.png",
+            "https://i.imgur.com/oGslbD6.png", "https://i.imgur.com/YfwCXyw.png",
+            "https://i.imgur.com/qTw4JRT.png", "https://i.imgur.com/XMOCcCe.png",
+            "https://i.imgur.com/jVZDWBk.png", "https://i.imgur.com/jNrScdr.png",
+        ]
+        self._hero_index = 0
+        self._hero_pixmaps = {}
+        self._network = QtNetwork.QNetworkAccessManager(self)
+        self.load_hero_image()
+
     def _nav_button(self, text, page):
         b = QtWidgets.QPushButton(text)
         b.setObjectName("navButton")
@@ -1424,20 +1446,50 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
 
         hero = self._card("heroCard")
         hero_l = QtWidgets.QVBoxLayout(hero)
-        hero_l.setContentsMargins(30, 28, 30, 28)
-        hero_l.addStretch(1)
-        kicker = QtWidgets.QLabel("QUAKE 3 ARENA")
+        hero_l.setContentsMargins(0, 0, 0, 0)
+        hero_l.setSpacing(0)
+
+        self.heroImage = QtWidgets.QLabel("Loading screenshot...")
+        self.heroImage.setObjectName("heroImage")
+        self.heroImage.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
+        self.heroImage.setMinimumHeight(255)
+        self.heroImage.setSizePolicy(
+            QtWidgets.QSizePolicy.Policy.Expanding,
+            QtWidgets.QSizePolicy.Policy.Expanding,
+        )
+        hero_l.addWidget(self.heroImage, 1)
+
+        hero_controls = QtWidgets.QFrame()
+        hero_controls.setObjectName("heroOverlay")
+        hc = QtWidgets.QHBoxLayout(hero_controls)
+        hc.setContentsMargins(22, 11, 16, 11)
+
+        hero_text = QtWidgets.QVBoxLayout()
+        kicker = QtWidgets.QLabel("QUAKE 3 ELITE")
         kicker.setObjectName("heroKicker")
-        hero_l.addWidget(kicker)
         hero_title = QtWidgets.QLabel("RELOADED FOR A NEW ERA")
         hero_title.setObjectName("heroTitle")
-        hero_l.addWidget(hero_title)
-        hero_desc = QtWidgets.QLabel(
-            "Vulkan Engine   •   OSP2-BE   •   Custom HUD\\n"
-            "Enhanced Graphics   •   Community Maps"
-        )
-        hero_desc.setObjectName("heroDescription")
-        hero_l.addWidget(hero_desc)
+        hero_text.addWidget(kicker)
+        hero_text.addWidget(hero_title)
+        hc.addLayout(hero_text, 1)
+
+        self.heroCounter = QtWidgets.QLabel("01 / 18")
+        self.heroCounter.setObjectName("heroCounter")
+        hc.addWidget(self.heroCounter)
+
+        self.heroPrev = QtWidgets.QPushButton("‹")
+        self.heroPrev.setObjectName("sliderArrow")
+        self.heroPrev.setFixedSize(38, 38)
+        self.heroPrev.clicked.connect(lambda: self.change_hero_image(-1))
+        hc.addWidget(self.heroPrev)
+
+        self.heroNext = QtWidgets.QPushButton("›")
+        self.heroNext.setObjectName("sliderArrow")
+        self.heroNext.setFixedSize(38, 38)
+        self.heroNext.clicked.connect(lambda: self.change_hero_image(1))
+        hc.addWidget(self.heroNext)
+
+        hero_l.addWidget(hero_controls)
         upper.addWidget(hero, 2)
 
         right = QtWidgets.QVBoxLayout()
@@ -1731,15 +1783,70 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
         self.checkStartupBox.setChecked(launcher_settings.get("check_updates_on_startup", True))
 
     def launch(self):
-        """Launch Q3Elite using the existing launch.bat entry point."""
-        launch_bat = LAUNCHER_DIR / "launch.bat"
-        if not launch_bat.is_file():
-            self.qerror(f"Could not find launcher entry point:\n{launch_bat}")
-            return
+        """Start the game directly without re-running the launcher."""
         try:
-            os.startfile(str(launch_bat))
+            if not launch():
+                self.qerror(
+                    "Could not start Q3Elite.\n"
+                    "The Vulkan/OpenGL game launcher was not found or failed to start."
+                )
+                return
+            self.statusDetail.setText("Q3Elite started.")
         except Exception as error:
             self.qerror(f"Could not start Q3Elite:\n{error}")
+
+    def change_hero_image(self, delta):
+        if not self._hero_urls:
+            return
+        self._hero_index = (self._hero_index + delta) % len(self._hero_urls)
+        self.load_hero_image()
+
+    def load_hero_image(self):
+        if not self._hero_urls:
+            return
+        self.heroCounter.setText(f"{self._hero_index + 1:02d} / {len(self._hero_urls):02d}")
+        url = self._hero_urls[self._hero_index]
+        cached = self._hero_pixmaps.get(url)
+        if cached is not None:
+            self._set_hero_pixmap(cached)
+            return
+        request = QtNetwork.QNetworkRequest(QtCore.QUrl(url))
+        request.setRawHeader(b"User-Agent", b"Q3Elite-Launcher/0.04")
+        reply = self._network.get(request)
+        reply.finished.connect(lambda r=reply, u=url: self._hero_download_finished(r, u))
+
+    def _hero_download_finished(self, reply, url):
+        try:
+            if reply.error() != QtNetwork.QNetworkReply.NetworkError.NoError:
+                self.heroImage.setText("Q3ELITE  •  VULKAN  •  OSP2-BE")
+                return
+            pixmap = QtGui.QPixmap()
+            if pixmap.loadFromData(bytes(reply.readAll())):
+                self._hero_pixmaps[url] = pixmap
+                if url == self._hero_urls[self._hero_index]:
+                    self._set_hero_pixmap(pixmap)
+        finally:
+            reply.deleteLater()
+
+    def _set_hero_pixmap(self, pixmap):
+        target = self.heroImage.size()
+        if target.width() < 10 or target.height() < 10:
+            return
+        scaled = pixmap.scaled(
+            target,
+            QtCore.Qt.AspectRatioMode.KeepAspectRatioByExpanding,
+            QtCore.Qt.TransformationMode.SmoothTransformation,
+        )
+        x = max(0, (scaled.width() - target.width()) // 2)
+        y = max(0, (scaled.height() - target.height()) // 2)
+        self.heroImage.setPixmap(scaled.copy(x, y, target.width(), target.height()))
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        if hasattr(self, "_hero_urls") and self._hero_urls:
+            pixmap = self._hero_pixmaps.get(self._hero_urls[self._hero_index])
+            if pixmap is not None:
+                self._set_hero_pixmap(pixmap)
 
     def qerror(self, text):
         QtWidgets.QMessageBox.critical(self, "Q3Elite Launcher", str(text))
@@ -1925,6 +2032,15 @@ def main():
     try:
         app = QApplication(sys.argv)
 
+        # Prevent a second launcher process from starting.
+        instance_dir = Path(os.environ.get("APPDATA", str(LAUNCHER_DIR))) / "Quake 3 Elite" / "Launcher"
+        instance_dir.mkdir(parents=True, exist_ok=True)
+        instance_lock = QLockFile(str(instance_dir / "Q3EliteLauncher.lock"))
+        instance_lock.setStaleLockTime(0)
+        if not instance_lock.tryLock(100):
+            print("Q3Elite Launcher is already running.")
+            return 0
+
         # External stylesheet is now the single source of visual styling.
         style_path = LAUNCHER_DIR / "ui" / "style.css"
         if style_path.is_file():
@@ -1933,7 +2049,9 @@ def main():
             print(f"[warning] UI stylesheet not found: {style_path}")
 
         # Keep existing font support for the backend terminal.
-        font_path = LAUNCHER_DIR / "ui" / "FiraCode-Regular.ttf"
+        font_path = ASSETS_DIR / "fonts" / "FiraCode-Regular.ttf"
+        if not font_path.is_file():
+            font_path = LAUNCHER_DIR / "ui" / "FiraCode-Regular.ttf"
         family = "Arial"
         if font_path.is_file():
             font_id = QFontDatabase.addApplicationFont(str(font_path))
@@ -1982,10 +2100,13 @@ def main():
             "If the problem remains after restart, check the launcher log."
         )
         try:
-            show_error(message, lambda: None)
+            if "app" in globals() and app is not None:
+                QtWidgets.QMessageBox.critical(None, "Q3Elite Launcher", message)
+            else:
+                print(message)
         except Exception:
             print(message)
-            raise
+        raise
 
 
 # Explicit entry point for the standalone .pyw launcher.
