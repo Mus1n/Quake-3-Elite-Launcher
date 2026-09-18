@@ -15,9 +15,6 @@ from PyQt6.QtGui import QIcon, QTextCursor, QPixmap, QPalette, QBrush, QPainter,
 from PyQt6.QtGui import QFontDatabase
 
 from base_methods import *
-from upd_tools import *
-from bmods_tools import *
-import async_upd_tools as aut
 
 def load_tab_icon(path, size=32, counter_rotate=90):
     pixmap = QtGui.QPixmap(path).scaled(

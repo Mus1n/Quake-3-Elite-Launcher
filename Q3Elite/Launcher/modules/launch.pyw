@@ -25,9 +25,8 @@ os.chdir(LAUNCHER_DIR)
 
 import download_tools as dt
 
-from upd_tools import get_updates, update
+from osp_updater import check_and_update as check_and_update_osp
 from pak_verifier import verify_paks
-from bmods_tools import *
 from base_methods import *
 from gui_tools import *
 
@@ -699,8 +698,6 @@ class FDownload(QtCore.QThread):
             if not os.path.exists("./cache"):
                 os.mkdir("./cache")
 
-            bmod_conf.save()
-
             # ============================================================
             # VERIFY OFFICIAL QUAKE 3 PAKS
             # ============================================================
@@ -754,62 +751,27 @@ class PostInstallUpdate(QtCore.QThread):
             print("========================================")
             print()
 
-            osp_file_exists = osp_file.is_file()
-
-            if osp_file_exists:
+            if osp_file.is_file():
                 print(f"Installed file: {osp_file}")
             else:
                 print(f"OSP2-BE file is missing: {osp_file}")
 
-            # Network access is optional. If the update servers cannot be reached,
-            # keep the installed game playable.
-            try:
-                updates = get_updates()
-            except Exception as error:
-                print()
-                print(f"[offline] Update check unavailable: {error}")
-                print("Continuing in offline mode.")
-                self.offline.emit(str(error))
-                self.result_ready.emit(True)
-                return
+            result = check_and_update_osp()
 
-            osp_update_available = "OSP2-BE" in updates
+            print()
+            print(
+                "OSP2-BE status: "
+                f"{result['action']}"
+            )
 
-            if osp_update_available:
-                print()
-                print("New OSP2-BE version available.")
-                print("Updating OSP2-BE automatically...")
-                print()
-                update("OSP2-BE")
-
-            elif not osp_file_exists:
-                print()
-                print("OSP2-BE version is current, but the PK3 file is missing.")
-                print("Repairing OSP2-BE...")
-                print()
-
-                osp_dconf = DOWNLOAD_CONFS_DIR / "OSP2-BE.dconf"
-                if not osp_dconf.is_file():
-                    raise FileNotFoundError(
-                        f"OSP2-BE.dconf not found: {osp_dconf}"
-                    )
-
-                dt.download(
-                    str(osp_dconf),
-                    skip=True,
-                    control=download_control,
-                    progress_callback=download_progress_callback
-                )
-
-            if not osp_file.is_file():
-                # OSP2-BE is not required to start the engine. Do not brick an
-                # otherwise valid local installation if OSP repair is unavailable.
-                print()
-                print("[warning] OSP2-BE is still missing.")
-                print("PLAY remains available; repair will be retried when online.")
-            else:
-                print()
+            if osp_file.is_file():
                 print(f"OSP2-BE verified: {osp_file}")
+            else:
+                print("[warning] OSP2-BE is still missing.")
+                print(
+                    "PLAY remains available; repair will be "
+                    "retried when online."
+                )
 
             print()
             print("========================================")
@@ -820,43 +782,18 @@ class PostInstallUpdate(QtCore.QThread):
             self.result_ready.emit(True)
 
         except Exception as error:
-            # Update/network failures must not block a valid local installation.
+            # OSP2-BE is optional for launching the engine. A network/update
+            # failure must therefore not brick an otherwise valid installation.
             print()
-            print(f"[warning] OSP2-BE update unavailable: {error}")
+            print(
+                f"[offline] OSP2-BE update check unavailable: "
+                f"{error}"
+            )
             print("Continuing without blocking PLAY.")
             print()
+
             self.offline.emit(str(error))
             self.result_ready.emit(True)
-
-
-# ============================================================================
-# MOD LIST DOWNLOAD
-# ============================================================================
-
-class MDownload(QtCore.QThread):
-
-    result_ready = pyqtSignal(bool)
-
-    def run(self):
-
-        get_modlist()
-
-
-# ============================================================================
-# MOD LIST CHECK
-# ============================================================================
-
-def mdlist_check():
-
-    window.upd_status(
-        False
-    )
-
-    if not os.path.exists(
-        "./temp_files/modlist.json"
-    ):
-
-        print("[offline] Mod list unavailable. Launcher remains usable.")
 
 
 # ============================================================================
@@ -1248,13 +1185,8 @@ if __name__ == "__main__":
         # --------------------------------------------------------------------
 
         fdownload = FDownload()
-        mdownload = MDownload()
         q3elite_download = Q3EliteDownload()
         post_update = PostInstallUpdate()
-
-        mdownload.finished.connect(
-            mdlist_check
-        )
 
         fdownload.result_ready.connect(
             base_install_result
@@ -1310,11 +1242,11 @@ if __name__ == "__main__":
 
         message = (
             f"{type(error).__name__}: {error}\n"
-            "If after restart you see this message, "
-            "write me (t.me/konstalker)"
+            "If the problem remains after restart, "
+            "check the launcher log."
         )
 
         show_error(
             message,
-            lambda: update("scripts")
+            lambda: None
         )
