@@ -14,9 +14,8 @@ import http.client
 from math import floor
 
 
-# Shared launcher-wide controller/callback.  This keeps old callers such as
-# upd_tools.update() compatible while still letting the unified launcher pause
-# every transfer that eventually goes through downloader().
+# Shared launcher-wide controller/callback used by the unified Q3Elite
+# downloader pipeline.
 _DEFAULT_DOWNLOAD_CONTROL = None
 _DEFAULT_PROGRESS_CALLBACK = None
 
@@ -161,8 +160,6 @@ def downloader(
     (Q3Elite, official PAKs, OSP2-BE and updater files). The final filename is
     created only after the transfer reaches the expected remote size.
     """
-
-    file_url = furl(file_url)
 
     final_path = os.path.join(file_path, file_name)
     working_path = final_path + ".part" if use_part_file else final_path
@@ -459,8 +456,6 @@ def unziper(file_url, name, file_paths=[], skip=False, wanted_paths=None, contro
     """wanted_paths: if specified (set of normalized destination paths),
     process only entries whose destination is included in it."""
 
-    file_url = furl(file_url)
-
     installed = []
 
     cache_file = CACHE_DIR / name
@@ -570,12 +565,12 @@ def download(conf_file, skip=False, wanted_paths=None, control=None, progress_ca
                         for start, end in zip(arr[3::2], arr[4::2]):
                             files.append([start, end])
 
-                        installed = unziper(furl(url), name, files, skip=skip, wanted_paths=wanted_paths, control=control, progress_callback=progress_callback)
+                        installed = unziper(url, name, files, skip=skip, wanted_paths=wanted_paths, control=control, progress_callback=progress_callback)
 
                     elif arr[0] == 'f':
 
                         file_name = arr[1]
-                        file_url = furl(arr[2])
+                        file_url = arr[2]
                         dest_dir = Path(arr[3])
 
                         dest_path = os.path.normpath(

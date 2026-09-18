@@ -28,8 +28,6 @@ GAME_ROOT = Q3ELITE_DIR.parent
 UI_DIR = LAUNCHER_DIR / "ui"
 ICONS_DIR = LAUNCHER_DIR / "icons"
 DOWNLOAD_CONFS_DIR = LAUNCHER_DIR / "download_confs"
-MOD_TREE_DIR = LAUNCHER_DIR / "mod_tree"
-TEMP_FILES_DIR = LAUNCHER_DIR / "temp_files"
 PYTHON_DIR = LAUNCHER_DIR / "python"
 
 
@@ -120,23 +118,6 @@ def check_url(url):
 def caption():
     print("Q3Elite Launcher")
     print("https://mus1n.github.io")
-
-class C_INFO:
-    def __init__(self):
-        
-        with open("./mod_tree/branch.txt", 'r') as f:
-            self.compilation_branch, self.mod_branch, self.repo_url, self.s_data = f.read().split('\n')[:4]
-        self.values = [["[OS]", self.s_data],
-                       ["[CBRANCH]", self.compilation_branch],
-                       ["[RURL]", self.repo_url]
-                      ]
-
-c_info = C_INFO()
-
-def furl(url):
-    for x in c_info.values:
-        url = url.replace(x[0], x[1])
-    return url
 
 def get_relative_paths(folder_path: str) -> list[str]:
     base_dir = Path(folder_path)
@@ -245,16 +226,3 @@ def show_error(text, update_function):
     dialog = ErrorDialog(text, update_function)
     dialog.exec()
 
-
-# Например:
-def updated():
-    import time
-    time.sleep(5)
-    print("Обновление завершено")
-
-
-if __name__ == "__main__":
-    try:
-        raise ValueError("Something went wrong!")
-    except Exception as error:
-        show_error(error, updated)

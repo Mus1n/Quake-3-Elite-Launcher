@@ -802,9 +802,8 @@ class PostInstallUpdate(QtCore.QThread):
 
 download_control = dt.DownloadControl()
 
-# upd_tools.py and any legacy dt.download()/dt.downloader() calls do not need
-# to know about the new controller explicitly: every transfer uses this shared
-# controller unless a caller supplies another one.
+# All downloader calls use this shared controller unless a caller supplies
+# another one explicitly.
 dt.set_default_download_control(download_control)
 
 _download_progress = {
@@ -931,23 +930,20 @@ def set_gui_checking(text="Checking..."):
 
 
 def set_gui_ready(offline=False):
-    """Switch the existing main button back to PLAY/Launch."""
+    """Switch the main button directly to Launch without the legacy updater."""
     try:
-        # Existing gui_tools.MainWindow already knows how to wire the Launch
-        # button and respect the Force OpenGL checkbox.
-        window.upd_status(False)
-        window.pushButton.setEnabled(True)
+        hide_download_controls()
+        _disconnect_main_button()
 
-        # Keep the current GUI wording/style. Only make offline state visible
-        # in the terminal/log; no redesign yet.
+        window.pushButton.setText("Launch")
+        window.pushButton.setEnabled(True)
+        window.pushButton.clicked.connect(window.launch)
+
         if offline:
             print("Launcher ready - OFFLINE MODE.")
         else:
             print("Launcher ready.")
 
-        # Return from the terminal/log view to the normal launcher GUI.
-        # The Launch button is already restored by upd_status(False).
-        hide_download_controls()
         window.close_terminal()
 
     except Exception as error:

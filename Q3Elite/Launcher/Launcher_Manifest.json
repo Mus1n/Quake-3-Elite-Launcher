@@ -1,0 +1,9 @@
+{
+    "version": "1.01",
+    "update_type": "optional",
+    "changelog": [
+        "Updated HUD",
+        "Updated textures",
+        "OSP2-BE compatibility fixes"
+    ]
+}
