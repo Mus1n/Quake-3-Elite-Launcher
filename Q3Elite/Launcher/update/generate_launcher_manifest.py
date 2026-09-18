@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 
 """
-Generate Launcher_manifest.json for Q3Elite Launcher.
+Generate Launcher_Manifest.json for Q3Elite Launcher.
 
 The script may be placed anywhere inside:
     <repo root>/Q3Elite/Launcher/
@@ -19,7 +19,7 @@ Excluded:
     - this generator itself
 
 Output:
-    <repo root>/Q3Elite/Launcher/Launcher_manifest.json
+    <repo root>/Q3Elite/Launcher/Launcher_Manifest.json
 
 Run:
     py generate_launcher_manifest.py
@@ -84,6 +84,16 @@ def sha256(path):
     return digest.hexdigest().lower()
 
 
+
+def is_launcher_metadata(repo_path):
+    """Metadata controls the update and must never be a payload file."""
+    normalized = str(repo_path).replace("\\", "/").casefold()
+    return normalized in {
+        "q3elite/launcher/launcher_version.json",
+        "q3elite/launcher/launcher_manifest.json",
+    }
+
+
 def git_launcher_files(repo_root):
     """
     Return:
@@ -127,7 +137,7 @@ def git_launcher_files(repo_root):
         # not launcher payload files.
         if repo_path in {
             "Q3Elite/Launcher/Launcher_Version.json",
-            "Q3Elite/Launcher/Launcher_manifest.json",
+            "Q3Elite/Launcher/Launcher_Manifest.json",
         }:
             continue
 
@@ -175,7 +185,7 @@ def main():
         raise SystemExit(f"\nERROR: {error}\n")
 
     launcher_root = repo_root / "Q3Elite" / "Launcher"
-    manifest_file = launcher_root / "Launcher_manifest.json"
+    manifest_file = launcher_root / "Launcher_Manifest.json"
 
     if not launcher_root.is_dir():
         raise SystemExit(
@@ -190,17 +200,40 @@ def main():
 
     previous_files, previous_deleted = load_previous_manifest(manifest_file)
 
+    # Clean metadata accidentally recorded by older generator versions.
+    previous_files = {
+        path: digest for path, digest in previous_files.items()
+        if not is_launcher_metadata(path)
+    }
+    previous_deleted = {
+        path for path in previous_deleted
+        if not is_launcher_metadata(path)
+    }
+
     current = {}
     for repo_path in files:
+        if is_launcher_metadata(repo_path):
+            continue
         absolute_path = repo_root / Path(repo_path)
         current[repo_path] = sha256(absolute_path)
 
     current_paths = set(current)
-    newly_deleted = set(previous_files) - current_paths
+    current_by_casefold = {path.casefold(): path for path in current_paths}
 
-    # Keep deletion history cumulative so 1.01 -> 1.10 works directly.
-    # If a previously deleted path is reintroduced, remove it from deleted.
-    deleted = (previous_deleted | newly_deleted) - current_paths
+    # Windows paths are case-insensitive. A rename such as Back.png -> back.png
+    # is NOT a deletion and must never enter the cleanup list.
+    newly_deleted = {
+        path for path in previous_files
+        if path.casefold() not in current_by_casefold
+    }
+
+    # Keep deletion history cumulative for direct jumps (e.g. 1.01 -> 1.10),
+    # but drop any historical deletion whose path exists again, regardless of case.
+    deleted_candidates = previous_deleted | newly_deleted
+    deleted = {
+        path for path in deleted_candidates
+        if path.casefold() not in current_by_casefold
+    }
 
     manifest = {
         "format": 2,
