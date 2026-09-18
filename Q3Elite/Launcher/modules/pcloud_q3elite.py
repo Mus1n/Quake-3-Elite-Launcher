@@ -80,6 +80,23 @@ def find(remote):
             raise FileNotFoundError(f"{remote}\nMissing: {part}\nAvailable: {avail}")
         cur=nxt
     return cur
+def pubzip_url(remote, filename="Q3Elite_Basic.zip"):
+    """Return the streaming pCloud getpubzip URL for a public-link folder."""
+    e=find(remote)
+    if not e.get("isfolder"):
+        raise NotADirectoryError(remote)
+    folderid=e.get("folderid")
+    if folderid is None:
+        raise RuntimeError(f"No pCloud folderid for: {remote}")
+    params=urllib.parse.urlencode({
+        "code": CODE,
+        "folderid": folderid,
+        "forcedownload": 1,
+        "filename": filename,
+    })
+    return f"https://api.pcloud.com/getpubzip?{params}"
+
+
 def resolve(remote):
     e=find(remote)
     if e.get("isfolder"): raise IsADirectoryError(remote)

@@ -63,8 +63,32 @@ def is_external_map(path):
     return norm(path).casefold().startswith("baseq3/maps/")
 
 
+def _component_preferences():
+    """Read optional-component policy without making updater depend on GUI."""
+    try:
+        import q3elite_components
+        state = q3elite_components.load_state()
+        if state.get("basic"):
+            return state
+    except Exception:
+        pass
+    return None
+
+
 def applies(path, profile):
-    return not (profile == CORE and is_external_map(path))
+    p = norm(path)
+    prefs = _component_preferences()
+
+    # Once Step 18B component state exists, it is authoritative.
+    if prefs is not None:
+        if is_external_map(p) and not prefs.get("external_maps", False):
+            return False
+        if p.casefold() == "baseq3/mods/osp/autoexec.cfg".casefold() and not prefs.get("autoexec_update", False):
+            return False
+        return True
+
+    # Backwards compatibility for installations made before Step 18B.
+    return not (profile == CORE and is_external_map(p))
 
 
 def sha256_file(path, chunk_size=4 * 1024 * 1024):
