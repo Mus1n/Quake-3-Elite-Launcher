@@ -5,7 +5,7 @@
         "Q3Elite/Launcher/download_confs/base.dconf": "967f791a225ea6f710aa3a20827237a2ea2fe2c20cb29acfd7a9b07eda0d33bf",
         "Q3Elite/Launcher/icons/b3.ico": "8e8b4c764d9ba62da11f77c75b913f6b86c7435f201c0ace22bb93bf4418d718",
         "Q3Elite/Launcher/icons/b3.png": "83637c62586e915459d9d5911225ffd02ddc26956ac759d3898ddd67ee95a45b",
-        "Q3Elite/Launcher/icons/sticker.webp": "165ea864d6911b86345ba1c210067e9273c01a9ab8758c19bf1ad0b6e783a8d0",
+        "Q3Elite/Launcher/icons/back.png": "8bba8ca5e21f1275ea609cb2bb9934c1f1ff19e4ab2f4ae2532405e4c418fc57",
         "Q3Elite/Launcher/icons/tback.png": "eb458aa24f05864eacb71485376c586f9ea9e0608655809d0880cdd6488c5e84",
         "Q3Elite/Launcher/launch.bat": "6bab840149177376a9e847b6f5c4b6dc1807b586586417da792b753279c38f1a",
         "Q3Elite/Launcher/modules/base_methods.py": "5ce52c7188a6ca3ba4fe4ec7553a4cd0ff4ac0a28e72bd0b674bbf3311d397c4",
@@ -23,8 +23,7 @@
         "Q3Elite/Launcher/ui/style.css": "6cd24091ccfa8d7fc1bbf11af35517f899f3f8df0c59685670af2fbe01aaf88a"
     },
     "deleted": [
-        "Q3Elite/Launcher/icons/Back.png",
         "Q3Elite/Launcher/icons/anonimus.webp",
-        "Q3Elite/Launcher/icons/back.png"
+        "Q3Elite/Launcher/icons/sticker.webp"
     ]
 }
