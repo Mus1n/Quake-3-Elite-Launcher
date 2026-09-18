@@ -56,21 +56,10 @@ def q3elite_is_current():
 # ============================================================================
 
 def q3elite_is_installed():
-    """Return True when the local Q3Elite installation is present."""
-
-    version_file = GAME_ROOT / "Q3Elite" / "Version.json"
-    if not version_file.is_file():
-        # Windows is case-insensitive, but keep compatibility with version.json too.
-        version_file = GAME_ROOT / "Q3Elite" / "version.json"
-
+    """Q3Elite is installed once its Engines directory exists."""
     engines_dir = GAME_ROOT / "Q3Elite" / "Engines"
-    baseq3_dir = GAME_ROOT / "baseq3"
-
-    return (
-        version_file.is_file()
-        and engines_dir.is_dir()
-        and baseq3_dir.is_dir()
-    )
+    print(f"Q3Elite install marker: {engines_dir}")
+    return engines_dir.is_dir()
 
 
 # ============================================================================

@@ -37,6 +37,7 @@ REMOTE_VERSION_URL = f"{REMOTE_ROOT}/Q3Elite/Launcher/Launcher_Version.json"
 REMOTE_MANIFEST_URL = f"{REMOTE_ROOT}/Q3Elite/Launcher/Launcher_manifest.json"
 
 LOCAL_VERSION_FILE = LAUNCHER_DIR / "Launcher_Version.json"
+LOCAL_MANIFEST_FILE = LAUNCHER_DIR / "Launcher_manifest.json"
 
 SELF_UPDATE_DIR = Q3ELITE_LAUNCHER_DATA_DIR / "self_update"
 STAGING_DIR = SELF_UPDATE_DIR / "staging"
@@ -116,39 +117,86 @@ def _normalize_manifest_path(value):
 
 def _parse_manifest(data):
     if not isinstance(data, dict) or not data:
-        raise ValueError("launcher_manifest.json is empty or invalid.")
+        raise ValueError("Launcher_manifest.json is empty or invalid.")
 
-    parsed = []
+    # v1 compatibility: {repo_path: sha256}
+    if "files" not in data:
+        raw_files = data
+        raw_deleted = []
+    else:
+        raw_files = data.get("files", {})
+        raw_deleted = data.get("deleted", [])
 
-    for raw_path, raw_hash in data.items():
+    if not isinstance(raw_files, dict):
+        raise ValueError("Manifest 'files' must be an object.")
+    if not isinstance(raw_deleted, list):
+        raise ValueError("Manifest 'deleted' must be an array.")
+
+    parsed_files = []
+    for raw_path, raw_hash in raw_files.items():
         repo_path, launcher_relative = _normalize_manifest_path(raw_path)
         expected_hash = str(raw_hash).strip().lower()
-
-        if (
-            len(expected_hash) != 64
-            or any(c not in "0123456789abcdef" for c in expected_hash)
-        ):
+        if len(expected_hash) != 64 or any(c not in "0123456789abcdef" for c in expected_hash):
             raise ValueError(f"Invalid SHA-256 for {repo_path}")
-
-        parsed.append({
+        parsed_files.append({
             "repo_path": repo_path,
             "launcher_relative": launcher_relative,
             "sha256": expected_hash,
         })
 
-    return parsed
+    deleted = []
+    for raw_path in raw_deleted:
+        repo_path, launcher_relative = _normalize_manifest_path(raw_path)
+        deleted.append({
+            "repo_path": repo_path,
+            "launcher_relative": launcher_relative,
+        })
+
+    return {
+        "files": parsed_files,
+        "deleted": deleted,
+        "raw": {
+            "format": 2,
+            "files": {e["repo_path"]: e["sha256"] for e in parsed_files},
+            "deleted": [e["repo_path"] for e in deleted],
+        },
+    }
+
+
+def _github_tree_files():
+    api_url = (
+        f"https://api.github.com/repos/{GITHUB_OWNER}/{GITHUB_REPO}/"
+        f"git/trees/{GITHUB_BRANCH}?recursive=1"
+    )
+    data = _read_json_url(api_url, timeout=15)
+    if not isinstance(data, dict) or not isinstance(data.get("tree"), list):
+        raise ValueError("GitHub tree response is invalid.")
+
+    excluded = {
+        "Q3Elite/Launcher/Launcher_Version.json",
+        "Q3Elite/Launcher/Launcher_manifest.json",
+        "Q3Elite/Launcher/update/generate_launcher_manifest.py",
+    }
+    entries = []
+    for item in data["tree"]:
+        repo_path = str(item.get("path", "")).replace("\\", "/")
+        if item.get("type") != "blob" or not repo_path.startswith(ALLOWED_PREFIX) or repo_path in excluded:
+            continue
+        _, rel = _normalize_manifest_path(repo_path)
+        entries.append({"repo_path": repo_path, "launcher_relative": rel, "sha256": None})
+    if not entries:
+        raise ValueError("No launcher files found in GitHub tree.")
+    return entries
+
+
+def _all_remote_launcher_files_without_manifest():
+    return _github_tree_files()
 
 
 def get_remote_version_info():
     data = _read_json_url(REMOTE_VERSION_URL)
-
-    if not isinstance(data, dict):
+    if not isinstance(data, dict) or not str(data.get("version", "")).strip():
         raise ValueError("Remote Launcher_Version.json is invalid.")
-
-    version = str(data.get("version", "")).strip()
-    if not version:
-        raise ValueError("Remote Launcher_Version.json has no version.")
-
     return data
 
 
@@ -160,91 +208,184 @@ def get_remote_manifest():
     return _parse_manifest(_read_json_url(REMOTE_MANIFEST_URL))
 
 
-def _find_changed_files(manifest):
+def get_local_manifest():
+    if not LOCAL_MANIFEST_FILE.is_file():
+        return None
+    try:
+        return _parse_manifest(json.loads(LOCAL_MANIFEST_FILE.read_text(encoding="utf-8")))
+    except Exception as error:
+        print(f"[warning] Local launcher manifest is invalid: {error}")
+        return None
+
+
+def _find_changed_files(files):
     changed = []
-
-    for entry in manifest:
-        local_path = LAUNCHER_DIR / Path(entry["launcher_relative"])
-
-        if not local_path.is_file():
+    for entry in files:
+        local = LAUNCHER_DIR / entry["launcher_relative"]
+        if not local.is_file():
             changed.append(entry)
             continue
-
-        try:
-            if _sha256(local_path) != entry["sha256"]:
-                changed.append(entry)
-        except OSError:
+        if entry.get("sha256") and _sha256(local) != entry["sha256"]:
             changed.append(entry)
-
     return changed
+
+
+def _find_missing_files(files):
+    return [
+        entry for entry in files
+        if not (LAUNCHER_DIR / entry["launcher_relative"]).is_file()
+    ]
+
+
+def _existing_deleted_entries(deleted):
+    return [
+        entry for entry in deleted
+        if (LAUNCHER_DIR / entry["launcher_relative"]).exists()
+    ]
 
 
 def check_for_update():
     """
-    Fast normal-start check.
-
-    If versions match, no manifest is downloaded and no local hashes are scanned.
-    GitHub/network failure is treated as offline and never blocks the launcher.
+    Fast normal startup:
+      * compare remote/local version first;
+      * same version -> use LOCAL manifest and check existence only (no hashes);
+      * different version -> fetch REMOTE manifest and hash/compare files;
+      * missing metadata -> bootstrap fallback.
     """
-    local_version = _local_version()
+    local_info = _local_version_info()
+    local_version = str(local_info.get("version", "unknown")).strip() or "unknown"
+    local_version_missing = not LOCAL_VERSION_FILE.is_file()
 
     try:
         remote_info = get_remote_version_info()
         remote_version = str(remote_info["version"]).strip()
-    except Exception as error:
-        print(f"[offline] Launcher update check unavailable: {error}")
-        return None
+    except Exception as version_error:
+        print(f"[warning] Launcher version metadata unavailable: {version_error}")
+        print("Trying full launcher bootstrap from GitHub...")
+        try:
+            files = _all_remote_launcher_files_without_manifest()
+        except Exception as tree_error:
+            print(f"[offline] Launcher update check unavailable: {tree_error}")
+            return None
+        return {
+            "local_version": local_version,
+            "remote_version": local_version,
+            "remote_version_info": local_info if not local_version_missing else {
+                "version": "unknown", "update_type": "optional", "changelog": []
+            },
+            "files": files,
+            "deleted": [],
+            "manifest_data": None,
+            "full_bootstrap": True,
+        }
 
     print(f"Local launcher version:  {local_version}")
     print(f"Remote launcher version: {remote_version}")
 
-    if local_version == remote_version:
-        print("Launcher is up to date.")
-        return None
+    # SAME VERSION: no remote manifest download and no hashing.
+    if local_version == remote_version and not local_version_missing:
+        local_manifest = get_local_manifest()
+        if local_manifest is None:
+            print("Local Launcher_manifest.json is missing.")
+            print("Downloading remote manifest for repair...")
+            try:
+                remote_manifest = get_remote_manifest()
+            except Exception as error:
+                print(f"[offline] Launcher manifest unavailable: {error}")
+                return None
+            missing = _find_missing_files(remote_manifest["files"])
+            deletions = _existing_deleted_entries(remote_manifest["deleted"])
+            if not missing and not deletions:
+                # Still install the missing local manifest through helper.
+                return {
+                    "local_version": local_version,
+                    "remote_version": remote_version,
+                    "remote_version_info": remote_info,
+                    "files": [],
+                    "deleted": [],
+                    "manifest_data": remote_manifest["raw"],
+                }
+            return {
+                "local_version": local_version,
+                "remote_version": remote_version,
+                "remote_version_info": remote_info,
+                "files": missing,
+                "deleted": deletions,
+                "manifest_data": remote_manifest["raw"],
+            }
+
+        missing = _find_missing_files(local_manifest["files"])
+        deletions = _existing_deleted_entries(local_manifest["deleted"])
+
+        if not missing and not deletions:
+            print("Launcher is up to date. Local file list is complete.")
+            return None
+
+        if missing:
+            print(f"Launcher repair required: {len(missing)} file(s) missing.")
+        if deletions:
+            print(f"Launcher cleanup required: {len(deletions)} obsolete file(s).")
+
+        return {
+            "local_version": local_version,
+            "remote_version": remote_version,
+            "remote_version_info": remote_info,
+            "files": missing,
+            "deleted": deletions,
+            "manifest_data": local_manifest["raw"],
+        }
 
     print("New launcher version available.")
     print("Downloading launcher manifest...")
 
     try:
-        manifest = get_remote_manifest()
-        changed = _find_changed_files(manifest)
-    except Exception as error:
-        print(f"[offline] Launcher manifest unavailable: {error}")
-        return None
+        remote_manifest = get_remote_manifest()
+    except Exception as manifest_error:
+        print(f"[warning] Launcher manifest unavailable: {manifest_error}")
+        print("Falling back to complete Launcher download from GitHub...")
+        try:
+            files = _all_remote_launcher_files_without_manifest()
+        except Exception as tree_error:
+            print(f"[offline] Launcher file list unavailable: {tree_error}")
+            return None
+        return {
+            "local_version": local_version,
+            "remote_version": remote_version,
+            "remote_version_info": remote_info,
+            "files": files,
+            "deleted": [],
+            "manifest_data": None,
+            "full_bootstrap": True,
+        }
 
-    # Version changed but files are already identical (e.g. interrupted final
-    # version write). Only synchronize the local version.
-    if not changed:
-        LOCAL_VERSION_FILE.write_text(
-            json.dumps(remote_info, indent=4, ensure_ascii=False) + "\n",
-            encoding="utf-8",
-        )
-        print("Launcher files are already current; version metadata synchronized.")
-        return None
+    changed = remote_manifest["files"] if local_version_missing else _find_changed_files(remote_manifest["files"])
+    deletions = _existing_deleted_entries(remote_manifest["deleted"])
 
+    # Even if payload bytes are already current, helper must commit version +
+    # local manifest and perform deletions.
     return {
         "local_version": local_version,
         "remote_version": remote_version,
         "remote_version_info": remote_info,
         "files": changed,
+        "deleted": deletions,
+        "manifest_data": remote_manifest["raw"],
+        "full_bootstrap": local_version_missing,
     }
 
 
 def check_for_repair():
-    """
-    Full integrity check. Unlike normal startup this always downloads the
-    manifest and hashes all launcher files listed there.
-    """
     try:
         remote_info = get_remote_version_info()
         remote_version = str(remote_info["version"]).strip()
         manifest = get_remote_manifest()
-        changed = _find_changed_files(manifest)
+        changed = _find_changed_files(manifest["files"])
+        deletions = _existing_deleted_entries(manifest["deleted"])
     except Exception as error:
         print(f"[offline] Launcher repair check unavailable: {error}")
         return None
 
-    if not changed:
+    if not changed and not deletions:
         print("Launcher integrity check passed.")
         return None
 
@@ -253,6 +394,8 @@ def check_for_repair():
         "remote_version": remote_version,
         "remote_version_info": remote_info,
         "files": changed,
+        "deleted": deletions,
+        "manifest_data": manifest["raw"],
     }
 
 
@@ -294,8 +437,9 @@ def stage_update(update_info, control=None, progress_callback=None):
 
         downloaded = Path(downloaded)
         actual_hash = _sha256(downloaded)
+        expected_hash = entry.get("sha256")
 
-        if actual_hash != entry["sha256"]:
+        if expected_hash and actual_hash != expected_hash:
             try:
                 downloaded.unlink()
             except OSError:
@@ -303,13 +447,16 @@ def stage_update(update_info, control=None, progress_callback=None):
 
             raise RuntimeError(
                 f"SHA-256 mismatch for {entry['launcher_relative']}.\n"
-                f"Expected: {entry['sha256']}\n"
+                f"Expected: {expected_hash}\n"
                 f"Actual:   {actual_hash}"
             )
 
+        # With the GitHub-tree bootstrap fallback there is no generated
+        # manifest hash available. Record the hash of the staged bytes so the
+        # detached helper still verifies staging before applying it.
         staged_files.append({
             "relative": entry["launcher_relative"],
-            "sha256": entry["sha256"],
+            "sha256": expected_hash or actual_hash,
         })
 
     pending = {
@@ -319,6 +466,11 @@ def stage_update(update_info, control=None, progress_callback=None):
         "launch_path": str(LAUNCH_PATH),
         "staging_dir": str(STAGING_DIR),
         "files": staged_files,
+        "deleted": [
+            entry["launcher_relative"]
+            for entry in update_info.get("deleted", [])
+        ],
+        "manifest_data": update_info.get("manifest_data"),
     }
 
     PENDING_FILE.write_text(

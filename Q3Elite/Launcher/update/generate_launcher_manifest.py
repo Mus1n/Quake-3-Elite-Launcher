@@ -144,6 +144,30 @@ def git_launcher_files(repo_root):
     return sorted(files)
 
 
+def load_previous_manifest(path):
+    if not path.is_file():
+        return {}, set()
+
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return {}, set()
+
+    # Backward compatibility with the old {path: sha256} format.
+    if isinstance(data, dict) and "files" not in data:
+        return data, set()
+
+    files = data.get("files", {}) if isinstance(data, dict) else {}
+    deleted = data.get("deleted", []) if isinstance(data, dict) else []
+
+    if not isinstance(files, dict):
+        files = {}
+    if not isinstance(deleted, list):
+        deleted = []
+
+    return files, {str(x).replace("\\", "/") for x in deleted}
+
+
 def main():
     try:
         repo_root = find_repo_root()
@@ -164,25 +188,25 @@ def main():
     except RuntimeError as error:
         raise SystemExit(f"\nERROR: {error}\n")
 
-    print()
-    print("Q3Elite Launcher Manifest Generator")
-    print("===================================")
-    print()
-    print(f"Script:   {SCRIPT_PATH}")
-    print(f"Repo:     {repo_root}")
-    print(f"Launcher: {launcher_root}")
-    print(f"Gitignore:{repo_root / '.gitignore'}")
-    print()
-    print("Using Git tracked + non-ignored untracked files.")
-    print("Calculating SHA-256...")
-    print()
+    previous_files, previous_deleted = load_previous_manifest(manifest_file)
 
-    manifest = {}
-
+    current = {}
     for repo_path in files:
         absolute_path = repo_root / Path(repo_path)
-        manifest[repo_path] = sha256(absolute_path)
-        print(f"  {repo_path}")
+        current[repo_path] = sha256(absolute_path)
+
+    current_paths = set(current)
+    newly_deleted = set(previous_files) - current_paths
+
+    # Keep deletion history cumulative so 1.01 -> 1.10 works directly.
+    # If a previously deleted path is reintroduced, remove it from deleted.
+    deleted = (previous_deleted | newly_deleted) - current_paths
+
+    manifest = {
+        "format": 2,
+        "files": dict(sorted(current.items())),
+        "deleted": sorted(deleted),
+    }
 
     manifest_file.write_text(
         json.dumps(manifest, indent=4, ensure_ascii=False) + "\n",
@@ -190,15 +214,26 @@ def main():
     )
 
     print()
-    print("========================================")
-    print(" Launcher manifest generated")
-    print("========================================")
+    print("Q3Elite Launcher Manifest Generator")
+    print("===================================")
+    print(f"Repo:     {repo_root}")
+    print(f"Launcher: {launcher_root}")
     print()
-    print(f"Files:    {len(manifest)}")
+    print(f"Files:    {len(current)}")
+    print(f"Deleted:  {len(deleted)}")
+    if newly_deleted:
+        print()
+        print("Newly deleted:")
+        for path in sorted(newly_deleted):
+            print(f"  - {path}")
+    if deleted:
+        print()
+        print("Cumulative deletion list:")
+        for path in sorted(deleted):
+            print(f"  - {path}")
+    print()
     print(f"Manifest: {manifest_file}")
-    print()
-    print("Ignored files were filtered by Git/.gitignore.")
-    print("No SHA-256 values need to be entered manually.")
+    print("SHA-256 values calculated automatically.")
 
 
 if __name__ == "__main__":

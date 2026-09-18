@@ -125,7 +125,35 @@ def apply_update(pending_path, wait_pid):
         destination = launcher_dir / entry["relative"]
         atomic_copy(source, destination)
 
-    # Commit Launcher_Version.json LAST. If any file replacement above fails,
+    # Remove files explicitly retired by the cumulative manifest.
+    # Safety: only relative paths below launcher_dir are accepted.
+    for relative in data.get("deleted", []):
+        rel = Path(relative)
+        if rel.is_absolute() or ".." in rel.parts:
+            raise RuntimeError(f"Unsafe deleted path: {relative}")
+        target = (launcher_dir / rel).resolve()
+        try:
+            target.relative_to(launcher_dir)
+        except ValueError:
+            raise RuntimeError(f"Deleted path escapes Launcher directory: {relative}")
+        if target.is_file() or target.is_symlink():
+            target.unlink()
+        elif target.is_dir():
+            shutil.rmtree(target)
+
+    # Save the exact manifest used for this update locally. On equal-version
+    # starts the launcher uses it only to check file existence (fast path).
+    manifest_data = data.get("manifest_data")
+    if manifest_data is not None:
+        manifest_file = launcher_dir / "Launcher_manifest.json"
+        manifest_temp = manifest_file.with_name(manifest_file.name + ".new")
+        manifest_temp.write_text(
+            json.dumps(manifest_data, indent=4, ensure_ascii=False) + "\n",
+            encoding="utf-8",
+        )
+        os.replace(manifest_temp, manifest_file)
+
+    # Commit Launcher_Version.json LAST. If any operation above fails,
     # the launcher is never falsely marked as current.
     version_file = launcher_dir / "Launcher_Version.json"
     version_temp = version_file.with_name(version_file.name + ".new")
