@@ -26,6 +26,7 @@ os.chdir(LAUNCHER_DIR)
 import download_tools as dt
 
 from osp_updater import check_and_update as check_and_update_osp
+from q3elite_updater import check_and_update as check_and_update_q3elite
 from pak_verifier import verify_paks
 from launcher_updater import check_for_update as check_launcher_update, stage_update as stage_launcher_update, launch_apply_helper
 from base_methods import *
@@ -653,6 +654,89 @@ class Q3EliteDownload(QtCore.QThread):
 
 
 # ============================================================================
+# INSTALLED Q3ELITE UPDATE — STEP 17
+# ============================================================================
+
+class Q3EliteUpdate(QtCore.QThread):
+
+    result_ready = pyqtSignal(bool)
+    offline = pyqtSignal(str)
+
+    def run(self):
+        """
+        Run the Step 16 Q3Elite updater before PAK/OSP checks.
+
+        Same version:
+            remote Version.json only -> local manifest existence check.
+
+        New version:
+            remote manifest diff -> incremental pCloud update.
+
+        Network failure:
+            non-blocking for an already installed game. PLAY can continue
+            after the independent PAK/OSP checks.
+
+        Update/verification failure after metadata was reached:
+            blocking, because a partially applied Q3Elite release should be
+            retried instead of being silently accepted as READY.
+        """
+        try:
+            print()
+            print("========================================")
+            print(" Checking Q3Elite update")
+            print("========================================")
+            print()
+
+            result = check_and_update_q3elite(
+                profile="full",
+                control=download_control,
+                progress_callback=download_progress_callback,
+            )
+
+            print()
+            print(f"Q3Elite status: {result.get('status', 'unknown')}")
+            print()
+            print("========================================")
+            print(" Q3Elite update check complete")
+            print("========================================")
+            print()
+
+            self.result_ready.emit(True)
+
+        except Exception as error:
+            # Step 17 keeps startup usable when the remote version check itself
+            # is unavailable. Detect the common network-layer exceptions without
+            # coupling q3elite_updater.py to Qt.
+            import socket
+            import urllib.error
+
+            network_error = isinstance(
+                error,
+                (
+                    urllib.error.URLError,
+                    TimeoutError,
+                    socket.timeout,
+                    ConnectionError,
+                ),
+            )
+
+            if network_error:
+                print()
+                print(f"[offline] Q3Elite update check unavailable: {error}")
+                print("Using the installed Q3Elite release.")
+                print()
+
+                self.offline.emit(str(error))
+                self.result_ready.emit(True)
+                return
+
+            print()
+            print(f"[error] Q3Elite update failed: {error}")
+            print()
+            self.result_ready.emit(False)
+
+
+# ============================================================================
 # BASE DOWNLOAD / UPDATE
 # ============================================================================
 
@@ -1010,7 +1094,7 @@ def start_local_check():
     """Retry local verification without restarting the launcher."""
     global fdownload, post_update
 
-    if fdownload.isRunning() or post_update.isRunning():
+    if q3elite_update.isRunning() or fdownload.isRunning() or post_update.isRunning():
         return
 
     install_state["base_done"] = False
@@ -1020,10 +1104,12 @@ def start_local_check():
     download_control.reset()
 
     if q3elite_is_installed():
-        install_state["q3elite_done"] = True
-        install_state["q3elite_ok"] = True
-        set_gui_checking("Checking...")
-        fdownload.start()
+        install_state["q3elite_done"] = False
+        install_state["q3elite_ok"] = False
+        install_state["q3elite_update_done"] = False
+        install_state["q3elite_update_ok"] = False
+        set_gui_checking("Checking Q3Elite...")
+        q3elite_update.start()
     else:
         # First-install button handling will be expanded to DOWNLOAD /
         # PAUSE / RESUME in the next downloader pass. For now retry the
@@ -1041,11 +1127,15 @@ def start_game_checks():
         print("Verifying local PAK files and checking OSP2-BE...")
         print()
 
-        install_state["q3elite_done"] = True
-        install_state["q3elite_ok"] = True
+        # Step 17: Q3Elite update is serialized before PAK verification.
+        # This avoids simultaneous writes into baseq3/Q3Elite.
+        install_state["q3elite_done"] = False
+        install_state["q3elite_ok"] = False
+        install_state["q3elite_update_done"] = False
+        install_state["q3elite_update_ok"] = False
 
-        set_gui_checking("Checking...")
-        fdownload.start()
+        set_gui_checking("Checking Q3Elite...")
+        q3elite_update.start()
     else:
         print()
         print("Q3Elite is not installed.")
@@ -1082,9 +1172,44 @@ install_state = {
     "q3elite_done": False,
     "q3elite_ok": False,
 
+    "q3elite_update_done": False,
+    "q3elite_update_ok": False,
+
     "post_update_started": False,
     "offline": False,
 }
+
+
+def q3elite_update_offline(reason):
+    install_state["offline"] = True
+    print(f"[offline] {reason}")
+
+
+def q3elite_update_result(success):
+    install_state["q3elite_update_done"] = True
+    install_state["q3elite_update_ok"] = success
+
+    if not success:
+        print()
+        print("========================================")
+        print(" Q3Elite update FAILED")
+        print("========================================")
+        print()
+
+        set_gui_error("RETRY")
+        window.qerror(
+            "Q3Elite update failed.\n"
+            "The previous Version.json was kept, so the update can be retried."
+        )
+        return
+
+    # Existing installation is now accepted for this startup.
+    install_state["q3elite_done"] = True
+    install_state["q3elite_ok"] = True
+
+    # Continue serially with official PAK verification.
+    set_gui_checking("Checking PAKs...")
+    fdownload.start()
 
 
 def base_install_result(success):
@@ -1097,6 +1222,8 @@ def base_install_result(success):
 def q3elite_install_result(success):
     install_state["q3elite_done"] = True
     install_state["q3elite_ok"] = success
+    install_state["q3elite_update_done"] = True
+    install_state["q3elite_update_ok"] = success
 
     if not success:
         check_install_finished()
@@ -1275,12 +1402,21 @@ if __name__ == "__main__":
         # --------------------------------------------------------------------
 
         launcher_self_update = LauncherSelfUpdate()
+        q3elite_update = Q3EliteUpdate()
         fdownload = FDownload()
         q3elite_download = Q3EliteDownload()
         post_update = PostInstallUpdate()
 
         launcher_self_update.result_ready.connect(
             launcher_self_update_result
+        )
+
+        q3elite_update.result_ready.connect(
+            q3elite_update_result
+        )
+
+        q3elite_update.offline.connect(
+            q3elite_update_offline
         )
 
         fdownload.result_ready.connect(

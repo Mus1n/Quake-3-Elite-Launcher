@@ -1,6 +1,5 @@
 import shutil
 from socket import timeout
-from base_methods import *
 
 from sys import argv
 import zipfile
@@ -12,6 +11,29 @@ import urllib.request
 import urllib.error
 import http.client
 from math import floor
+from pathlib import Path
+
+# Backend paths. This module intentionally has no GUI dependency.
+APPDATA_DIR = Path(os.environ.get("APPDATA", Path.home() / "AppData" / "Roaming"))
+Q3ELITE_APPDATA_DIR = APPDATA_DIR / "Quake 3 Elite"
+Q3ELITE_LAUNCHER_DATA_DIR = Q3ELITE_APPDATA_DIR / "Launcher"
+CACHE_DIR = Q3ELITE_LAUNCHER_DATA_DIR / "cache"
+Q3ELITE_TEMP_DIR = Q3ELITE_APPDATA_DIR / "Temp"
+TEMP_FILES_DIR = Q3ELITE_TEMP_DIR
+
+def get_relative_paths(root):
+    """Compatibility helper used by legacy unziper()."""
+    root = os.path.abspath(root)
+    result = []
+    for current, dirs, files in os.walk(root):
+        for name in files:
+            full = os.path.join(current, name)
+            result.append(os.path.relpath(full, root))
+    return result
+
+def caption():
+    """Legacy compatibility hook."""
+    return None
 
 
 # Shared launcher-wide controller/callback used by the unified Q3Elite

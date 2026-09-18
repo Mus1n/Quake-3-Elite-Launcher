@@ -2,10 +2,11 @@
 import argparse, hashlib, json, os, time, urllib.error, urllib.parse, urllib.request
 from pathlib import Path, PurePosixPath
 
-CODE="kZe2N77Z8vDEtsfAjwylpP99eqBp5j5GhrXk"
 API="https://eapi.pcloud.com"
 CORE="Quake 3 Arena/Quake 3 Elite"
 MAPS="Quake 3 Arena/Maps"
+MUSIC="Quake 3 Arena/z-Music-Playlist-by-Mus1n.pk3dir"
+LOCAL_MUSIC_PREFIX="baseq3/mods/osp/z-Music-Playlist-by-Mus1n.pk3dir/"
 AUTOEXEC="baseq3/mods/OSP/autoexec.cfg"
 UA="Q3Elite-Launcher-Step14"
 TIMEOUT=30
@@ -17,6 +18,36 @@ def root():
     return Path(__file__).resolve().parents[3]
 ROOT=root()
 MANIFEST=ROOT/"Q3Elite"/"Manifest.json"
+PCLOUD_DCONF=ROOT/"Q3Elite"/"Launcher"/"download_confs"/"Quake 3 Elite pcloud.dconf"
+
+def load_pcloud_code():
+    """Read pCloud public-link code from Quake 3 Elite pcloud.dconf."""
+    if not PCLOUD_DCONF.is_file():
+        raise FileNotFoundError(f"Missing pCloud config: {PCLOUD_DCONF}")
+
+    text=PCLOUD_DCONF.read_text(encoding="utf-8-sig")
+
+    # Accept a normal pCloud public URL anywhere in the dconf, e.g.
+    # https://e.pcloud.link/publink/show?code=...
+    import re
+    match=re.search(r"(?:[?&]|\b)code=([A-Za-z0-9_-]+)",text,re.IGNORECASE)
+    if match:
+        return match.group(1)
+
+    # Also accept a bare share code on a non-comment line.
+    for raw in text.splitlines():
+        line=raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        if re.fullmatch(r"[A-Za-z0-9_-]{20,}",line):
+            return line
+
+    raise RuntimeError(
+        "Cannot find pCloud public-link code in:\n"
+        f"{PCLOUD_DCONF}"
+    )
+
+CODE=load_pcloud_code()
 
 def norm(s): return str(PurePosixPath(str(s).replace("\\","/").lstrip("/")))
 def sha(path):
@@ -31,7 +62,12 @@ def api(name, **params):
         d=json.loads(r.read().decode())
     if d.get("result",0): raise RuntimeError(f"pCloud {d.get('result')}: {d.get('error')}")
     return d
-def tree(): return api("showpublink",code=CODE)
+_TREE_CACHE=None
+def tree(refresh=False):
+    global _TREE_CACHE
+    if refresh or _TREE_CACHE is None:
+        _TREE_CACHE=api("showpublink",code=CODE)
+    return _TREE_CACHE
 def find(remote):
     parts=norm(remote).split("/")
     cur=tree().get("metadata",{})
@@ -55,11 +91,60 @@ def resolve(remote):
             "url":f"https://{hosts[0]}{d['path']}"}
 def remote_for(local,is_map=False):
     p=norm(local)
+
+    # Music is deliberately stored outside the remote Quake 3 Elite folder,
+    # while locally it belongs inside baseq3/mods/osp/.
+    if p.casefold().startswith(LOCAL_MUSIC_PREFIX.casefold()):
+        suffix=p[len(LOCAL_MUSIC_PREFIX):]
+        return f"{MUSIC}/{suffix}"
+
     if is_map:
         pre="baseq3/maps/"
         if not p.casefold().startswith(pre): raise ValueError("Map path must start baseq3/maps/")
         return f"{MAPS}/{p[len(pre):]}"
     return f"{CORE}/{p}"
+
+def list_folder(remote, recursive=False):
+    """Return pCloud metadata for files in a public-link folder."""
+    folder=find(remote)
+    if not folder.get("isfolder"):
+        raise NotADirectoryError(remote)
+
+    result=[]
+    def walk(node, prefix):
+        for item in node.get("contents",[]):
+            name=str(item.get("name",""))
+            rel=f"{prefix}/{name}" if prefix else name
+            if item.get("isfolder"):
+                if recursive:
+                    walk(item,rel)
+            else:
+                result.append({
+                    "name":name,
+                    "relative":norm(rel),
+                    "fileid":item.get("fileid"),
+                    "size":int(item.get("size",0)),
+                })
+    walk(folder,"")
+    return result
+
+def resolve_entry(entry):
+    """Resolve a file metadata entry without another showpublink tree fetch."""
+    fid=entry.get("fileid")
+    if not fid:
+        raise RuntimeError(f"No pCloud fileid for {entry.get('name','file')}")
+    d=api("getpublinkdownload",code=CODE,fileid=fid)
+    hosts=d.get("hosts") or []
+    if not hosts or not d.get("path"):
+        raise RuntimeError("No pCloud download URL")
+    return {
+        **entry,
+        "url":f"https://{hosts[0]}{d['path']}",
+    }
+
+def music_files():
+    """Dynamic contents of the separately hosted Music Playlist folder."""
+    return list_folder(f"{MUSIC}/music", recursive=True)
 def expected(local):
     d=json.loads(MANIFEST.read_text(encoding="utf-8-sig"))
     wanted=norm(local).casefold()
