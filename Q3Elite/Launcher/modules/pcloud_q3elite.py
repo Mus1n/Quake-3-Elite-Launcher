@@ -94,7 +94,7 @@ def pubzip_url(remote, filename="Q3Elite_Basic.zip"):
         "forcedownload": 1,
         "filename": filename,
     })
-    return f"https://api.pcloud.com/getpubzip?{params}"
+    return f"{API}/getpubzip?{params}"
 
 
 def resolve(remote):

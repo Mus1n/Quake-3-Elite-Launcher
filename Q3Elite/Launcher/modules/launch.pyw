@@ -24,6 +24,7 @@ os.chdir(LAUNCHER_DIR)
 # ============================================================================
 
 import download_tools as dt
+import q3elite_components as q3components
 
 from osp_updater import check_and_update as check_and_update_osp
 from q3elite_updater import check_and_update as check_and_update_q3elite
@@ -492,165 +493,92 @@ def install_q3elite_archive(zip_path):
 # ============================================================================
 
 class Q3EliteDownload(QtCore.QThread):
+    """
+    First-install worker — Step 18B.2.
+
+    IMPORTANT:
+    This no longer uses the legacy monolithic "Quake 3 Elite.zip".
+    Fresh installation is delegated to q3elite_components.install_basic(),
+    which uses the pCloud bulk ZIP accelerator and then performs the
+    manifest/SHA-256 repair pass.
+    """
 
     result_ready = pyqtSignal(bool)
 
     def run(self):
-
         try:
-
-            Q3ELITE_TEMP_DIR.mkdir(
-                parents=True,
-                exist_ok=True
-            )
-
-            zip_path = (
-                Q3ELITE_TEMP_DIR
-                / "Quake 3 Elite.zip"
-            )
-
             print()
-            print("Checking Quake 3 Elite version...")
+            print("========================================")
+            print(" Installing Quake 3 Elite Basic")
+            print("========================================")
+            print()
 
-            # =================================================================
-            # VERSION CHECK
-            # =================================================================
-
-            if q3elite_is_current():
-
-                print(
-                    "Quake 3 Elite is up to date."
-                )
-
-                print(
-                    "Skipping Q3Elite download."
-                )
-
-            else:
-
-                print(
-                    "New Quake 3 Elite version available."
-                )
-
-                print(
-                    "Downloading Quake 3 Elite.zip..."
-                )
-
-                # =============================================================
-                # READ PCLOUD CONFIG
-                # =============================================================
-
-                conf_file = (
-                    DOWNLOAD_CONFS_DIR
-                    / "Quake 3 Elite pcloud.dconf"
-                )
-
-                if not conf_file.is_file():
-                    raise FileNotFoundError(
-                        f"pCloud configuration not found:\n"
-                        f"{conf_file}"
-                    )
-
-                public_link = conf_file.read_text(
-                    encoding="utf-8"
-                ).strip()
-
-                if not public_link:
-                    raise RuntimeError(
-                        "Quake 3 Elite pCloud URL is empty."
-                    )
-
-                # =============================================================
-                # RESOLVE PCLOUD FILE
-                # =============================================================
-
-                download_url, expected_size = (
-                    resolve_pcloud_file(
-                        public_link,
-                        "Quake 3 Elite.zip"
-                    )
-                )
-
-                print(
-                    f"Expected archive size: "
-                    f"{expected_size} bytes"
-                )
-
-                # =============================================================
-                # REMOVE OLD ARCHIVE
-                # =============================================================
-
-                if zip_path.exists():
-
-                    print(
-                        "Removing old Quake 3 Elite.zip..."
-                    )
-
-                    zip_path.unlink()
-
-                # =============================================================
-                # DOWNLOAD
-                # =============================================================
-
-                result = dt.downloader(
-                    download_url,
-                    str(Q3ELITE_TEMP_DIR),
-                    "Quake 3 Elite.zip",
-                    skip=True,
-                    control=download_control,
-                    progress_callback=download_progress_callback,
-                    expected_size=expected_size,
-                    use_part_file=True
-                )
-
-                if not result:
-                    raise RuntimeError(
-                        "Failed to download "
-                        "Quake 3 Elite.zip."
-                    )
-
-                # =============================================================
-                # VERIFY SIZE
-                # =============================================================
-
-                actual_size = zip_path.stat().st_size
-
-                if actual_size != expected_size:
-                    raise RuntimeError(
-                        "Downloaded Q3Elite archive "
-                        "has incorrect size.\n"
-                        f"Expected: {expected_size}\n"
-                        f"Actual:   {actual_size}"
-                    )
-
-                print(
-                    "Quake 3 Elite.zip downloaded successfully."
-                )
-
-            # =================================================================
-            # INSTALL EXISTING OR DOWNLOADED ARCHIVE
-            # =================================================================
-
-            install_q3elite_archive(
-                zip_path
+            # Step 18B defaults:
+            #   Basic            ON
+            #   External Maps    OFF
+            #   Music Playlist   OFF
+            #   Autoexec Update  OFF
+            #
+            # Step 19 GUI will pass the user's checkbox selections here.
+            q3components.install_basic(
+                external_maps=False,
+                music_playlist=False,
+                autoexec_update=False,
+                control=download_control,
+                progress_callback=download_progress_callback,
             )
 
-            self.result_ready.emit(
-                True
-            )
+            # Strong postcondition for the first-install worker.
+            if not q3elite_is_installed():
+                raise RuntimeError(
+                    "Basic installation finished, but Q3Elite/Engines "
+                    "was not created."
+                )
+
+            self.result_ready.emit(True)
 
         except Exception as error:
-
             print()
             print(
                 f"[error] Quake 3 Elite "
                 f"installation failed: {error}"
             )
             print()
+            self.result_ready.emit(False)
 
-            self.result_ready.emit(
-                False
-            )
+
+# ============================================================================
+# COMPONENT MANAGER — STEP 18B.12
+# ============================================================================
+
+class ComponentWorker(QtCore.QThread):
+    result_ready = pyqtSignal(bool, str)
+
+    def __init__(self, action):
+        super().__init__()
+        self.action = action
+
+    def run(self):
+        try:
+            download_control.reset()
+            if self.action == "install-maps":
+                q3components.install_maps(download_control, download_progress_callback)
+            elif self.action == "remove-maps":
+                q3components.uninstall_maps()
+            elif self.action == "install-music":
+                q3components.install_music(download_control, download_progress_callback)
+            elif self.action == "remove-music":
+                q3components.uninstall_music()
+            elif self.action == "autoexec-on":
+                q3components.set_autoexec_update(True)
+            elif self.action == "autoexec-off":
+                q3components.set_autoexec_update(False)
+            else:
+                raise RuntimeError(f"Unknown component action: {self.action}")
+            self.result_ready.emit(True, self.action)
+        except Exception as error:
+            print(f"[component error] {error}")
+            self.result_ready.emit(False, str(error))
 
 
 # ============================================================================
@@ -819,6 +747,11 @@ class PostInstallUpdate(QtCore.QThread):
         )
 
         try:
+            if not launcher_settings.get("auto_update_osp", True):
+                print("[settings] Automatic OSP2-BE update is disabled.")
+                self.result_ready.emit(True)
+                return
+
             print()
             print("========================================")
             print(" Checking OSP2-BE")
@@ -887,6 +820,14 @@ class LauncherSelfUpdate(QtCore.QThread):
             "restart"  -> update staged and helper started; close this launcher
         """
         try:
+            if (
+                not launcher_settings.get("check_updates_on_startup", True)
+                or not launcher_settings.get("auto_update_launcher", True)
+            ):
+                print("[settings] Automatic Launcher update check is disabled.")
+                self.result_ready.emit("continue")
+                return
+
             print()
             print("========================================")
             print(" Checking Launcher update")
@@ -925,11 +866,67 @@ class LauncherSelfUpdate(QtCore.QThread):
             self.result_ready.emit("continue")
 
 
+
+# ============================================================================
+# STEP 19 — LAUNCHER SETTINGS
+# ============================================================================
+
+SETTINGS_FILE = Path(os.environ.get("APPDATA", Path.home())) / "Quake 3 Elite" / "Launcher" / "settings.json"
+
+DEFAULT_SETTINGS = {
+    "auto_update_q3elite": True,
+    "auto_update_launcher": True,
+    "auto_update_osp": True,
+    "check_updates_on_startup": True,
+}
+
+
+def load_launcher_settings():
+    data = dict(DEFAULT_SETTINGS)
+    try:
+        if SETTINGS_FILE.is_file():
+            raw = json.loads(SETTINGS_FILE.read_text(encoding="utf-8"))
+            if isinstance(raw, dict):
+                for key in DEFAULT_SETTINGS:
+                    if key in raw:
+                        data[key] = bool(raw[key])
+    except Exception as error:
+        print(f"[settings] Could not read settings: {error}")
+    return data
+
+
+def save_launcher_settings(data):
+    SETTINGS_FILE.parent.mkdir(parents=True, exist_ok=True)
+    SETTINGS_FILE.write_text(
+        json.dumps(data, indent=2, ensure_ascii=False),
+        encoding="utf-8"
+    )
+
+
+launcher_settings = load_launcher_settings()
+
+
+def read_local_q3elite_version():
+    candidates = [
+        GAME_ROOT / "Q3Elite" / "Version.json",
+        GAME_ROOT / "Q3Elite" / "version.json",
+    ]
+    for path in candidates:
+        try:
+            if path.is_file():
+                data = json.loads(path.read_text(encoding="utf-8"))
+                if isinstance(data, dict):
+                    return str(data.get("version", data.get("Version", "?")))
+        except Exception:
+            pass
+    return "—"
+
 # ============================================================================
 # SHARED DOWNLOAD CONTROL
 # ============================================================================
 
 download_control = dt.DownloadControl()
+component_worker = None
 
 # All downloader calls use this shared controller unless a caller supplies
 # another one explicitly.
@@ -1035,63 +1032,198 @@ def position_download_controls():
     )
 
 
+def position_component_button():
+    margin = 18
+    w, h = 145, 34
+    components_button.setGeometry(margin, margin, w, h)
+
+
 # ============================================================================
-# GUI STATE HELPERS
+# MODERN GUI — STEP 19.1
 # ============================================================================
 
 def _disconnect_main_button():
-    """Remove old Launch/Update connections before assigning a new action."""
     try:
-        window.pushButton.clicked.disconnect()
+        window.playButton.clicked.disconnect()
     except (TypeError, RuntimeError):
         pass
 
 
+def set_status(title, detail="", kind="normal"):
+    window.statusTitle.setText(title)
+    window.statusDetail.setText(detail)
+    window.statusCard.setProperty("state", kind)
+    window.statusCard.style().unpolish(window.statusCard)
+    window.statusCard.style().polish(window.statusCard)
+
+
 def set_gui_checking(text="Checking..."):
-    """Keep the existing GUI, but make its main button reflect background work."""
     try:
         _disconnect_main_button()
-        window.pushButton.setText(text)
-        window.pushButton.setEnabled(False)
-        show_download_controls()
+        window.playButton.setText(text.upper())
+        window.playButton.setEnabled(False)
+        window.progressBar.setRange(0, 0)
+        window.progressBar.show()
+        window.pauseButton.show()
+        set_status(text, "Please wait while Q3Elite is being checked.", "working")
     except Exception:
         pass
 
 
 def set_gui_ready(offline=False):
-    """Switch the main button directly to Launch without the legacy updater."""
     try:
-        hide_download_controls()
         _disconnect_main_button()
+        window.playButton.setText("▶   PLAY")
+        window.playButton.setEnabled(True)
+        window.playButton.clicked.connect(window.launch)
+        window.progressBar.setRange(0, 100)
+        window.progressBar.setValue(100)
+        window.pauseButton.hide()
 
-        window.pushButton.setText("Launch")
-        window.pushButton.setEnabled(True)
-        window.pushButton.clicked.connect(window.launch)
-
+        version = read_local_q3elite_version()
+        window.q3VersionValue.setText(version)
+        window.installedValue.setText("Installed")
         if offline:
-            print("Launcher ready - OFFLINE MODE.")
+            set_status("Ready to play — offline", "Update servers are currently unavailable.", "warning")
         else:
-            print("Launcher ready.")
-
-        window.close_terminal()
-
+            set_status("Q3Elite is up to date", "Everything is installed and verified.", "ok")
+        print("Launcher ready" + (" - OFFLINE MODE." if offline else "."))
     except Exception as error:
         print(f"[warning] Could not update GUI READY state: {error}")
 
 
 def set_gui_error(text="RETRY"):
     try:
-        hide_download_controls()
         _disconnect_main_button()
-        window.pushButton.setText(text)
-        window.pushButton.setEnabled(True)
-        window.pushButton.clicked.connect(start_local_check)
+        window.playButton.setText(text.upper())
+        window.playButton.setEnabled(True)
+        window.playButton.clicked.connect(start_local_check)
+        window.progressBar.setRange(0, 100)
+        window.progressBar.setValue(0)
+        window.pauseButton.hide()
+        set_status("Update required", "Repair or update failed. Press RETRY.", "critical")
     except Exception:
         pass
 
 
+def update_download_overlay():
+    name = _download_progress["name"]
+    done = _download_progress["downloaded"]
+    total = _download_progress["total"]
+    speed = _download_progress["speed"]
+
+    if not name:
+        return
+
+    if total:
+        pct = max(0, min(100, int(done * 100 / total))) if total else 0
+        window.progressBar.setRange(0, 100)
+        window.progressBar.setValue(pct)
+        window.downloadInfo.setText(
+            f"{name}   •   {_format_bytes(done)} / {_format_bytes(total)}   •   {_format_bytes(speed)}/s"
+        )
+    else:
+        window.progressBar.setRange(0, 0)
+        window.downloadInfo.setText(
+            f"{name}   •   {_format_bytes(done)}   •   {_format_bytes(speed)}/s"
+        )
+
+
+def toggle_download_pause():
+    if download_control.paused:
+        download_control.resume()
+        window.pauseButton.setText("PAUSE")
+        print()
+        print("[download] Resumed.")
+    else:
+        download_control.pause()
+        window.pauseButton.setText("RESUME")
+        print()
+        print("[download] Paused.")
+
+
+def refresh_component_gui():
+    state = q3components.load_state()
+    window.mapsBox.blockSignals(True)
+    window.musicBox.blockSignals(True)
+    window.autoexecBox.blockSignals(True)
+    window.mapsBox.setChecked(bool(state.get("external_maps", False)))
+    window.musicBox.setChecked(bool(state.get("music_playlist", False)))
+    window.autoexecBox.setChecked(bool(state.get("autoexec_update", False)))
+    window.mapsBox.blockSignals(False)
+    window.musicBox.blockSignals(False)
+    window.autoexecBox.blockSignals(False)
+    window.capture_component_baseline()
+
+
+def start_component_action(action):
+    global component_worker
+    if component_worker is not None and component_worker.isRunning():
+        return
+    download_control.reset()
+    window.set_navigation_enabled(False)
+    set_gui_checking("Updating addons...")
+    component_worker = ComponentWorker(action)
+    component_worker.result_ready.connect(component_action_result)
+    component_worker.start()
+
+
+def _next_component_action():
+    action = window.take_next_component_action()
+    if action:
+        start_component_action(action)
+        return
+    window.set_navigation_enabled(True)
+    refresh_component_gui()
+    set_gui_ready(offline=install_state["offline"])
+    window.show_page("addons")
+    window.set_addon_message("Changes applied successfully.")
+
+
+def component_action_result(success, detail):
+    if not success:
+        window.set_navigation_enabled(True)
+        set_gui_ready(offline=install_state["offline"])
+        window.show_page("addons")
+        window.set_addon_message("Operation failed: " + detail, error=True)
+        return
+    _next_component_action()
+
+
+def apply_component_changes():
+    window.prepare_component_actions()
+    if not window.pending_component_actions:
+        window.set_addon_message("No changes to apply.")
+        return
+    window.set_addon_message("")
+    _next_component_action()
+
+
+def apply_settings():
+    global launcher_settings
+    launcher_settings = {
+        "auto_update_q3elite": window.autoQ3Box.isChecked(),
+        "auto_update_launcher": window.autoLauncherBox.isChecked(),
+        "auto_update_osp": window.autoOspBox.isChecked(),
+        "check_updates_on_startup": window.checkStartupBox.isChecked(),
+    }
+    save_launcher_settings(launcher_settings)
+    window.settingsMessage.setText("Settings saved.")
+
+
+def refresh_updates():
+    if (
+        q3elite_update.isRunning()
+        or fdownload.isRunning()
+        or post_update.isRunning()
+        or launcher_self_update.isRunning()
+    ):
+        return
+    window.downloadInfo.setText("Checking for updates...")
+    start_local_check()
+
+
 def start_local_check():
-    """Retry local verification without restarting the launcher."""
     global fdownload, post_update
 
     if q3elite_update.isRunning() or fdownload.isRunning() or post_update.isRunning():
@@ -1111,24 +1243,30 @@ def start_local_check():
         set_gui_checking("Checking Q3Elite...")
         q3elite_update.start()
     else:
-        # First-install button handling will be expanded to DOWNLOAD /
-        # PAUSE / RESUME in the next downloader pass. For now retry the
-        # existing installation pipeline.
         install_state["q3elite_done"] = False
         install_state["q3elite_ok"] = False
         set_gui_checking("Installing...")
         q3elite_download.start()
 
+
 def start_game_checks():
-    """Start the existing Q3Elite/PAK/OSP pipeline after self-update resolves."""
+    """Start Q3Elite/PAK/OSP pipeline after launcher self-update resolves."""
+    if q3elite_is_installed() and not launcher_settings.get("auto_update_q3elite", True):
+        print("[settings] Automatic Q3Elite update is disabled.")
+        install_state["q3elite_done"] = True
+        install_state["q3elite_ok"] = True
+        install_state["q3elite_update_done"] = True
+        install_state["q3elite_update_ok"] = True
+        set_gui_checking("Checking PAKs...")
+        fdownload.start()
+        return
+
     if q3elite_is_installed():
         print()
         print("Existing Q3Elite installation detected.")
         print("Verifying local PAK files and checking OSP2-BE...")
         print()
 
-        # Step 17: Q3Elite update is serialized before PAK verification.
-        # This avoids simultaneous writes into baseq3/Q3Elite.
         install_state["q3elite_done"] = False
         install_state["q3elite_ok"] = False
         install_state["q3elite_update_done"] = False
@@ -1142,8 +1280,6 @@ def start_game_checks():
         print("Starting first installation...")
         print()
 
-        # Serialize first installation. The Q3Elite archive contains baseq3,
-        # therefore PAK verification must not write there at the same time.
         install_state["q3elite_done"] = False
         install_state["q3elite_ok"] = False
         set_gui_checking("Installing...")
@@ -1157,8 +1293,458 @@ def launcher_self_update_result(action):
         print()
         app.quit()
         return
-
     start_game_checks()
+
+
+
+class ModernLauncherWindow(MainWindow):
+    """1368x768 frameless Q3Elite launcher. Backend stays in launch.pyw."""
+
+    def __init__(self):
+        super().__init__()
+
+        self.setObjectName("launcherWindow")
+        self.setWindowTitle("Quake 3 Elite Launcher")
+        self.setFixedSize(1368, 768)
+        self.setWindowFlags(
+            QtCore.Qt.WindowType.FramelessWindowHint
+            | QtCore.Qt.WindowType.Window
+        )
+        self.setAttribute(QtCore.Qt.WidgetAttribute.WA_TranslucentBackground, True)
+
+        # Hide widgets from the legacy UI while preserving MainWindow.launch(),
+        # qerror() and the terminal object used by the backend.
+        central = self.centralWidget()
+        if central is not None:
+            central.hide()
+
+        self._drag_pos = None
+        self.pending_component_actions = []
+        self._component_baseline = {}
+
+        self.shell = QtWidgets.QFrame(self)
+        self.shell.setObjectName("shell")
+        self.shell.setGeometry(8, 8, 1352, 752)
+
+        root = QtWidgets.QHBoxLayout(self.shell)
+        root.setContentsMargins(0, 0, 0, 0)
+        root.setSpacing(0)
+
+        # LEFT RAIL ---------------------------------------------------------
+        self.sidebar = QtWidgets.QFrame()
+        self.sidebar.setObjectName("sidebar")
+        self.sidebar.setFixedWidth(224)
+        side = QtWidgets.QVBoxLayout(self.sidebar)
+        side.setContentsMargins(22, 24, 22, 22)
+        side.setSpacing(10)
+
+        brand = QtWidgets.QLabel("Q3<span style='color:#35d9ff'>ELITE</span>")
+        brand.setObjectName("brand")
+        brand.setTextFormat(QtCore.Qt.TextFormat.RichText)
+        side.addWidget(brand)
+
+        sub = QtWidgets.QLabel("QUAKE 3 ARENA COMPILATION")
+        sub.setObjectName("brandSub")
+        side.addWidget(sub)
+        side.addSpacing(34)
+
+        self.homeNav = self._nav_button("⌂   HOME", "home")
+        self.addonsNav = self._nav_button("◇   INSTALL ADDONS", "addons")
+        self.settingsNav = self._nav_button("⚙   SETTINGS", "settings")
+        self.changelogNav = self._nav_button("≡   CHANGELOG", "changelog")
+        for button in (self.homeNav, self.addonsNav, self.settingsNav, self.changelogNav):
+            side.addWidget(button)
+
+        side.addStretch(1)
+        quote = QtWidgets.QLabel("Q3ELITE\n\nMORE THAN A GAME.\nA TIMELESS ARENA.")
+        quote.setObjectName("sideQuote")
+        side.addWidget(quote)
+        root.addWidget(self.sidebar)
+
+        # MAIN AREA ---------------------------------------------------------
+        body = QtWidgets.QFrame()
+        body.setObjectName("body")
+        body_layout = QtWidgets.QVBoxLayout(body)
+        body_layout.setContentsMargins(26, 18, 22, 20)
+        body_layout.setSpacing(14)
+
+        top = QtWidgets.QHBoxLayout()
+        title = QtWidgets.QLabel("PLAY  /  IMPROVE  /  FRAG")
+        title.setObjectName("topMotto")
+        top.addWidget(title)
+        top.addStretch(1)
+
+        self.launcherVersion = QtWidgets.QLabel("Launcher v0.04")
+        self.launcherVersion.setObjectName("versionLabel")
+        top.addWidget(self.launcherVersion)
+
+        self.minButton = QtWidgets.QPushButton("—")
+        self.minButton.setObjectName("windowButton")
+        self.minButton.setFixedSize(42, 36)
+        self.minButton.clicked.connect(self.showMinimized)
+        top.addWidget(self.minButton)
+
+        self.closeButton = QtWidgets.QPushButton("×")
+        self.closeButton.setObjectName("closeButton")
+        self.closeButton.setFixedSize(42, 36)
+        self.closeButton.clicked.connect(self.close)
+        top.addWidget(self.closeButton)
+        body_layout.addLayout(top)
+
+        self.pages = QtWidgets.QStackedWidget()
+        self.pages.setObjectName("pages")
+        self.homePage = self._build_home()
+        self.addonsPage = self._build_addons()
+        self.settingsPage = self._build_settings()
+        self.changelogPage = self._build_changelog()
+        for page in (self.homePage, self.addonsPage, self.settingsPage, self.changelogPage):
+            self.pages.addWidget(page)
+        body_layout.addWidget(self.pages, 1)
+        root.addWidget(body, 1)
+
+        self.show_page("home")
+        refresh_component_gui()
+        self.load_settings_ui()
+
+    def _nav_button(self, text, page):
+        b = QtWidgets.QPushButton(text)
+        b.setObjectName("navButton")
+        b.setCheckable(True)
+        b.setProperty("page", page)
+        b.clicked.connect(lambda checked=False, p=page: self.show_page(p))
+        return b
+
+    def _card(self, name="card"):
+        f = QtWidgets.QFrame()
+        f.setObjectName(name)
+        return f
+
+    def _build_home(self):
+        page = QtWidgets.QWidget()
+        layout = QtWidgets.QVBoxLayout(page)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(14)
+
+        upper = QtWidgets.QHBoxLayout()
+        upper.setSpacing(14)
+
+        hero = self._card("heroCard")
+        hero_l = QtWidgets.QVBoxLayout(hero)
+        hero_l.setContentsMargins(30, 28, 30, 28)
+        hero_l.addStretch(1)
+        kicker = QtWidgets.QLabel("QUAKE 3 ARENA")
+        kicker.setObjectName("heroKicker")
+        hero_l.addWidget(kicker)
+        hero_title = QtWidgets.QLabel("RELOADED FOR A NEW ERA")
+        hero_title.setObjectName("heroTitle")
+        hero_l.addWidget(hero_title)
+        hero_desc = QtWidgets.QLabel(
+            "Vulkan Engine   •   OSP2-BE   •   Custom HUD\\n"
+            "Enhanced Graphics   •   Community Maps"
+        )
+        hero_desc.setObjectName("heroDescription")
+        hero_l.addWidget(hero_desc)
+        upper.addWidget(hero, 2)
+
+        right = QtWidgets.QVBoxLayout()
+        right.setSpacing(12)
+
+        self.statusCard = self._card("statusCard")
+        status_l = QtWidgets.QVBoxLayout(self.statusCard)
+        status_l.setContentsMargins(20, 18, 20, 18)
+        label = QtWidgets.QLabel("SYSTEM STATUS")
+        label.setObjectName("sectionTitle")
+        status_l.addWidget(label)
+        self.statusTitle = QtWidgets.QLabel("Checking...")
+        self.statusTitle.setObjectName("statusTitle")
+        status_l.addWidget(self.statusTitle)
+        self.statusDetail = QtWidgets.QLabel("Connecting to update services.")
+        self.statusDetail.setWordWrap(True)
+        self.statusDetail.setObjectName("muted")
+        status_l.addWidget(self.statusDetail)
+
+        versions = QtWidgets.QGridLayout()
+        versions.addWidget(QtWidgets.QLabel("Q3Elite"), 0, 0)
+        self.q3VersionValue = QtWidgets.QLabel(read_local_q3elite_version())
+        versions.addWidget(self.q3VersionValue, 0, 1)
+        versions.addWidget(QtWidgets.QLabel("Installation"), 1, 0)
+        self.installedValue = QtWidgets.QLabel("Checking")
+        versions.addWidget(self.installedValue, 1, 1)
+        status_l.addLayout(versions)
+
+        self.refreshButton = QtWidgets.QPushButton("↻  REFRESH")
+        self.refreshButton.setObjectName("secondaryButton")
+        self.refreshButton.clicked.connect(refresh_updates)
+        status_l.addWidget(self.refreshButton)
+        right.addWidget(self.statusCard)
+
+        alert = self._card("updateAlert")
+        alert_l = QtWidgets.QVBoxLayout(alert)
+        alert_l.setContentsMargins(18, 14, 18, 14)
+        self.alertTitle = QtWidgets.QLabel("UPDATE ALERTS")
+        self.alertTitle.setObjectName("alertTitle")
+        self.alertText = QtWidgets.QLabel("No update requires your attention.")
+        self.alertText.setObjectName("muted")
+        self.alertText.setWordWrap(True)
+        alert_l.addWidget(self.alertTitle)
+        alert_l.addWidget(self.alertText)
+        right.addWidget(alert)
+        upper.addLayout(right, 1)
+        layout.addLayout(upper, 3)
+
+        action = QtWidgets.QHBoxLayout()
+        self.playButton = QtWidgets.QPushButton("CHECKING...")
+        self.playButton.setObjectName("playButton")
+        self.playButton.setMinimumHeight(74)
+        action.addWidget(self.playButton, 2)
+
+        progress_card = self._card("progressCard")
+        p = QtWidgets.QVBoxLayout(progress_card)
+        p.setContentsMargins(20, 13, 20, 13)
+        row = QtWidgets.QHBoxLayout()
+        self.downloadInfo = QtWidgets.QLabel("Preparing launcher...")
+        self.downloadInfo.setObjectName("downloadInfo")
+        row.addWidget(self.downloadInfo, 1)
+        self.pauseButton = QtWidgets.QPushButton("PAUSE")
+        self.pauseButton.setObjectName("smallButton")
+        self.pauseButton.clicked.connect(toggle_download_pause)
+        row.addWidget(self.pauseButton)
+        p.addLayout(row)
+        self.progressBar = QtWidgets.QProgressBar()
+        self.progressBar.setTextVisible(False)
+        self.progressBar.setRange(0, 0)
+        p.addWidget(self.progressBar)
+        action.addWidget(progress_card, 3)
+        layout.addLayout(action)
+
+        tiles = QtWidgets.QHBoxLayout()
+        tiles.setSpacing(12)
+        for title, text, page_name in (
+            ("EXTERNAL MAPS", "Explore more arenas", "addons"),
+            ("MUSIC PLAYLIST", "Extended soundtrack", "addons"),
+            ("SETTINGS", "Control updates", "settings"),
+        ):
+            card = self._card("featureCard")
+            cl = QtWidgets.QVBoxLayout(card)
+            t = QtWidgets.QLabel(title)
+            t.setObjectName("featureTitle")
+            d = QtWidgets.QLabel(text)
+            d.setObjectName("muted")
+            cl.addStretch(1)
+            cl.addWidget(t)
+            cl.addWidget(d)
+            card.mousePressEvent = lambda event, p=page_name: self.show_page(p)
+            tiles.addWidget(card)
+        layout.addLayout(tiles, 1)
+        return page
+
+    def _addon_row(self, title, description, checkbox):
+        card = self._card("addonCard")
+        lay = QtWidgets.QHBoxLayout(card)
+        lay.setContentsMargins(20, 16, 20, 16)
+        text = QtWidgets.QVBoxLayout()
+        t = QtWidgets.QLabel(title)
+        t.setObjectName("addonTitle")
+        d = QtWidgets.QLabel(description)
+        d.setObjectName("muted")
+        text.addWidget(t)
+        text.addWidget(d)
+        lay.addLayout(text, 1)
+        lay.addWidget(checkbox)
+        return card
+
+    def _build_addons(self):
+        page = QtWidgets.QWidget()
+        lay = QtWidgets.QVBoxLayout(page)
+        lay.setContentsMargins(4, 4, 4, 4)
+        title = QtWidgets.QLabel("INSTALL ADDONS")
+        title.setObjectName("pageTitle")
+        lay.addWidget(title)
+        sub = QtWidgets.QLabel("Choose optional Q3Elite components. Nothing changes until APPLY CHANGES is pressed.")
+        sub.setObjectName("muted")
+        lay.addWidget(sub)
+        lay.addSpacing(14)
+
+        basic = self._card("addonCard")
+        bl = QtWidgets.QHBoxLayout(basic)
+        bt = QtWidgets.QVBoxLayout()
+        x = QtWidgets.QLabel("Quake 3 Elite Basic")
+        x.setObjectName("addonTitle")
+        bt.addWidget(x)
+        bt.addWidget(QtWidgets.QLabel("Required core installation"))
+        bl.addLayout(bt, 1)
+        installed = QtWidgets.QLabel("REQUIRED")
+        installed.setObjectName("installedBadge")
+        bl.addWidget(installed)
+        lay.addWidget(basic)
+
+        self.mapsBox = QtWidgets.QCheckBox()
+        self.musicBox = QtWidgets.QCheckBox()
+        self.autoexecBox = QtWidgets.QCheckBox()
+        lay.addWidget(self._addon_row("External Maps", "Community map collection • cached ZIP retained", self.mapsBox))
+        lay.addWidget(self._addon_row("Music Playlist", "Extended Q3Elite music collection • cached ZIP retained", self.musicBox))
+        lay.addWidget(self._addon_row("Autoexec Update", "Keep distributed autoexec.cfg synchronized", self.autoexecBox))
+        lay.addStretch(1)
+
+        self.addonMessage = QtWidgets.QLabel("")
+        self.addonMessage.setObjectName("message")
+        lay.addWidget(self.addonMessage)
+
+        buttons = QtWidgets.QHBoxLayout()
+        buttons.addStretch(1)
+        cancel = QtWidgets.QPushButton("CANCEL")
+        cancel.setObjectName("secondaryButton")
+        cancel.clicked.connect(refresh_component_gui)
+        buttons.addWidget(cancel)
+        apply = QtWidgets.QPushButton("APPLY CHANGES")
+        apply.setObjectName("applyButton")
+        apply.clicked.connect(apply_component_changes)
+        buttons.addWidget(apply)
+        lay.addLayout(buttons)
+        return page
+
+    def _build_settings(self):
+        page = QtWidgets.QWidget()
+        lay = QtWidgets.QVBoxLayout(page)
+        lay.setContentsMargins(4, 4, 4, 4)
+        title = QtWidgets.QLabel("SETTINGS")
+        title.setObjectName("pageTitle")
+        lay.addWidget(title)
+        lay.addWidget(QtWidgets.QLabel("Control automatic update behavior."))
+        lay.addSpacing(18)
+
+        card = self._card("settingsCard")
+        c = QtWidgets.QVBoxLayout(card)
+        c.setContentsMargins(22, 20, 22, 20)
+        self.autoQ3Box = QtWidgets.QCheckBox("Automatically update Q3Elite")
+        self.autoLauncherBox = QtWidgets.QCheckBox("Automatically update Launcher")
+        self.autoOspBox = QtWidgets.QCheckBox("Automatically update OSP2-BE")
+        self.checkStartupBox = QtWidgets.QCheckBox("Check for updates on startup")
+        for box in (self.autoQ3Box, self.autoLauncherBox, self.autoOspBox, self.checkStartupBox):
+            c.addWidget(box)
+        lay.addWidget(card)
+
+        cache = self._card("settingsCard")
+        cc = QtWidgets.QVBoxLayout(cache)
+        cache_title = QtWidgets.QLabel("DOWNLOAD CACHE")
+        cache_title.setObjectName("sectionTitle")
+        cc.addWidget(cache_title)
+        cache_path = Path(os.environ.get("APPDATA", Path.home())) / "Quake 3 Elite" / "Launcher" / "cache"
+        cp = QtWidgets.QLabel(str(cache_path))
+        cp.setObjectName("muted")
+        cp.setWordWrap(True)
+        cc.addWidget(cp)
+        lay.addWidget(cache)
+        lay.addStretch(1)
+
+        self.settingsMessage = QtWidgets.QLabel("")
+        self.settingsMessage.setObjectName("message")
+        lay.addWidget(self.settingsMessage)
+        apply = QtWidgets.QPushButton("SAVE SETTINGS")
+        apply.setObjectName("applyButton")
+        apply.clicked.connect(apply_settings)
+        lay.addWidget(apply, 0, QtCore.Qt.AlignmentFlag.AlignRight)
+        return page
+
+    def _build_changelog(self):
+        page = QtWidgets.QWidget()
+        lay = QtWidgets.QVBoxLayout(page)
+        lay.setContentsMargins(4, 4, 4, 4)
+        title = QtWidgets.QLabel("CHANGELOG")
+        title.setObjectName("pageTitle")
+        lay.addWidget(title)
+
+        browser = QtWidgets.QTextBrowser()
+        browser.setObjectName("changelogBrowser")
+        browser.setHtml(
+            "<h2>Q3Elite 1.2</h2>"
+            "<p>Current installed release.</p>"
+            "<ul>"
+            "<li>Updated XQ3E Vulkan integration</li>"
+            "<li>HUD and spectator improvements</li>"
+            "<li>OSP2-BE integration</li>"
+            "<li>Launcher component system</li>"
+            "</ul>"
+            "<p><i>Remote changelog support will use Version.json metadata.</i></p>"
+        )
+        lay.addWidget(browser, 1)
+        return page
+
+    def show_page(self, page):
+        mapping = {
+            "home": (self.homePage, self.homeNav),
+            "addons": (self.addonsPage, self.addonsNav),
+            "settings": (self.settingsPage, self.settingsNav),
+            "changelog": (self.changelogPage, self.changelogNav),
+        }
+        widget, active = mapping[page]
+        self.pages.setCurrentWidget(widget)
+        for b in (self.homeNav, self.addonsNav, self.settingsNav, self.changelogNav):
+            b.setChecked(b is active)
+        if page == "addons":
+            refresh_component_gui()
+
+    def set_navigation_enabled(self, enabled):
+        for b in (self.homeNav, self.addonsNav, self.settingsNav, self.changelogNav, self.refreshButton):
+            b.setEnabled(enabled)
+
+    def capture_component_baseline(self):
+        self._component_baseline = {
+            "maps": self.mapsBox.isChecked(),
+            "music": self.musicBox.isChecked(),
+            "autoexec": self.autoexecBox.isChecked(),
+        }
+
+    def prepare_component_actions(self):
+        old = self._component_baseline
+        new = {
+            "maps": self.mapsBox.isChecked(),
+            "music": self.musicBox.isChecked(),
+            "autoexec": self.autoexecBox.isChecked(),
+        }
+        actions = []
+        if old.get("maps") != new["maps"]:
+            actions.append("install-maps" if new["maps"] else "remove-maps")
+        if old.get("music") != new["music"]:
+            actions.append("install-music" if new["music"] else "remove-music")
+        if old.get("autoexec") != new["autoexec"]:
+            actions.append("autoexec-on" if new["autoexec"] else "autoexec-off")
+        self.pending_component_actions = actions
+
+    def take_next_component_action(self):
+        if not self.pending_component_actions:
+            return None
+        return self.pending_component_actions.pop(0)
+
+    def set_addon_message(self, text, error=False):
+        self.addonMessage.setText(text)
+        self.addonMessage.setProperty("error", bool(error))
+        self.addonMessage.style().unpolish(self.addonMessage)
+        self.addonMessage.style().polish(self.addonMessage)
+
+    def load_settings_ui(self):
+        self.autoQ3Box.setChecked(launcher_settings.get("auto_update_q3elite", True))
+        self.autoLauncherBox.setChecked(launcher_settings.get("auto_update_launcher", True))
+        self.autoOspBox.setChecked(launcher_settings.get("auto_update_osp", True))
+        self.checkStartupBox.setChecked(launcher_settings.get("check_updates_on_startup", True))
+
+    def mousePressEvent(self, event):
+        if event.button() == QtCore.Qt.MouseButton.LeftButton and event.position().y() < 70:
+            self._drag_pos = event.globalPosition().toPoint() - self.frameGeometry().topLeft()
+            event.accept()
+            return
+        super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event):
+        if self._drag_pos is not None and event.buttons() & QtCore.Qt.MouseButton.LeftButton:
+            self.move(event.globalPosition().toPoint() - self._drag_pos)
+            event.accept()
+            return
+        super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event):
+        self._drag_pos = None
+        super().mouseReleaseEvent(event)
 
 
 # ============================================================================
@@ -1229,8 +1815,8 @@ def q3elite_install_result(success):
         check_install_finished()
         return
 
-    # On first install PAK verification starts only AFTER the Q3Elite archive
-    # has finished writing baseq3.
+    # On first install PAK verification starts only AFTER Basic has
+    # finished writing Q3Elite/baseq3.
     if not install_state["base_done"] and not fdownload.isRunning():
         set_gui_checking("Checking...")
         fdownload.start()
@@ -1317,89 +1903,37 @@ def post_update_result(success):
 
 
 if __name__ == "__main__":
-
     try:
+        app = QApplication(sys.argv)
 
-        app = QApplication(
-            sys.argv
-        )
-
-        # --------------------------------------------------------------------
-        # FONT
-        # --------------------------------------------------------------------
-
-        font_id = (
-            QFontDatabase
-            .addApplicationFont(
-                "./ui/FiraCode-Regular.ttf"
-            )
-        )
-
-        if font_id == -1:
-
-            print(
-                "Error: could not load "
-                "./ui/FiraCode-Regular.ttf"
-            )
-
-            family = "Arial"
-
+        # External stylesheet is now the single source of visual styling.
+        style_path = LAUNCHER_DIR / "ui" / "style.css"
+        if style_path.is_file():
+            app.setStyleSheet(style_path.read_text(encoding="utf-8"))
         else:
+            print(f"[warning] UI stylesheet not found: {style_path}")
 
-            family = (
-                QFontDatabase
-                .applicationFontFamilies(
-                    font_id
-                )[0]
-            )
+        # Keep existing font support for the backend terminal.
+        font_path = LAUNCHER_DIR / "ui" / "FiraCode-Regular.ttf"
+        family = "Arial"
+        if font_path.is_file():
+            font_id = QFontDatabase.addApplicationFont(str(font_path))
+            if font_id != -1:
+                families = QFontDatabase.applicationFontFamilies(font_id)
+                if families:
+                    family = families[0]
 
-        # --------------------------------------------------------------------
-        # GUI
-        # --------------------------------------------------------------------
-
-        app.setStyleSheet(
-            DARK_STYLE
-        )
-
-        window = MainWindow()
-
-        window.terminal.set_font(
-            family
-        )
+        window = ModernLauncherWindow()
+        try:
+            window.terminal.set_font(family)
+        except Exception:
+            pass
 
         window.show()
-        window.open_terminal()
-
-        # Minimal Step-3 overlay.  It intentionally sits above the existing
-        # terminal view so Pause/Resume is testable before the GUI redesign.
-        download_info = QtWidgets.QLabel(window)
-        download_info.setText("No active network transfer")
-        download_info.setAlignment(
-            QtCore.Qt.AlignmentFlag.AlignVCenter
-            | QtCore.Qt.AlignmentFlag.AlignLeft
-        )
-
-        pause_button = QtWidgets.QPushButton("PAUSE", window)
-        pause_button.clicked.connect(toggle_download_pause)
 
         download_timer = QtCore.QTimer(window)
         download_timer.timeout.connect(update_download_overlay)
-        download_timer.start(250)
-
-        # Reposition on resize without modifying gui_tools.py.
-        _old_resize_event = window.resizeEvent
-        def _launcher_resize_event(event):
-            try:
-                _old_resize_event(event)
-            finally:
-                position_download_controls()
-        window.resizeEvent = _launcher_resize_event
-
-        set_gui_checking("Checking...")
-
-        # --------------------------------------------------------------------
-        # WORKERS
-        # --------------------------------------------------------------------
+        download_timer.start(200)
 
         launcher_self_update = LauncherSelfUpdate()
         q3elite_update = Q3EliteUpdate()
@@ -1407,56 +1941,26 @@ if __name__ == "__main__":
         q3elite_download = Q3EliteDownload()
         post_update = PostInstallUpdate()
 
-        launcher_self_update.result_ready.connect(
-            launcher_self_update_result
-        )
+        launcher_self_update.result_ready.connect(launcher_self_update_result)
+        q3elite_update.result_ready.connect(q3elite_update_result)
+        q3elite_update.offline.connect(q3elite_update_offline)
+        fdownload.result_ready.connect(base_install_result)
+        q3elite_download.result_ready.connect(q3elite_install_result)
+        post_update.result_ready.connect(post_update_result)
+        post_update.offline.connect(post_update_offline)
 
-        q3elite_update.result_ready.connect(
-            q3elite_update_result
-        )
-
-        q3elite_update.offline.connect(
-            q3elite_update_offline
-        )
-
-        fdownload.result_ready.connect(
-            base_install_result
-        )
-
-        q3elite_download.result_ready.connect(
-            q3elite_install_result
-        )
-
-        post_update.result_ready.connect(
-            post_update_result
-        )
-
-        post_update.offline.connect(
-            post_update_offline
-        )
-
-        # --------------------------------------------------------------------
-        # START
-        # --------------------------------------------------------------------
-
-        # Self-update always resolves before any PAK/OSP/game update workers.
-        # GitHub/network failure is non-fatal and falls through to normal startup.
         set_gui_checking("Checking Launcher...")
         launcher_self_update.start()
 
-        sys.exit(
-            app.exec()
-        )
+        sys.exit(app.exec())
 
     except Exception as error:
-
         message = (
             f"{type(error).__name__}: {error}\n"
-            "If the problem remains after restart, "
-            "check the launcher log."
+            "If the problem remains after restart, check the launcher log."
         )
-
-        show_error(
-            message,
-            lambda: None
-        )
+        try:
+            show_error(message, lambda: None)
+        except Exception:
+            print(message)
+            raise

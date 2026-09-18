@@ -63,20 +63,32 @@ def is_external_map(path):
     return norm(path).casefold().startswith("baseq3/maps/")
 
 
+def is_official_q3_pak(path):
+    p = norm(path).casefold()
+    return (
+        p.startswith("baseq3/pak")
+        and p.endswith(".pk3")
+        and len(p) == len("baseq3/pak0.pk3")
+        and p[len("baseq3/pak")] in "012345678"
+    )
+
+
 def _component_preferences():
-    """Read optional-component policy without making updater depend on GUI."""
+    """Read Step 18B component policy. Its defaults are Maps/Music/Autoexec OFF."""
     try:
         import q3elite_components
-        state = q3elite_components.load_state()
-        if state.get("basic"):
-            return state
+        return q3elite_components.load_state()
     except Exception:
-        pass
-    return None
+        return None
 
 
 def applies(path, profile):
     p = norm(path)
+
+    # Official pak0.pk3-pak8.pk3 are always handled by pak_verifier.py.
+    if is_official_q3_pak(p):
+        return False
+
     prefs = _component_preferences()
 
     # Once Step 18B component state exists, it is authoritative.

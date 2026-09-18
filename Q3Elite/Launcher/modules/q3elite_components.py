@@ -29,8 +29,10 @@ from download_tools import DownloadControl, downloader
 ROOT = pcloud.ROOT
 APPDATA = Path(os.environ.get("APPDATA", Path.home()))
 STATE_FILE = APPDATA / "Quake 3 Elite" / "Launcher" / "components.json"
+CACHE_DIR = APPDATA / "Quake 3 Elite" / "Launcher" / "cache"
 TEMP_DIR = APPDATA / "Quake 3 Elite" / "Temp"
-BASIC_ZIP = TEMP_DIR / "Q3Elite_Basic.zip"
+BASIC_ZIP = CACHE_DIR / "Q3Elite_Basic.zip"
+MAPS_ZIP = CACHE_DIR / "Q3Elite_Maps.zip"
 
 REMOTE_MANIFEST = "Q3Elite/Manifest.json"
 REMOTE_VERSION = "Q3Elite/Version.json"
@@ -119,10 +121,26 @@ def classify(rel):
     return "basic"
 
 
+def _is_official_q3_pak(path):
+    p = norm(path).casefold()
+    return (
+        p.startswith("baseq3/pak")
+        and p.endswith(".pk3")
+        and len(p) == len("baseq3/pak0.pk3")
+        and p[len("baseq3/pak")] in "012345678"
+    )
+
+
 def selected_basic_files(files, autoexec_update=False):
     # autoexec.cfg is still installed on first Basic install; the checkbox controls
     # whether later Q3Elite updates are allowed to replace it.
-    return {p:h for p,h in files.items() if classify(p) != "maps"}
+    #
+    # Official id Software pak0.pk3-pak8.pk3 have a separate owner:
+    # pak_verifier.py. They must never be resolved from the Q3Elite pCloud tree.
+    return {
+        p: h for p, h in files.items()
+        if classify(p) != "maps" and not _is_official_q3_pak(p)
+    }
 
 
 def selected_map_files(files):
@@ -222,6 +240,13 @@ def _install_group(group, control=None, progress_callback=None):
     return downloaded
 
 
+def is_true_fresh_install():
+    """User-defined clean-install markers for the fast bulk path."""
+    engines = ROOT / "Q3Elite" / "Engines"
+    mus1n_pk3dir = ROOT / "baseq3" / "mods" / "osp" / "zzz-Mus1n.pk3dir"
+    return not engines.exists() and not mus1n_pk3dir.exists()
+
+
 def _basic_core_group(files):
     """Basic files physically stored inside the remote CORE folder."""
     return {
@@ -309,29 +334,70 @@ def _bulk_install_basic_core(files, control=None, progress_callback=None):
     if not group:
         return 0
 
-    TEMP_DIR.mkdir(parents=True, exist_ok=True)
+    CACHE_DIR.mkdir(parents=True, exist_ok=True)
+
+    # pCloud getpubzip is generated dynamically. A .part from a previous
+    # launcher process cannot be trusted as a byte-prefix of a newly generated
+    # ZIP stream, so explicitly discard it on a new fresh-install attempt.
+    stale_part = BASIC_ZIP.with_name(BASIC_ZIP.name + ".part")
+    if stale_part.exists():
+        stale_size = stale_part.stat().st_size
+        stale_part.unlink()
+        print(
+            f"[bulk] Previous dynamic ZIP partial found "
+            f"({human(stale_size)}). Restarting bulk download from 0."
+        )
+    reuse_complete_zip = BASIC_ZIP.is_file() and zipfile.is_zipfile(BASIC_ZIP)
+    if reuse_complete_zip:
+        print(
+            f"[bulk] Complete cached Basic ZIP found "
+            f"({human(BASIC_ZIP.stat().st_size)}). Reusing it."
+        )
+    elif BASIC_ZIP.exists():
+        print("[bulk] Cached Basic ZIP is invalid; removing it.")
+        BASIC_ZIP.unlink()
+
     url = pcloud.pubzip_url(pcloud.CORE, "Q3Elite_Basic.zip")
 
     print("\nFresh Basic install detected.")
     print("Using pCloud bulk ZIP instead of thousands of individual requests...")
-    print("The ZIP is streamed by pCloud; displayed transfer size may be unknown.")
+    print("The ZIP is streamed dynamically by pCloud.")
+    print("Pause/Resume works in this launcher session; after launcher restart")
+    print("the dynamic ZIP download starts from 0.")
 
-    result = downloader(
-        url,
-        str(TEMP_DIR),
-        BASIC_ZIP.name,
-        skip=True,
-        control=control,
-        progress_callback=progress_callback,
-        expected_size=None,
-        use_part_file=True,
-        timeout_value=60,
-    )
-    if not result:
-        raise RuntimeError("Basic bulk ZIP download failed/cancelled.")
+    if reuse_complete_zip:
+        result = str(BASIC_ZIP)
+    else:
+        result = downloader(
+            url,
+            str(CACHE_DIR),
+            BASIC_ZIP.name,
+            skip=True,
+            control=control,
+            progress_callback=progress_callback,
+            expected_size=None,
+            use_part_file=True,
+            timeout_value=60,
+        )
+        if not result:
+            raise RuntimeError("Basic bulk ZIP download failed/cancelled.")
+
+    archive = Path(result)
+    with archive.open("rb") as fh:
+        signature = fh.read(4)
+    if signature not in (b"PK\x03\x04", b"PK\x05\x06", b"PK\x07\x08"):
+        preview = archive.read_bytes()[:300]
+        try:
+            preview_text = preview.decode("utf-8", errors="replace").replace("\\r", " ").replace("\\n", " ")
+        except Exception:
+            preview_text = repr(preview)
+        raise RuntimeError(
+            "pCloud getpubzip did not return a ZIP archive. "
+            f"First response bytes: {preview_text!r}"
+        )
 
     try:
-        extracted = _extract_basic_zip(Path(result), group)
+        extracted = _extract_basic_zip(archive, group)
     except zipfile.BadZipFile as exc:
         # Preserve a bad archive only as .bad for diagnosis; fallback below can
         # still repair/download individual files.
@@ -344,13 +410,24 @@ def _bulk_install_basic_core(files, control=None, progress_callback=None):
         print(f"[bulk] Invalid ZIP: {exc}")
         return 0
     else:
-        BASIC_ZIP.unlink(missing_ok=True)
+        print(f"[bulk cache] Kept: {BASIC_ZIP}")
         return len(extracted)
 
 
 def install_basic(external_maps=False, music_playlist=False, autoexec_update=False,
                   control=None, progress_callback=None):
     control = control or DownloadControl()
+
+    # Persist the requested component policy before touching payload files.
+    # If the launcher is closed during the first installation, the updater
+    # must still know that Maps/Music were OFF instead of treating the partial
+    # install as a legacy "full" installation.
+    pending_state = load_state()
+    pending_state["external_maps"] = bool(external_maps)
+    pending_state["music_playlist"] = bool(music_playlist)
+    pending_state["autoexec_update"] = bool(autoexec_update)
+    save_state(pending_state)
+
     version, manifest, files = remote_release()
     basic = selected_basic_files(files, autoexec_update)
 
@@ -369,7 +446,7 @@ def install_basic(external_maps=False, music_playlist=False, autoexec_update=Fal
     missing_ratio = _basic_missing_ratio(core_group)
     bulk_extracted = 0
 
-    if missing_ratio >= 0.80:
+    if is_true_fresh_install():
         try:
             bulk_extracted = _bulk_install_basic_core(
                 files, control, progress_callback
@@ -405,11 +482,139 @@ def install_basic(external_maps=False, music_playlist=False, autoexec_update=Fal
     return load_state()
 
 
+
+def _zip_member_to_map(member_name, wanted_cf):
+    raw = norm(member_name)
+    parts = PurePosixPath(raw).parts
+    if not parts:
+        return None
+
+    # getpubzip(folderid=Maps) normally puts the contents of Maps at ZIP root.
+    # Accept both root-relative names (CustomMaps/x.pk3) and archives that
+    # happen to include a Maps/ or baseq3/maps/ prefix.
+    candidates = [raw]
+    for i, part in enumerate(parts):
+        if part.casefold() == "maps":
+            suffix = norm(str(PurePosixPath(*parts[i + 1:])))
+            if suffix:
+                candidates.append(suffix)
+        if part.casefold() == "baseq3" and i + 1 < len(parts) and parts[i + 1].casefold() == "maps":
+            suffix = norm(str(PurePosixPath(*parts[i + 2:])))
+            if suffix:
+                candidates.append(suffix)
+
+    for suffix in candidates:
+        rel = norm("baseq3/maps/" + suffix)
+        found = wanted_cf.get(rel.casefold())
+        if found:
+            return found
+    return None
+
+
+def _extract_maps_zip(zip_path, group):
+    wanted_cf = {norm(rel).casefold(): norm(rel) for rel in group}
+    extracted = set()
+
+    with zipfile.ZipFile(zip_path, "r") as zf:
+        for info in zf.infolist():
+            if info.is_dir():
+                continue
+            rel = _zip_member_to_map(info.filename, wanted_cf)
+            if not rel:
+                continue
+
+            dest = ROOT / Path(rel)
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            tmp = dest.with_name(dest.name + ".maps.tmp")
+            h = hashlib.sha256()
+            try:
+                with zf.open(info, "r") as srcf, tmp.open("wb") as dstf:
+                    while True:
+                        block = srcf.read(4 * 1024 * 1024)
+                        if not block:
+                            break
+                        dstf.write(block)
+                        h.update(block)
+                if h.hexdigest().lower() != group[rel].lower():
+                    raise RuntimeError(f"SHA-256 verification failed in Maps ZIP: {rel}")
+                os.replace(tmp, dest)
+                extracted.add(rel.casefold())
+            finally:
+                tmp.unlink(missing_ok=True)
+
+    print(f"[maps bulk] Extracted and SHA-256 verified: {len(extracted)} / {len(group)}")
+    return extracted
+
+
+def _bulk_install_maps(group, control=None, progress_callback=None):
+    if not group:
+        return set()
+
+    CACHE_DIR.mkdir(parents=True, exist_ok=True)
+
+    stale_part = MAPS_ZIP.with_name(MAPS_ZIP.name + ".part")
+    if stale_part.exists():
+        stale_size = stale_part.stat().st_size
+        stale_part.unlink()
+        print(
+            f"[maps bulk] Previous dynamic ZIP partial found "
+            f"({human(stale_size)}). Restarting from 0."
+        )
+
+    reuse = MAPS_ZIP.is_file() and zipfile.is_zipfile(MAPS_ZIP)
+    if reuse:
+        print(f"[maps bulk] Complete cached Maps ZIP found ({human(MAPS_ZIP.stat().st_size)}). Reusing it.")
+    elif MAPS_ZIP.exists():
+        print("[maps bulk] Cached Maps ZIP is invalid; removing it.")
+        MAPS_ZIP.unlink()
+
+    print("\nDownloading External Maps as one pCloud ZIP...")
+    print("Pause/Resume works in this launcher session; after launcher restart")
+    print("the dynamic ZIP download starts from 0.")
+
+    if reuse:
+        result = str(MAPS_ZIP)
+    else:
+        url = pcloud.pubzip_url(pcloud.MAPS, MAPS_ZIP.name)
+        result = downloader(
+            url,
+            str(CACHE_DIR),
+            MAPS_ZIP.name,
+            skip=True,
+            control=control,
+            progress_callback=progress_callback,
+            expected_size=None,
+            use_part_file=True,
+            timeout_value=60,
+        )
+        if not result:
+            raise RuntimeError("External Maps bulk ZIP download failed/cancelled.")
+
+    archive = Path(result)
+    if not zipfile.is_zipfile(archive):
+        raise RuntimeError("pCloud getpubzip did not return a valid Maps ZIP.")
+
+    extracted = _extract_maps_zip(archive, group)
+    return extracted
+
 def install_maps(control=None, progress_callback=None):
     _, _, files = remote_release()
-    count=_install_group(selected_map_files(files), control or DownloadControl(), progress_callback)
+    group = selected_map_files(files)
+    ctl = control or DownloadControl()
+
+    print(f"\nExternal Maps: {len(group)} files")
+    try:
+        extracted = _bulk_install_maps(group, ctl, progress_callback)
+        print("\n[maps bulk] Running SHA-256 repair pass...")
+        count = _install_group(group, ctl, progress_callback)
+        print(f"[maps cache] Kept: {MAPS_ZIP}")
+    except Exception as exc:
+        print(f"\n[maps bulk] Bulk install unavailable: {exc}")
+        print("[maps bulk] Falling back to individual SHA-256 repair...")
+        count = _install_group(group, ctl, progress_callback)
+
     state=load_state(); state["external_maps"]=True; save_state(state)
-    print(f"\n[OK] External Maps installed. Downloaded: {count}")
+    print(f"\n[OK] External Maps installed. Individual downloads/repairs: {count}")
 
 
 def uninstall_maps():
