@@ -13,6 +13,11 @@ from PyQt6.QtCore import QLockFile, pyqtSignal
 from PyQt6.QtWidgets import QApplication
 from PyQt6.QtGui import QFontDatabase
 
+try:
+    import qtawesome as qta
+except Exception:
+    qta = None
+
 
 # ============================================================================
 # PATHS
@@ -21,6 +26,15 @@ from PyQt6.QtGui import QFontDatabase
 LAUNCHER_DIR = Path(__file__).resolve().parent.parent
 GAME_ROOT = LAUNCHER_DIR.parent.parent
 ASSETS_DIR = LAUNCHER_DIR / "assets"
+ICONS_DIR = ASSETS_DIR / "icons"
+IMAGES_DIR = ASSETS_DIR / "images"
+CACHE_DIR = LAUNCHER_DIR / "Cache"
+BACKGROUND_IMAGE = IMAGES_DIR / "background.png"
+APP_ICON_ICO = ICONS_DIR / "favicon.ico"
+APP_ICON_PNG = ICONS_DIR / "favicon.png"
+VULKAN_EXE = GAME_ROOT / "Q3Elite" / "Engines" / "XQ3E_Vulkan.x64.exe"
+RESHADE_SOURCE = GAME_ROOT / "Q3Elite" / "ReShade" / "Program"
+RESHADE_DEST = Path(os.environ.get("ProgramData", r"C:\\ProgramData")) / "ReShade"
 
 os.chdir(LAUNCHER_DIR)
 
@@ -63,10 +77,11 @@ def q3elite_is_current():
 # ============================================================================
 
 def q3elite_is_installed():
-    """Q3Elite is installed once its Engines directory exists."""
+    """A usable installation requires the Q3Elite engine, not merely an empty directory."""
     engines_dir = GAME_ROOT / "Q3Elite" / "Engines"
-    print(f"Q3Elite install marker: {engines_dir}")
-    return engines_dir.is_dir()
+    engine = engines_dir / "XQ3E_Vulkan.x64.exe"
+    print(f"Q3Elite install marker: {engine}")
+    return engines_dir.is_dir() and engine.is_file()
 
 
 # ============================================================================
@@ -526,9 +541,9 @@ class Q3EliteDownload(QtCore.QThread):
             #
             # Step 19 GUI will pass the user's checkbox selections here.
             q3components.install_basic(
-                external_maps=False,
-                music_playlist=False,
-                autoexec_update=False,
+                external_maps=bool(getattr(window, "firstInstallMapsBox", window.mapsBox).isChecked()),
+                music_playlist=bool(getattr(window, "firstInstallMusicBox", window.musicBox).isChecked()),
+                autoexec_update=bool(getattr(window, "firstInstallAutoexecBox", window.autoexecBox).isChecked()),
                 control=download_control,
                 progress_callback=download_progress_callback,
             )
@@ -702,8 +717,7 @@ class FDownload(QtCore.QThread):
                 exist_ok=True
             )
 
-            if not os.path.exists("./cache"):
-                os.mkdir("./cache")
+            CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
             # ============================================================
             # VERIFY OFFICIAL QUAKE 3 PAKS
@@ -873,6 +887,169 @@ class LauncherSelfUpdate(QtCore.QThread):
 
 
 # ============================================================================
+# WINDOWS / RESHADE / LAUNCHER METADATA
+# ============================================================================
+
+def _run_elevated_powershell(script):
+    """Run a short PowerShell command elevated and wait for its exit code."""
+    import subprocess
+    escaped = script.replace('"', '\\"')
+    command = (
+        f'Start-Process powershell -Verb RunAs -Wait '
+        f'-ArgumentList \'-NoProfile -ExecutionPolicy Bypass -Command "{escaped}"\''
+    )
+    result = subprocess.run(
+        ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", command],
+        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+    )
+    return result.returncode == 0
+
+
+def _ps_quote(value):
+    return str(value).replace("'", "''")
+
+
+def reshade_layer_enabled():
+    """Read the real 64-bit Vulkan implicit-layer registry state."""
+    if os.name != "nt":
+        return False
+    import winreg
+    value_name = str(RESHADE_DEST / "ReShade64.json")
+    try:
+        with winreg.OpenKey(
+            winreg.HKEY_LOCAL_MACHINE,
+            r"SOFTWARE\Khronos\Vulkan\ImplicitLayers",
+            0,
+            winreg.KEY_READ | winreg.KEY_WOW64_64KEY,
+        ) as key:
+            value, _ = winreg.QueryValueEx(key, value_name)
+            return int(value) == 0
+    except OSError:
+        return False
+
+
+def configure_reshade_vulkan(enabled=True, install_files=False):
+    """Install/register or unregister the ReShade Vulkan implicit layers."""
+    if os.name != "nt":
+        raise RuntimeError("ReShade Vulkan layer management is only available on Windows.")
+
+    dst = _ps_quote(RESHADE_DEST)
+    src = _ps_quote(RESHADE_SOURCE)
+    game = _ps_quote(VULKAN_EXE)
+    value64 = _ps_quote(RESHADE_DEST / "ReShade64.json")
+    value32 = _ps_quote(RESHADE_DEST / "ReShade32.json")
+
+    commands = ["$ErrorActionPreference='Stop'"]
+    if install_files:
+        commands += [
+            f"New-Item -ItemType Directory -Force -Path '{dst}' | Out-Null",
+            f"Copy-Item -Path '{src}\\\\*' -Destination '{dst}' -Recurse -Force",
+            f"$ini='{dst}\\\\ReShadeApps.ini'",
+            f"$game='{game}'",
+            "if (!(Test-Path $ini)) { Set-Content -Path $ini -Value ('[GENERAL]`r`nApps=' + $game) -Encoding ASCII } "
+            "else { $c=Get-Content $ini -Raw; if ($c -notmatch [regex]::Escape($game)) { "
+            "if ($c -match '(?m)^Apps=.*$') { $c=[regex]::Replace($c,'(?m)^Apps=.*$',{ param($m) $m.Value + ';' + $game }) } "
+            "else { $c += '`r`nApps=' + $game }; Set-Content -Path $ini -Value $c -Encoding ASCII } }",
+        ]
+
+    if enabled:
+        commands += [
+            r"New-Item -Path 'HKLM:\SOFTWARE\Khronos\Vulkan\ImplicitLayers' -Force | Out-Null",
+            r"New-Item -Path 'HKLM:\SOFTWARE\WOW6432Node\Khronos\Vulkan\ImplicitLayers' -Force | Out-Null",
+            f"New-ItemProperty -Path 'HKLM:\\SOFTWARE\\Khronos\\Vulkan\\ImplicitLayers' -Name '{value64}' -PropertyType DWord -Value 0 -Force | Out-Null",
+            f"New-ItemProperty -Path 'HKLM:\\SOFTWARE\\WOW6432Node\\Khronos\\Vulkan\\ImplicitLayers' -Name '{value32}' -PropertyType DWord -Value 0 -Force | Out-Null",
+        ]
+    else:
+        commands += [
+            f"Remove-ItemProperty -Path 'HKLM:\\SOFTWARE\\Khronos\\Vulkan\\ImplicitLayers' -Name '{value64}' -ErrorAction SilentlyContinue",
+            f"Remove-ItemProperty -Path 'HKLM:\\SOFTWARE\\WOW6432Node\\Khronos\\Vulkan\\ImplicitLayers' -Name '{value32}' -ErrorAction SilentlyContinue",
+        ]
+
+    if not _run_elevated_powershell("; ".join(commands)):
+        raise RuntimeError("Administrator operation was cancelled or failed.")
+
+
+def set_start_with_windows(enabled):
+    """Use HKCU Run: no administrator rights required."""
+    if os.name != "nt":
+        return
+    import winreg
+    run_key = r"Software\Microsoft\Windows\CurrentVersion\Run"
+    value_name = "Q3Elite Launcher"
+    # Prefer the launcher executable when frozen; otherwise use pythonw + this script.
+    if getattr(sys, "frozen", False):
+        command = f'"{Path(sys.executable).resolve()}"'
+    else:
+        pythonw = Path(sys.executable).with_name("pythonw.exe")
+        command = f'"{pythonw}" "{Path(__file__).resolve()}"'
+    with winreg.OpenKey(winreg.HKEY_CURRENT_USER, run_key, 0, winreg.KEY_SET_VALUE) as key:
+        if enabled:
+            winreg.SetValueEx(key, value_name, 0, winreg.REG_SZ, command)
+        else:
+            try:
+                winreg.DeleteValue(key, value_name)
+            except FileNotFoundError:
+                pass
+
+
+def launcher_version_file():
+    candidates = [
+        LAUNCHER_DIR / "Version.json",
+        LAUNCHER_DIR / "version.json",
+        LAUNCHER_DIR / "version.txt",
+    ]
+    return next((p for p in candidates if p.is_file()), None)
+
+
+def read_launcher_metadata():
+    """Read launcher version/changelog from the same local release metadata file."""
+    path = launcher_version_file()
+    if path is None:
+        return {"version": "—", "releases": []}
+    try:
+        if path.suffix.lower() == ".txt":
+            return {"version": path.read_text(encoding="utf-8").strip(), "releases": []}
+        raw = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(raw, dict):
+            return {"version": "—", "releases": []}
+        version = str(raw.get("version", raw.get("Version", "—")))
+        releases = raw.get("releases", raw.get("changelog", []))
+        if isinstance(releases, dict):
+            releases = [
+                dict(v if isinstance(v, dict) else {"changes": v}, version=k)
+                for k, v in releases.items()
+            ]
+        if not isinstance(releases, list):
+            releases = []
+        return {"version": version, "releases": releases}
+    except Exception as error:
+        print(f"[metadata] Could not read launcher metadata: {error}")
+        return {"version": "—", "releases": []}
+
+
+def sorted_launcher_releases():
+    from datetime import datetime
+    releases = read_launcher_metadata().get("releases", [])
+
+    def key(item):
+        if not isinstance(item, dict):
+            return datetime.min
+        value = str(item.get("date", item.get("release_date", "")))
+        for fmt in ("%Y-%m-%d", "%Y/%m/%d", "%d.%m.%Y"):
+            try:
+                return datetime.strptime(value[:10], fmt)
+            except ValueError:
+                pass
+        return datetime.min
+
+    return sorted(
+        [x for x in releases if isinstance(x, dict)],
+        key=key,
+        reverse=True,
+    )
+
+
+# ============================================================================
 # STEP 19 — LAUNCHER SETTINGS
 # ============================================================================
 
@@ -883,6 +1060,8 @@ DEFAULT_SETTINGS = {
     "auto_update_launcher": True,
     "auto_update_osp": True,
     "check_updates_on_startup": True,
+    "start_with_windows": False,
+    "minimize_to_tray": False,
 }
 
 
@@ -1084,6 +1263,8 @@ def set_gui_ready(offline=False):
         window.progressBar.setRange(0, 100)
         window.progressBar.setValue(100)
         window.pauseButton.hide()
+        if hasattr(window, "firstInstallCard"):
+            window.firstInstallCard.hide()
 
         version = read_local_q3elite_version()
         window.q3VersionValue.setText(version)
@@ -1206,14 +1387,25 @@ def apply_component_changes():
 
 def apply_settings():
     global launcher_settings
+    old_vulkan = reshade_layer_enabled()
     launcher_settings = {
         "auto_update_q3elite": window.autoQ3Box.isChecked(),
         "auto_update_launcher": window.autoLauncherBox.isChecked(),
         "auto_update_osp": window.autoOspBox.isChecked(),
         "check_updates_on_startup": window.checkStartupBox.isChecked(),
+        "start_with_windows": window.startWindowsBox.isChecked(),
+        "minimize_to_tray": window.trayBox.isChecked(),
     }
-    save_launcher_settings(launcher_settings)
-    window.settingsMessage.setText("Settings saved.")
+    try:
+        set_start_with_windows(launcher_settings["start_with_windows"])
+        requested_vulkan = window.vulkanLayerBox.isChecked()
+        if requested_vulkan != old_vulkan:
+            configure_reshade_vulkan(requested_vulkan, install_files=requested_vulkan)
+        save_launcher_settings(launcher_settings)
+        window.settingsMessage.setText("Settings saved.")
+    except Exception as error:
+        window.vulkanLayerBox.setChecked(reshade_layer_enabled())
+        window.settingsMessage.setText(f"Could not apply settings: {error}")
 
 
 def refresh_updates():
@@ -1250,8 +1442,37 @@ def start_local_check():
     else:
         install_state["q3elite_done"] = False
         install_state["q3elite_ok"] = False
-        set_gui_checking("Installing...")
-        q3elite_download.start()
+        prepare_first_install()
+
+
+def prepare_first_install():
+    """Fresh installs wait for explicit user confirmation."""
+    _disconnect_main_button()
+    window.firstInstallCard.show()
+    window.playButton.setText("INSTALL")
+    window.playButton.setEnabled(True)
+    window.playButton.clicked.connect(start_first_install)
+    window.progressBar.setRange(0, 100)
+    window.progressBar.setValue(0)
+    window.pauseButton.hide()
+    window.downloadInfo.setText("Choose optional components, then press INSTALL.")
+    window.installedValue.setText("Not installed")
+    set_status("Ready to install", "Choose components and press INSTALL.", "normal")
+
+
+def start_first_install():
+    if q3elite_download.isRunning():
+        return
+    _disconnect_main_button()
+    window.firstInstallCard.setEnabled(False)
+    download_control.reset()
+    install_state["base_done"] = False
+    install_state["base_ok"] = False
+    install_state["q3elite_done"] = False
+    install_state["q3elite_ok"] = False
+    install_state["post_update_started"] = False
+    set_gui_checking("Installing...")
+    q3elite_download.start()
 
 
 def start_game_checks():
@@ -1302,6 +1523,129 @@ def launcher_self_update_result(action):
 
 
 
+
+# ============================================================================
+# GOTHIC VISUAL LAYER
+# ============================================================================
+
+class GothicShell(QtWidgets.QFrame):
+    """Paints the launcher artwork once and keeps a blurred copy for glass panels."""
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._background = QtGui.QPixmap()
+        self._blurred = QtGui.QPixmap()
+        candidates = [BACKGROUND_IMAGE]
+        for path in candidates:
+            if path.is_file() and self._background.load(str(path)):
+                break
+        if not self._background.isNull():
+            self._rebuild_blur()
+
+    def _rebuild_blur(self):
+        if self._background.isNull():
+            return
+        # Blur a downscaled copy: inexpensive and visually close to CSS backdrop-filter.
+        small = self._background.scaled(420, 240, QtCore.Qt.AspectRatioMode.KeepAspectRatioByExpanding,
+                                        QtCore.Qt.TransformationMode.SmoothTransformation)
+        scene = QtWidgets.QGraphicsScene()
+        item = QtWidgets.QGraphicsPixmapItem(small)
+        effect = QtWidgets.QGraphicsBlurEffect()
+        effect.setBlurRadius(16.0)
+        item.setGraphicsEffect(effect)
+        scene.addItem(item)
+        out = QtGui.QPixmap(small.size())
+        out.fill(QtCore.Qt.GlobalColor.transparent)
+        painter = QtGui.QPainter(out)
+        scene.render(painter, QtCore.QRectF(out.rect()), QtCore.QRectF(small.rect()))
+        painter.end()
+        self._blurred = out
+
+    def _cover(self, pm, size):
+        if pm.isNull(): return QtGui.QPixmap()
+        scaled = pm.scaled(size, QtCore.Qt.AspectRatioMode.KeepAspectRatioByExpanding,
+                           QtCore.Qt.TransformationMode.SmoothTransformation)
+        x=max(0,(scaled.width()-size.width())//2); y=max(0,(scaled.height()-size.height())//2)
+        return scaled.copy(x,y,size.width(),size.height())
+
+    def paintEvent(self, event):
+        painter=QtGui.QPainter(self)
+        painter.setRenderHint(QtGui.QPainter.RenderHint.SmoothPixmapTransform)
+        if not self._background.isNull():
+            painter.drawPixmap(self.rect(), self._cover(self._background, self.size()))
+        else:
+            painter.fillRect(self.rect(), QtGui.QColor('#080808'))
+        # black film + subtle blood-red radial atmosphere
+        painter.fillRect(self.rect(), QtGui.QColor(0,0,0,112))
+        grad=QtGui.QRadialGradient(self.width()*.72,self.height()*.42,self.width()*.62)
+        grad.setColorAt(0,QtGui.QColor(100,0,0,34)); grad.setColorAt(.55,QtGui.QColor(20,0,0,12)); grad.setColorAt(1,QtGui.QColor(0,0,0,0))
+        painter.fillRect(self.rect(),grad)
+        painter.end()
+        super().paintEvent(event)
+
+
+class GlassFrame(QtWidgets.QFrame):
+    """Backdrop-style frosted panel sampling GothicShell's blurred artwork."""
+    def paintEvent(self, event):
+        shell=self.window().findChild(GothicShell, 'shell')
+        if shell is not None and not shell._blurred.isNull():
+            painter=QtGui.QPainter(self)
+            # map this panel into shell coordinates, then sample equivalent normalized area
+            top_left=self.mapTo(shell, QtCore.QPoint(0,0))
+            sx=max(0,int(top_left.x()/max(1,shell.width())*shell._blurred.width()))
+            sy=max(0,int(top_left.y()/max(1,shell.height())*shell._blurred.height()))
+            sw=max(1,int(self.width()/max(1,shell.width())*shell._blurred.width()))
+            sh=max(1,int(self.height()/max(1,shell.height())*shell._blurred.height()))
+            src=QtCore.QRect(sx,sy,sw,sh).intersected(shell._blurred.rect())
+            if src.isValid(): painter.drawPixmap(self.rect(), shell._blurred, src)
+            painter.fillRect(self.rect(), QtGui.QColor(5,5,7,172))
+            painter.end()
+        super().paintEvent(event)
+
+
+class GlowButton(QtWidgets.QPushButton):
+    """Native animated hover glow; QSS itself cannot interpolate shadows."""
+    def __init__(self, text='', parent=None):
+        super().__init__(text,parent)
+        fx=QtWidgets.QGraphicsDropShadowEffect(self); fx.setOffset(0,0); fx.setBlurRadius(0)
+        fx.setColor(QtGui.QColor(180,0,0,210)); self.setGraphicsEffect(fx); self._glow=fx
+        self._anim=QtCore.QPropertyAnimation(fx,b'blurRadius',self); self._anim.setDuration(180)
+        self._anim.setEasingCurve(QtCore.QEasingCurve.Type.OutCubic)
+    def _to(self,v):
+        self._anim.stop(); self._anim.setStartValue(self._glow.blurRadius()); self._anim.setEndValue(v); self._anim.start()
+    def enterEvent(self,e): self._to(22); super().enterEvent(e)
+    def leaveEvent(self,e): self._to(0); super().leaveEvent(e)
+
+
+class AnimatedEmoji(QtWidgets.QLabel):
+    """Alpha-safe launcher emoji. Prefer animated WebP/GIF; PNG is static fallback."""
+    def __init__(self, name, size=30, parent=None):
+        super().__init__(parent); self.setFixedSize(size,size); self.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
+        self.setAttribute(QtCore.Qt.WidgetAttribute.WA_TranslucentBackground, True)
+        icon_path = APP_ICON_ICO if APP_ICON_ICO.is_file() else APP_ICON_PNG
+        if icon_path.is_file():
+            self.setWindowIcon(QtGui.QIcon(str(icon_path)))
+        self.trayIcon = QtWidgets.QSystemTrayIcon(self.windowIcon(), self)
+        tray_menu = QtWidgets.QMenu(self)
+        tray_show = tray_menu.addAction("Open Q3Elite Launcher")
+        tray_show.triggered.connect(self.restore_from_tray)
+        tray_menu.addSeparator()
+        tray_exit = tray_menu.addAction("Exit")
+        tray_exit.triggered.connect(self.exit_from_tray)
+        self.trayIcon.setContextMenu(tray_menu)
+        self.trayIcon.activated.connect(self._tray_activated)
+        self._allow_close = False
+        root=ASSETS_DIR/'emojis'; self._movie=None
+        for ext in ('.webp','.gif','.png'):
+            path=root/(name+ext)
+            if not path.is_file(): continue
+            if ext in ('.webp','.gif'):
+                movie=QtGui.QMovie(str(path)); movie.setScaledSize(QtCore.QSize(size,size))
+                if movie.isValid(): self._movie=movie; self.setMovie(movie); movie.start(); return
+            pm=QtGui.QPixmap(str(path))
+            if not pm.isNull(): self.setPixmap(pm.scaled(size,size,QtCore.Qt.AspectRatioMode.KeepAspectRatio,QtCore.Qt.TransformationMode.SmoothTransformation)); return
+        self.setText('⛧'); self.setStyleSheet('color:#a00000;font-size:22px;background:transparent;')
+
+
 class ModernLauncherWindow(QtWidgets.QMainWindow):
     """1368x768 frameless Q3Elite launcher. Backend stays in launch.pyw."""
 
@@ -1321,7 +1665,7 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
         self.pending_component_actions = []
         self._component_baseline = {}
 
-        self.shell = QtWidgets.QFrame(self)
+        self.shell = GothicShell(self)
         self.shell.setObjectName("shell")
         self.shell.setGeometry(8, 8, 1352, 752)
 
@@ -1330,14 +1674,14 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
         root.setSpacing(0)
 
         # LEFT RAIL ---------------------------------------------------------
-        self.sidebar = QtWidgets.QFrame()
+        self.sidebar = GlassFrame()
         self.sidebar.setObjectName("sidebar")
         self.sidebar.setFixedWidth(224)
         side = QtWidgets.QVBoxLayout(self.sidebar)
         side.setContentsMargins(22, 24, 22, 22)
         side.setSpacing(10)
 
-        brand = QtWidgets.QLabel("Q3<span style='color:#35d9ff'>ELITE</span>")
+        brand = QtWidgets.QLabel("Q3<span style='color:#a40000'>ELITE</span>")
         brand.setObjectName("brand")
         brand.setTextFormat(QtCore.Qt.TextFormat.RichText)
         side.addWidget(brand)
@@ -1347,10 +1691,10 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
         side.addWidget(sub)
         side.addSpacing(34)
 
-        self.homeNav = self._nav_button("⌂   HOME", "home")
-        self.addonsNav = self._nav_button("◇   INSTALL ADDONS", "addons")
-        self.settingsNav = self._nav_button("⚙   SETTINGS", "settings")
-        self.changelogNav = self._nav_button("≡   CHANGELOG", "changelog")
+        self.homeNav = self._nav_button("HOME", "home", "fa5s.home")
+        self.addonsNav = self._nav_button("INSTALL ADDONS", "addons", "fa5s.puzzle-piece")
+        self.settingsNav = self._nav_button("SETTINGS", "settings", "fa5s.cog")
+        self.changelogNav = self._nav_button("CHANGELOG", "changelog", "fa5s.scroll")
         for button in (self.homeNav, self.addonsNav, self.settingsNav, self.changelogNav):
             side.addWidget(button)
 
@@ -1373,17 +1717,17 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
         top.addWidget(title)
         top.addStretch(1)
 
-        self.launcherVersion = QtWidgets.QLabel("Launcher v0.04")
+        self.launcherVersion = QtWidgets.QLabel(f"Launcher v{read_launcher_metadata().get('version', '—')}")
         self.launcherVersion.setObjectName("versionLabel")
         top.addWidget(self.launcherVersion)
 
-        self.minButton = QtWidgets.QPushButton("—")
+        self.minButton = GlowButton("—")
         self.minButton.setObjectName("windowButton")
         self.minButton.setFixedSize(42, 36)
-        self.minButton.clicked.connect(self.showMinimized)
+        self.minButton.clicked.connect(self.minimize_launcher)
         top.addWidget(self.minButton)
 
-        self.closeButton = QtWidgets.QPushButton("×")
+        self.closeButton = GlowButton("×")
         self.closeButton.setObjectName("closeButton")
         self.closeButton.setFixedSize(42, 36)
         self.closeButton.clicked.connect(self.close)
@@ -1406,6 +1750,7 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
         self.load_settings_ui()
 
         # Screenshot set shared with the public Q3Elite website.
+        self._hero_local = [p for p in [ASSETS_DIR / "screenshots" / f"c{i}.png" for i in range(1, 11)] if p.is_file()]
         self._hero_urls = [
             "https://i.imgur.com/2fRzLTO.png", "https://i.imgur.com/LdHeuau.png",
             "https://i.imgur.com/GF6zwPt.png", "https://i.imgur.com/cgYryat.png",
@@ -1422,8 +1767,14 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
         self._network = QtNetwork.QNetworkAccessManager(self)
         self.load_hero_image()
 
-    def _nav_button(self, text, page):
-        b = QtWidgets.QPushButton(text)
+    def _nav_button(self, text, page, icon_name=None):
+        b = GlowButton(text)
+        if qta is not None and icon_name:
+            try:
+                b.setIcon(qta.icon(icon_name, color='#b8b8b8', color_active='#b00000'))
+                b.setIconSize(QtCore.QSize(18,18))
+            except Exception:
+                pass
         b.setObjectName("navButton")
         b.setCheckable(True)
         b.setProperty("page", page)
@@ -1431,7 +1782,7 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
         return b
 
     def _card(self, name="card"):
-        f = QtWidgets.QFrame()
+        f = GlassFrame()
         f.setObjectName(name)
         return f
 
@@ -1465,11 +1816,16 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
         hc.setContentsMargins(22, 11, 16, 11)
 
         hero_text = QtWidgets.QVBoxLayout()
+        hero_brand_row = QtWidgets.QHBoxLayout()
+        hero_brand_row.setSpacing(8)
+        hero_brand_row.addWidget(AnimatedEmoji("HorrorEye", 32))
         kicker = QtWidgets.QLabel("QUAKE 3 ELITE")
+        hero_brand_row.addWidget(kicker)
+        hero_brand_row.addStretch(1)
         kicker.setObjectName("heroKicker")
         hero_title = QtWidgets.QLabel("RELOADED FOR A NEW ERA")
         hero_title.setObjectName("heroTitle")
-        hero_text.addWidget(kicker)
+        hero_text.addLayout(hero_brand_row)
         hero_text.addWidget(hero_title)
         hc.addLayout(hero_text, 1)
 
@@ -1538,8 +1894,24 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
         upper.addLayout(right, 1)
         layout.addLayout(upper, 3)
 
+        self.firstInstallCard = self._card("settingsCard")
+        fic = QtWidgets.QHBoxLayout(self.firstInstallCard)
+        fic.setContentsMargins(18, 10, 18, 10)
+        fit = QtWidgets.QLabel("FIRST INSTALLATION")
+        fit.setObjectName("sectionTitle")
+        fic.addWidget(fit)
+        self.firstInstallMapsBox = QtWidgets.QCheckBox("External Maps")
+        self.firstInstallMusicBox = QtWidgets.QCheckBox("Music Playlist")
+        self.firstInstallAutoexecBox = QtWidgets.QCheckBox("Autoexec Update")
+        fic.addStretch(1)
+        fic.addWidget(self.firstInstallMapsBox)
+        fic.addWidget(self.firstInstallMusicBox)
+        fic.addWidget(self.firstInstallAutoexecBox)
+        self.firstInstallCard.setVisible(not q3elite_is_installed())
+        layout.addWidget(self.firstInstallCard)
+
         action = QtWidgets.QHBoxLayout()
-        self.playButton = QtWidgets.QPushButton("CHECKING...")
+        self.playButton = GlowButton("CHECKING...")
         self.playButton.setObjectName("playButton")
         self.playButton.setMinimumHeight(74)
         action.addWidget(self.playButton, 2)
@@ -1666,7 +2038,14 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
         self.autoLauncherBox = QtWidgets.QCheckBox("Automatically update Launcher")
         self.autoOspBox = QtWidgets.QCheckBox("Automatically update OSP2-BE")
         self.checkStartupBox = QtWidgets.QCheckBox("Check for updates on startup")
-        for box in (self.autoQ3Box, self.autoLauncherBox, self.autoOspBox, self.checkStartupBox):
+        self.startWindowsBox = QtWidgets.QCheckBox("Start with Windows")
+        self.trayBox = QtWidgets.QCheckBox("Minimize to Windows system tray")
+        self.vulkanLayerBox = QtWidgets.QCheckBox("Enable ReShade Vulkan Layer")
+        for box in (
+            self.autoQ3Box, self.autoLauncherBox, self.autoOspBox,
+            self.checkStartupBox, self.startWindowsBox, self.trayBox,
+            self.vulkanLayerBox,
+        ):
             c.addWidget(box)
         lay.addWidget(card)
 
@@ -1675,11 +2054,18 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
         cache_title = QtWidgets.QLabel("DOWNLOAD CACHE")
         cache_title.setObjectName("sectionTitle")
         cc.addWidget(cache_title)
-        cache_path = Path(os.environ.get("APPDATA", Path.home())) / "Quake 3 Elite" / "Launcher" / "cache"
-        cp = QtWidgets.QLabel(str(cache_path))
+        cache_row = QtWidgets.QHBoxLayout()
+        cp = QtWidgets.QLabel(str(CACHE_DIR))
         cp.setObjectName("muted")
         cp.setWordWrap(True)
-        cc.addWidget(cp)
+        cache_row.addWidget(cp, 1)
+        open_cache = QtWidgets.QPushButton("📂")
+        open_cache.setObjectName("smallButton")
+        open_cache.setToolTip("Open Cache folder")
+        open_cache.setFixedWidth(48)
+        open_cache.clicked.connect(self.open_cache_folder)
+        cache_row.addWidget(open_cache)
+        cc.addLayout(cache_row)
         lay.addWidget(cache)
         lay.addStretch(1)
 
@@ -1702,17 +2088,27 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
 
         browser = QtWidgets.QTextBrowser()
         browser.setObjectName("changelogBrowser")
-        browser.setHtml(
-            "<h2>Q3Elite 1.2</h2>"
-            "<p>Current installed release.</p>"
-            "<ul>"
-            "<li>Updated XQ3E Vulkan integration</li>"
-            "<li>HUD and spectator improvements</li>"
-            "<li>OSP2-BE integration</li>"
-            "<li>Launcher component system</li>"
-            "</ul>"
-            "<p><i>Remote changelog support will use Version.json metadata.</i></p>"
-        )
+        releases = sorted_launcher_releases()
+        if releases:
+            parts = []
+            for release in releases:
+                version = str(release.get("version", "?"))
+                date = str(release.get("date", release.get("release_date", "")))
+                changes = release.get("changes", release.get("items", release.get("notes", [])))
+                if isinstance(changes, str):
+                    changes = [changes]
+                if not isinstance(changes, list):
+                    changes = []
+                parts.append(f"<h2>Launcher {version}</h2><p><b>{date}</b></p>")
+                if changes:
+                    parts.append("<ul>" + "".join(f"<li>{str(item)}</li>" for item in changes) + "</ul>")
+            browser.setHtml("".join(parts))
+        else:
+            meta = read_launcher_metadata()
+            browser.setHtml(
+                f"<h2>Launcher {meta.get('version', '—')}</h2>"
+                "<p>No changelog entries were found in the local version metadata.</p>"
+            )
         lay.addWidget(browser, 1)
         return page
 
@@ -1781,6 +2177,50 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
         self.autoLauncherBox.setChecked(launcher_settings.get("auto_update_launcher", True))
         self.autoOspBox.setChecked(launcher_settings.get("auto_update_osp", True))
         self.checkStartupBox.setChecked(launcher_settings.get("check_updates_on_startup", True))
+        self.startWindowsBox.setChecked(launcher_settings.get("start_with_windows", False))
+        self.trayBox.setChecked(launcher_settings.get("minimize_to_tray", False))
+        self.vulkanLayerBox.setChecked(reshade_layer_enabled())
+
+    def open_cache_folder(self):
+        CACHE_DIR.mkdir(parents=True, exist_ok=True)
+        QtGui.QDesktopServices.openUrl(QtCore.QUrl.fromLocalFile(str(CACHE_DIR)))
+
+    def minimize_launcher(self):
+        if launcher_settings.get("minimize_to_tray", False) and QtWidgets.QSystemTrayIcon.isSystemTrayAvailable():
+            self.trayIcon.show()
+            self.hide()
+        else:
+            self.showMinimized()
+
+    def restore_from_tray(self):
+        self.show()
+        self.showNormal()
+        self.raise_()
+        self.activateWindow()
+
+    def exit_from_tray(self):
+        self._allow_close = True
+        self.trayIcon.hide()
+        self.close()
+
+    def _tray_activated(self, reason):
+        if reason in (
+            QtWidgets.QSystemTrayIcon.ActivationReason.Trigger,
+            QtWidgets.QSystemTrayIcon.ActivationReason.DoubleClick,
+        ):
+            self.restore_from_tray()
+
+    def closeEvent(self, event):
+        if (
+            not self._allow_close
+            and launcher_settings.get("minimize_to_tray", False)
+            and QtWidgets.QSystemTrayIcon.isSystemTrayAvailable()
+        ):
+            self.trayIcon.show()
+            self.hide()
+            event.ignore()
+            return
+        event.accept()
 
     def launch(self):
         """Start the game directly without re-running the launcher."""
@@ -1798,20 +2238,30 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
     def change_hero_image(self, delta):
         if not self._hero_urls:
             return
-        self._hero_index = (self._hero_index + delta) % len(self._hero_urls)
+        self._hero_index = (self._hero_index + delta) % (len(self._hero_local) if getattr(self, "_hero_local", None) else len(self._hero_urls))
         self.load_hero_image()
 
     def load_hero_image(self):
         if not self._hero_urls:
             return
         self.heroCounter.setText(f"{self._hero_index + 1:02d} / {len(self._hero_urls):02d}")
+        if getattr(self, "_hero_local", None):
+            path = self._hero_local[self._hero_index % len(self._hero_local)]
+            key = str(path)
+            cached = self._hero_pixmaps.get(key)
+            if cached is None:
+                cached = QtGui.QPixmap(key)
+                if not cached.isNull(): self._hero_pixmaps[key] = cached
+            if cached is not None and not cached.isNull():
+                self.heroCounter.setText(f"{(self._hero_index % len(self._hero_local)) + 1:02d} / {len(self._hero_local):02d}")
+                self._set_hero_pixmap(cached); return
         url = self._hero_urls[self._hero_index]
         cached = self._hero_pixmaps.get(url)
         if cached is not None:
             self._set_hero_pixmap(cached)
             return
         request = QtNetwork.QNetworkRequest(QtCore.QUrl(url))
-        request.setRawHeader(b"User-Agent", b"Q3Elite-Launcher/0.04")
+        request.setRawHeader(b"User-Agent", f"Q3Elite-Launcher/{read_launcher_metadata().get('version', 'unknown')}".encode("ascii", "ignore"))
         reply = self._network.get(request)
         reply.finished.connect(lambda r=reply, u=url: self._hero_download_finished(r, u))
 
@@ -1844,9 +2294,12 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
     def resizeEvent(self, event):
         super().resizeEvent(event)
         if hasattr(self, "_hero_urls") and self._hero_urls:
-            pixmap = self._hero_pixmaps.get(self._hero_urls[self._hero_index])
-            if pixmap is not None:
-                self._set_hero_pixmap(pixmap)
+            if getattr(self, "_hero_local", None):
+                key = str(self._hero_local[self._hero_index % len(self._hero_local)])
+            else:
+                key = self._hero_urls[self._hero_index]
+            pixmap = self._hero_pixmaps.get(key)
+            if pixmap is not None: self._set_hero_pixmap(pixmap)
 
     def qerror(self, text):
         QtWidgets.QMessageBox.critical(self, "Q3Elite Launcher", str(text))
@@ -1938,10 +2391,17 @@ def q3elite_install_result(success):
         check_install_finished()
         return
 
-    # On first install PAK verification starts only AFTER Basic has
-    # finished writing Q3Elite/baseq3.
+    # FirstLaunch.bat logic is now owned by the launcher.
+    try:
+        configure_reshade_vulkan(True, install_files=True)
+        window.vulkanLayerBox.setChecked(True)
+    except Exception as error:
+        print(f"[warning] ReShade Vulkan layer setup failed: {error}")
+        # ReShade is optional; do not invalidate the game installation.
+
+    # On first install PAK verification starts only AFTER Basic has finished.
     if not install_state["base_done"] and not fdownload.isRunning():
-        set_gui_checking("Checking...")
+        set_gui_checking("Checking PAKs...")
         fdownload.start()
         return
 
@@ -2031,6 +2491,9 @@ def main():
 
     try:
         app = QApplication(sys.argv)
+        icon_path = APP_ICON_ICO if APP_ICON_ICO.is_file() else APP_ICON_PNG
+        if icon_path.is_file():
+            app.setWindowIcon(QtGui.QIcon(str(icon_path)))
 
         # Prevent a second launcher process from starting.
         instance_dir = Path(os.environ.get("APPDATA", str(LAUNCHER_DIR))) / "Quake 3 Elite" / "Launcher"
