@@ -2,6 +2,7 @@ import os
 import sys
 import shutil
 import json
+import re
 import urllib.parse
 import urllib.request
 import zipfile
@@ -9,8 +10,6 @@ import zipfile
 from pathlib import Path
 
 from PyQt6 import QtCore, QtGui, QtWidgets, QtNetwork
-from PyQt6.QtWebEngineWidgets import QWebEngineView
-from PyQt6.QtWebEngineCore import QWebEngineSettings
 from PyQt6.QtCore import QLockFile, pyqtSignal
 from PyQt6.QtWidgets import QApplication
 from PyQt6.QtGui import QFontDatabase
@@ -85,6 +84,16 @@ def q3elite_is_installed():
     print(f"Q3Elite engine marker: {engine}")
     print(f"Q3Elite OSP marker:    {osp_marker}")
     return engine.is_file() and osp_marker.exists()
+
+
+def config_editor_available():
+    """Only expose the editor after Basic has actually installed both configs."""
+    osp = GAME_ROOT / "baseq3" / "mods" / "osp"
+    return (
+        q3elite_is_installed()
+        and (osp / "autoexec.cfg").is_file()
+        and (osp / "UserConfig.cfg").is_file()
+    )
 
 
 # ============================================================================
@@ -1376,6 +1385,9 @@ def set_gui_checking(text="Checking..."):
 
 
 def set_gui_ready(offline=False):
+    if not q3elite_is_installed():
+        prepare_first_install()
+        return
     try:
         _disconnect_main_button()
         window.playButton.setText("▶   PLAY")
@@ -1386,6 +1398,10 @@ def set_gui_ready(offline=False):
         window.pauseButton.hide()
         if hasattr(window, "firstInstallCard"):
             window.firstInstallCard.hide()
+        if hasattr(window, "autoexecUpdateButton"):
+            window.autoexecUpdateButton.setEnabled(True)
+        if hasattr(window, "configEditorButton"):
+            window.configEditorButton.setEnabled(config_editor_available())
 
         version = read_local_q3elite_version()
         window.q3VersionValue.setText(version)
@@ -1462,6 +1478,9 @@ def refresh_component_gui():
 
 def start_component_action(action):
     global component_worker
+    if not q3elite_is_installed():
+        window.set_addon_message("Install Quake 3 Elite first.", error=True)
+        return
     if component_worker is not None and component_worker.isRunning():
         return
     download_control.reset()
@@ -1495,6 +1514,9 @@ def component_action_result(success, detail):
 
 
 def apply_component_changes():
+    if not q3elite_is_installed():
+        window.set_addon_message("Install Quake 3 Elite first.", error=True)
+        return
     window.prepare_component_actions()
     if not window.pending_component_actions:
         window.set_addon_message("No changes to apply.")
@@ -1574,6 +1596,10 @@ def prepare_first_install():
     window.pauseButton.hide()
     window.downloadInfo.setText("Choose optional components, then press INSTALL.")
     window.installedValue.setText("Not installed")
+    if hasattr(window, "autoexecUpdateButton"):
+        window.autoexecUpdateButton.setEnabled(False)
+    if hasattr(window, "configEditorButton"):
+        window.configEditorButton.setEnabled(False)
     set_status("Ready to install", "Choose components and press INSTALL.", "normal")
 
 
@@ -1761,7 +1787,7 @@ class ConfigEditorDialog(QtWidgets.QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Q3Elite Config Editor")
-        self.resize(1240, 720)
+        self.resize(1600, 900)
         self.autoexec_path = GAME_ROOT / "baseq3" / "mods" / "osp" / "autoexec.cfg"
         self.userconfig_path = GAME_ROOT / "baseq3" / "mods" / "osp" / "UserConfig.cfg"
 
@@ -2162,27 +2188,6 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(14)
 
-        video_card = self._card("videoCard")
-        video_l = QtWidgets.QVBoxLayout(video_card)
-        video_l.setContentsMargins(0, 0, 0, 0)
-        video_l.setSpacing(0)
-
-        self.videoView = QWebEngineView()
-        self.videoView.setObjectName("presentationVideo")
-        self.videoView.setMinimumHeight(300)
-        self.videoView.settings().setAttribute(
-            QWebEngineSettings.WebAttribute.PlaybackRequiresUserGesture, False
-        )
-        self.videoView.settings().setAttribute(
-            QWebEngineSettings.WebAttribute.FullScreenSupportEnabled, False
-        )
-        self.videoView.setUrl(QtCore.QUrl(
-            "https://www.youtube.com/embed/i1PfqzHkKLw"
-            "?autoplay=1&mute=1&controls=0&loop=1"
-            "&playlist=i1PfqzHkKLw&rel=0&modestbranding=1&playsinline=1"
-        ))
-        video_l.addWidget(self.videoView)
-        layout.addWidget(video_card)
 
         upper = QtWidgets.QHBoxLayout()
         upper.setSpacing(14)
@@ -2402,6 +2407,7 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
         self.autoexecUpdateButton = GlowButton("UPDATE AUTOEXEC")
         self.autoexecUpdateButton.setObjectName("applyButton")
         self.autoexecUpdateButton.clicked.connect(lambda: start_component_action("update-autoexec"))
+        self.autoexecUpdateButton.setEnabled(q3elite_is_installed())
         autoexec_l.addWidget(self.autoexecUpdateButton)
         lay.addWidget(autoexec_card)
         lay.addStretch(1)
@@ -2477,10 +2483,11 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
         config_text.addWidget(config_title)
         config_text.addWidget(QtWidgets.QLabel("View autoexec.cfg and edit UserConfig.cfg"))
         config_l.addLayout(config_text, 1)
-        config_button = GlowButton("OPEN CONFIG EDITOR")
-        config_button.setObjectName("applyButton")
-        config_button.clicked.connect(self.open_config_editor)
-        config_l.addWidget(config_button)
+        self.configEditorButton = GlowButton("OPEN CONFIG EDITOR")
+        self.configEditorButton.setObjectName("applyButton")
+        self.configEditorButton.clicked.connect(self.open_config_editor)
+        self.configEditorButton.setEnabled(config_editor_available())
+        config_l.addWidget(self.configEditorButton)
         lay.addWidget(config_card)
         lay.addStretch(1)
 
@@ -2595,6 +2602,8 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
         QtGui.QDesktopServices.openUrl(QtCore.QUrl.fromLocalFile(str(CACHE_DIR)))
 
     def open_config_editor(self):
+        if not config_editor_available():
+            return
         dialog = ConfigEditorDialog(self)
         dialog.exec()
 
@@ -2637,6 +2646,9 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
 
     def launch(self):
         """Start the game directly without re-running the launcher."""
+        if not q3elite_is_installed():
+            prepare_first_install()
+            return
         try:
             if not launch():
                 self.qerror(
@@ -2801,6 +2813,8 @@ def q3elite_install_result(success):
     install_state["q3elite_update_ok"] = success
 
     if not success:
+        if hasattr(window, "firstInstallCard"):
+            window.firstInstallCard.setEnabled(True)
         check_install_finished()
         return
 
