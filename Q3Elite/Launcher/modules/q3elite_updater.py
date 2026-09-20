@@ -54,6 +54,27 @@ REMOTE_VERSION = "Q3Elite/Version.json"
 FULL = "full"
 CORE = "core"
 
+# Files that are installed by Q3Elite but become user-owned afterwards.
+USER_CONFIG = "baseq3/mods/osp/UserConfig.cfg"
+
+# These paths must never be removed by Manifest.json "deleted" entries.
+PRESERVED_FILES = {
+    "q3elite/.q3eliteignore",
+    USER_CONFIG.casefold(),
+}
+PRESERVED_PREFIXES = (
+    "q3elite/update/",
+)
+
+
+def is_user_config(path):
+    return norm(path).casefold() == USER_CONFIG.casefold()
+
+
+def is_preserved_from_delete(path):
+    p = norm(path).casefold()
+    return p in PRESERVED_FILES or any(p.startswith(prefix) for prefix in PRESERVED_PREFIXES)
+
 
 def norm(value):
     return str(PurePosixPath(str(value).replace("\\", "/").lstrip("/")))
@@ -264,6 +285,9 @@ def full_hash_scan(manifest, profile):
         target = GAME_ROOT / Path(rel)
         if not target.is_file():
             missing.append(rel)
+        elif is_user_config(rel):
+            # Install the default config when missing, then preserve user edits.
+            current.append(rel)
         elif sha256_file(target).lower() == wanted:
             current.append(rel)
         else:
@@ -296,6 +320,12 @@ def download_one(rel, wanted_hash, control=None, progress_callback=None):
     from download_tools import downloader
 
     destination = GAME_ROOT / Path(rel)
+
+    # UserConfig.cfg is downloaded only when missing. Existing user edits win.
+    if is_user_config(rel) and destination.is_file():
+        print(f"[preserved user config] {rel}")
+        return
+
     destination.parent.mkdir(parents=True, exist_ok=True)
     info = resolve_remote(rel)
 
@@ -358,6 +388,9 @@ def apply_deleted(remote_manifest, profile):
         rel = norm(rel)
         if not applies(rel, profile):
             continue
+        if is_preserved_from_delete(rel):
+            print(f"[preserved] {rel}")
+            continue
         target = GAME_ROOT / Path(rel)
         # Never recursively delete arbitrary directories.
         if target.is_file() or target.is_symlink():
@@ -407,7 +440,9 @@ def update_release(local_manifest, remote_manifest, remote_version_data,
     for rel in candidates:
         target = GAME_ROOT / Path(rel)
         wanted = managed[rel]
-        if target.is_file() and sha256_file(target).lower() == wanted:
+        if is_user_config(rel) and target.is_file():
+            already_new.append(rel)
+        elif target.is_file() and sha256_file(target).lower() == wanted:
             already_new.append(rel)
         else:
             needed.append(rel)
@@ -429,6 +464,8 @@ def update_release(local_manifest, remote_manifest, remote_version_data,
         target = GAME_ROOT / Path(rel)
         if not target.is_file():
             raise RuntimeError(f"Final verification: missing {rel}")
+        if is_user_config(rel):
+            continue
         if sha256_file(target).lower() != managed[rel]:
             raise RuntimeError(f"Final verification failed: {rel}")
 

@@ -40,6 +40,7 @@ LOCAL_MANIFEST = ROOT / "Q3Elite" / "Manifest.json"
 LOCAL_VERSION = ROOT / "Q3Elite" / "Version.json"
 
 AUTOEXEC = "baseq3/mods/OSP/autoexec.cfg"
+USER_CONFIG = "baseq3/mods/OSP/UserConfig.cfg"
 MAP_PREFIX = "baseq3/maps/"
 MUSIC_LOCAL_PREFIX = "baseq3/mods/osp/z-Music-Playlist-by-Mus1n.pk3dir/music/"
 BASE_MUSIC = {f"{MUSIC_LOCAL_PREFIX}{n}.ogg".casefold() for n in range(1, 6)}
@@ -47,6 +48,10 @@ BASE_MUSIC = {f"{MUSIC_LOCAL_PREFIX}{n}.ogg".casefold() for n in range(1, 6)}
 
 def norm(v):
     return str(PurePosixPath(str(v).replace("\\", "/").lstrip("/")))
+
+
+def is_user_config(rel):
+    return norm(rel).casefold() == USER_CONFIG.casefold()
 
 
 def sha256_file(path, chunk=4 * 1024 * 1024):
@@ -211,6 +216,9 @@ def human(n):
 
 def _download_managed(rel, digest, control=None, progress_callback=None):
     dest = ROOT / Path(rel)
+    if is_user_config(rel) and dest.is_file():
+        print(f"[preserved user config] {rel}")
+        return False
     if dest.is_file() and sha256_file(dest).lower() == digest.lower():
         print(f"[current] {rel}")
         return False
@@ -296,6 +304,10 @@ def _extract_basic_zip(zip_path, group):
                 continue
 
             dest = ROOT / Path(rel)
+            if is_user_config(rel) and dest.is_file():
+                print(f"[preserved user config] {rel}")
+                extracted.add(rel.casefold())
+                continue
             dest.parent.mkdir(parents=True, exist_ok=True)
             tmp = dest.with_name(dest.name + ".bulk.tmp")
 
