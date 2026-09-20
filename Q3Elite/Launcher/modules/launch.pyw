@@ -10,6 +10,13 @@ import zipfile
 from pathlib import Path
 
 from PyQt6 import QtCore, QtGui, QtWidgets, QtNetwork
+
+try:
+    from PyQt6.QtWebEngineWidgets import QWebEngineView
+    TELEGRAM_WEBENGINE_AVAILABLE = True
+except Exception:
+    QWebEngineView = None
+    TELEGRAM_WEBENGINE_AVAILABLE = False
 from PyQt6.QtCore import QLockFile, pyqtSignal
 from PyQt6.QtWidgets import QApplication
 from PyQt6.QtGui import QFontDatabase
@@ -1195,6 +1202,243 @@ def read_launcher_metadata():
         return {"version": "—", "releases": []}
 
 
+
+CHANGELOG_FILE = LAUNCHER_DIR / "Changelog.json"
+
+
+def _html_escape(value):
+    import html
+    return html.escape(str(value), quote=True)
+
+
+def _url_attr(value):
+    return _html_escape(str(value).strip())
+
+
+def _youtube_embed_url(url):
+    value = str(url or "").strip()
+    if not value:
+        return ""
+    try:
+        parsed = urllib.parse.urlparse(value)
+        host = parsed.netloc.casefold()
+        video_id = ""
+        if "youtu.be" in host:
+            video_id = parsed.path.strip("/").split("/")[0]
+        elif "youtube.com" in host:
+            if parsed.path == "/watch":
+                video_id = urllib.parse.parse_qs(parsed.query).get("v", [""])[0]
+            elif parsed.path.startswith("/embed/"):
+                video_id = parsed.path.split("/embed/", 1)[1].split("/")[0]
+            elif parsed.path.startswith("/shorts/"):
+                video_id = parsed.path.split("/shorts/", 1)[1].split("/")[0]
+        if video_id:
+            return f"https://www.youtube.com/embed/{urllib.parse.quote(video_id)}"
+    except Exception:
+        pass
+    return value
+
+
+def _telegram_public_post_data(url):
+    """Best-effort extraction from Telegram's public post page."""
+    value = str(url or "").strip()
+    if not value or "t.me/" not in value:
+        return {}
+
+    # /s/channel/id is convenient for scraping the public post view.
+    fetch_url = value
+    match = re.match(r"https?://t\.me/(?!s/)([^/?#]+)/(\d+)", value)
+    if match:
+        fetch_url = f"https://t.me/s/{match.group(1)}/{match.group(2)}"
+
+    try:
+        req = urllib.request.Request(
+            fetch_url,
+            headers={
+                "User-Agent": (
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                    "AppleWebKit/537.36 (KHTML, like Gecko) "
+                    "Chrome/140.0.0.0 Safari/537.36"
+                ),
+                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+                "Accept-Language": "en-US,en;q=0.9",
+                "Cache-Control": "no-cache",
+            },
+        )
+        with urllib.request.urlopen(req, timeout=10) as response:
+            page = response.read().decode("utf-8", errors="replace")
+
+        import html as _html
+        result = {}
+
+        # Public Telegram page text.
+        text_match = re.search(
+            r'<div class="tgme_widget_message_text[^"]*"[^>]*>(.*?)</div>',
+            page, flags=re.I | re.S
+        )
+        if text_match:
+            fragment = text_match.group(1)
+            fragment = re.sub(r"<br\s*/?>", "\n", fragment, flags=re.I)
+            fragment = re.sub(r"<[^>]+>", "", fragment)
+            result["text"] = _html.unescape(fragment).strip()
+
+        # Prefer the photo used by the actual public message renderer. This can
+        # be larger than the generic OpenGraph thumbnail.
+        photo_match = re.search(
+            r'tgme_widget_message_photo_wrap[^>]+style="[^"]*background-image:url\\([\'"]?([^\'")]+)',
+            page, flags=re.I | re.S
+        )
+        if photo_match:
+            result["image"] = _html.unescape(photo_match.group(1)).replace("&amp;", "&")
+
+        # OG remains a robust fallback.
+        patterns = {
+            "text": r'<meta\s+property="og:description"\s+content="([^"]*)"',
+            "image": r'<meta\s+property="og:image"\s+content="([^"]*)"',
+            "title": r'<meta\s+property="og:title"\s+content="([^"]*)"',
+        }
+        for key, pattern in patterns.items():
+            if result.get(key):
+                continue
+            found = re.search(pattern, page, flags=re.I)
+            if found:
+                result[key] = _html.unescape(found.group(1)).strip()
+
+        # Preserve custom-emoji IDs for a future animated renderer. Native Qt
+        # currently displays Telegram's Unicode fallback emoji.
+        emoji_ids = re.findall(r'data-document-id="(\d+)"', page, flags=re.I)
+        if emoji_ids:
+            result["custom_emoji_ids"] = list(dict.fromkeys(emoji_ids))
+
+        return result
+    except Exception as error:
+        print(f"[changelog] Telegram source unavailable: {error}")
+        return {}
+
+
+def read_changelog_entries():
+    """
+    Changelog.json is the preferred rich feed. It may be:
+      - one JSON array of entries (recommended), or
+      - {"releases": [...]}.
+
+    Launcher_Version.json remains a fallback for backwards compatibility.
+    """
+    if CHANGELOG_FILE.is_file():
+        try:
+            raw = json.loads(CHANGELOG_FILE.read_text(encoding="utf-8"))
+            if isinstance(raw, dict):
+                raw = raw.get("releases", raw.get("changelog", [raw]))
+            if isinstance(raw, list):
+                return [item for item in raw if isinstance(item, dict)]
+        except Exception as error:
+            print(f"[changelog] Could not read {CHANGELOG_FILE.name}: {error}")
+
+    # Backwards-compatible launcher-only metadata.
+    return sorted_launcher_releases()
+
+
+def _rich_changelog_html(entries):
+    parts = ['<div class="feed">']
+    for release in entries:
+        update_type = str(release.get("type", "Update"))
+        version = str(release.get("version", "?"))
+        date = str(release.get("date", release.get("release_date", "")))
+
+        # Telegram can fill missing text/image metadata.
+        source_url = str(
+            release.get("telegram", release.get("text_source", ""))
+        ).strip()
+        tg = _telegram_public_post_data(source_url) if source_url else {}
+
+        custom_text = release.get("text", "")
+        if not custom_text:
+            custom_text = tg.get("text", "")
+
+        images = release.get("image", release.get("images", []))
+        if isinstance(images, str):
+            images = [images]
+        if not isinstance(images, list):
+            images = []
+        if not images and tg.get("image"):
+            images = [tg["image"]]
+
+        # If a Telegram post itself is supplied as an image source, resolve its
+        # OpenGraph preview image instead of trying to display the HTML page.
+        resolved_images = []
+        for image in images:
+            image = str(image).strip()
+            if "t.me/" in image:
+                resolved = _telegram_public_post_data(image).get("image", "")
+                if resolved:
+                    resolved_images.append(resolved)
+            elif image:
+                resolved_images.append(image)
+
+        parts.append('<div class="release">')
+        parts.append(
+            f'<h2>{_html_escape(update_type)} '
+            f'<span class="version">v{_html_escape(version)}</span></h2>'
+        )
+        if date:
+            parts.append(f'<p class="date">{_html_escape(date)}</p>')
+
+        if custom_text:
+            # Newlines are intentional; Unicode emoji are preserved by Qt.
+            safe_text = _html_escape(custom_text).replace("\n", "<br>")
+            parts.append(f'<p class="releaseText">{safe_text}</p>')
+
+        changes = release.get(
+            "changelog",
+            release.get("changes", release.get("items", release.get("notes", [])))
+        )
+        if isinstance(changes, str):
+            changes = [changes]
+        if isinstance(changes, list) and changes:
+            parts.append("<ul>")
+            for item in changes:
+                if isinstance(item, dict):
+                    label = item.get("text", item.get("label", item.get("title", "")))
+                    link = item.get("link", item.get("url", ""))
+                    if link:
+                        parts.append(
+                            f'<li><a href="{_url_attr(link)}">{_html_escape(label or link)}</a></li>'
+                        )
+                    elif label:
+                        parts.append(f"<li>{_html_escape(label)}</li>")
+                else:
+                    parts.append(f"<li>{_html_escape(item)}</li>")
+            parts.append("</ul>")
+
+        for image in resolved_images:
+            parts.append(
+                f'<p><a href="{_url_attr(image)}">'
+                f'<img src="{_url_attr(image)}" width="560"></a></p>'
+            )
+
+        video = release.get("video", "")
+        if video:
+            # QTextBrowser cannot host a real video player. Show a clean
+            # clickable media action; YouTube opens in the default browser.
+            parts.append(
+                f'<p><a class="mediaLink" href="{_url_attr(video)}">▶ WATCH VIDEO</a></p>'
+            )
+
+        link = release.get("link", "")
+        if link:
+            parts.append(
+                f'<p><a class="sourceLink" href="{_url_attr(link)}">OPEN SOURCE ↗</a></p>'
+            )
+        elif source_url:
+            parts.append(
+                f'<p><a class="sourceLink" href="{_url_attr(source_url)}">OPEN TELEGRAM POST ↗</a></p>'
+            )
+
+        parts.append("</div><hr>")
+    parts.append("</div>")
+    return "".join(parts)
+
+
 def sorted_launcher_releases():
     from datetime import datetime
     releases = read_launcher_metadata().get("releases", [])
@@ -2093,6 +2337,450 @@ class ConfigEditorDialog(QtWidgets.QDialog):
 
 
 
+
+
+class TelegramTextView(QWebEngineView if QWebEngineView is not None else QtWidgets.QWidget):
+    """Telegram's real web renderer, reduced to message text/custom emoji only."""
+    def __init__(self, url, parent=None):
+        if QWebEngineView is None:
+            super().__init__(parent)
+            return
+
+        super().__init__(parent)
+        self.setObjectName("telegramTextView")
+        self.setContextMenuPolicy(QtCore.Qt.ContextMenuPolicy.NoContextMenu)
+        self.setMinimumHeight(40)
+        self.setMaximumHeight(420)
+        self.setSizePolicy(
+            QtWidgets.QSizePolicy.Policy.Expanding,
+            QtWidgets.QSizePolicy.Policy.Fixed,
+        )
+        self.page().setBackgroundColor(QtGui.QColor(0, 0, 0, 0))
+        self.loadFinished.connect(self._telegram_loaded)
+        self.setUrl(QtCore.QUrl(self._public_url(url)))
+
+    @staticmethod
+    def _public_url(url):
+        value = str(url or "").strip()
+        match = re.match(r"https?://t\.me/(?:s/)?([^/?#]+)/(\d+)", value)
+        if match:
+            return f"https://t.me/s/{match.group(1)}/{match.group(2)}"
+        return value
+
+    def _telegram_loaded(self, ok):
+        if not ok:
+            self.hide()
+            return
+
+        # Important: this is NOT the official iframe widget. We load Telegram's
+        # own public post page as the top-level document, so we can restyle the
+        # DOM after Telegram has rendered its custom emoji.
+        js = r"""
+        (() => {
+            const messages = [...document.querySelectorAll('.tgme_widget_message')];
+            let msg = messages.find(m => {
+                const a = m.getAttribute('data-post') || '';
+                return location.pathname.includes(a) || location.pathname.endsWith('/' + a.split('/').pop());
+            }) || messages[messages.length - 1];
+
+            if (!msg) return 0;
+
+            const text = msg.querySelector('.tgme_widget_message_text');
+            if (!text) return 0;
+
+            // Preserve Telegram's text DOM (including custom emoji elements),
+            // but remove everything else from the public channel page.
+            document.body.innerHTML = '';
+            document.body.appendChild(text);
+
+            const style = document.createElement('style');
+            style.textContent = `
+                html, body {
+                    margin: 0 !important;
+                    padding: 0 !important;
+                    background: transparent !important;
+                    overflow: hidden !important;
+                    color: #d7d2cc !important;
+                }
+                body, .tgme_widget_message_text {
+                    font-family: "Segoe UI", Arial, sans-serif !important;
+                    font-size: 13px !important;
+                    line-height: 1.48 !important;
+                    color: #d7d2cc !important;
+                    background: transparent !important;
+                    margin: 0 !important;
+                    padding: 0 !important;
+                    max-width: none !important;
+                    width: 100% !important;
+                }
+                a { color: #d79a28 !important; }
+                .emoji, .tgme_widget_message_text .emoji {
+                    vertical-align: -0.18em !important;
+                }
+            `;
+            document.head.appendChild(style);
+
+            return Math.ceil(Math.max(
+                document.body.scrollHeight,
+                text.getBoundingClientRect().height
+            ) + 6);
+        })();
+        """
+        self.page().runJavaScript(js, self._apply_height)
+
+    def _apply_height(self, height):
+        try:
+            height = int(height or 0)
+        except Exception:
+            height = 0
+        if height <= 0:
+            self.hide()
+            return
+        self.setFixedHeight(max(40, min(height, 420)))
+
+
+
+class ChangelogImage(QtWidgets.QLabel):
+    """Native cached 16:9 changelog image."""
+    def __init__(self, url="", parent=None):
+        super().__init__(parent)
+        self.setObjectName("changelogImage")
+        self.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
+        self.setMinimumWidth(320)
+        self.setSizePolicy(
+            QtWidgets.QSizePolicy.Policy.Expanding,
+            QtWidgets.QSizePolicy.Policy.Fixed,
+        )
+        self._pixmap_original = None
+        self._url = str(url or "")
+        self.setText("Loading image...")
+        self._update_169_height()
+        if self._url:
+            self._load()
+
+    def _update_169_height(self):
+        width = max(320, self.width())
+        height = max(180, round(width * 9 / 16))
+        self.setFixedHeight(height)
+
+    def _cache_path(self):
+        import hashlib
+        suffix = Path(urllib.parse.urlparse(self._url).path).suffix.lower()
+        if suffix not in (".png", ".jpg", ".jpeg", ".webp"):
+            suffix = ".img"
+        cache = Path(os.environ.get("APPDATA", Path.home())) / "Quake 3 Elite" / "Cache" / "Changelog"
+        cache.mkdir(parents=True, exist_ok=True)
+        return cache / (hashlib.sha256(self._url.encode("utf-8")).hexdigest() + suffix)
+
+    def _load(self):
+        try:
+            cache_file = self._cache_path()
+            if cache_file.is_file():
+                data = cache_file.read_bytes()
+            else:
+                req = urllib.request.Request(
+                    self._url,
+                    headers={
+                        "User-Agent": (
+                            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                            "AppleWebKit/537.36 (KHTML, like Gecko) "
+                            "Chrome/140.0.0.0 Safari/537.36"
+                        ),
+                        "Accept": "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8",
+                        "Referer": "https://t.me/",
+                    },
+                )
+                with urllib.request.urlopen(req, timeout=12) as response:
+                    data = response.read()
+                if data:
+                    cache_file.write_bytes(data)
+
+            pix = QtGui.QPixmap()
+            if data and pix.loadFromData(data):
+                self._pixmap_original = pix
+                self.setText("")
+                self._rescale()
+            else:
+                self.setText("Image preview unavailable")
+        except Exception as error:
+            print(f"[changelog] Image unavailable: {error}")
+            self.setText("Image preview unavailable")
+
+    def _rescale(self):
+        if self._pixmap_original is None:
+            return
+        self._update_169_height()
+        target = QtCore.QSize(max(1, self.width() - 4), max(1, self.height() - 4))
+        # Preserve the original image. The widget itself is always 16:9;
+        # non-16:9 media is letterboxed instead of stretched/cropped.
+        pix = self._pixmap_original.scaled(
+            target,
+            QtCore.Qt.AspectRatioMode.KeepAspectRatio,
+            QtCore.Qt.TransformationMode.SmoothTransformation,
+        )
+        self.setPixmap(pix)
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._update_169_height()
+        self._rescale()
+
+
+class ChangelogMediaCarousel(QtWidgets.QFrame):
+    def __init__(self, urls, parent=None):
+        super().__init__(parent)
+        self.setObjectName("changelogMedia")
+        self.urls = [str(u) for u in urls if str(u).strip()]
+        self.index = 0
+        lay = QtWidgets.QVBoxLayout(self)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.setSpacing(6)
+        row = QtWidgets.QHBoxLayout()
+
+        self.prevButton = QtWidgets.QPushButton("")
+        self.prevButton.setObjectName("changelogArrow")
+        self.prevButton.setFixedSize(34, 48)
+        if qta is not None:
+            self.prevButton.setIcon(qta.icon("fa5s.chevron-left", color="#b9b4ae"))
+        else:
+            self.prevButton.setText("‹")
+        self.prevButton.clicked.connect(lambda: self.change(-1))
+        row.addWidget(self.prevButton)
+
+        self.image = ChangelogImage()
+        row.addWidget(self.image, 1)
+
+        self.nextButton = QtWidgets.QPushButton("")
+        self.nextButton.setObjectName("changelogArrow")
+        self.nextButton.setFixedSize(34, 48)
+        if qta is not None:
+            self.nextButton.setIcon(qta.icon("fa5s.chevron-right", color="#b9b4ae"))
+        else:
+            self.nextButton.setText("›")
+        self.nextButton.clicked.connect(lambda: self.change(1))
+        row.addWidget(self.nextButton)
+        lay.addLayout(row)
+
+        self.counter = QtWidgets.QLabel("")
+        self.counter.setObjectName("changelogCounter")
+        self.counter.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
+        lay.addWidget(self.counter)
+        self.show_current()
+
+    def show_current(self):
+        count = len(self.urls)
+        if not count:
+            self.hide()
+            return
+        self.image._url = self.urls[self.index]
+        self.image._pixmap_original = None
+        self.image.setPixmap(QtGui.QPixmap())
+        self.image.setText("Loading image...")
+        self.image._load()
+        self.counter.setText(f"{self.index + 1} / {count}" if count > 1 else "")
+        self.prevButton.setVisible(count > 1)
+        self.nextButton.setVisible(count > 1)
+
+    def change(self, delta):
+        if self.urls:
+            self.index = (self.index + delta) % len(self.urls)
+            self.show_current()
+
+
+class ChangelogCard(QtWidgets.QFrame):
+    def __init__(self, release, parent=None):
+        super().__init__(parent)
+        self.setObjectName("changelogCard")
+        release = dict(release)
+
+        lay = QtWidgets.QVBoxLayout(self)
+        lay.setContentsMargins(22, 18, 22, 20)
+        lay.setSpacing(9)
+
+        source_url = str(release.get("telegram", release.get("text_source", ""))).strip()
+        tg = _telegram_public_post_data(source_url) if source_url else {}
+
+        header = QtWidgets.QHBoxLayout()
+        title = QtWidgets.QLabel()
+        title.setObjectName("changelogCardTitle")
+        title.setTextFormat(QtCore.Qt.TextFormat.RichText)
+        title.setText(
+            f'{_html_escape(release.get("type", "Update"))} '
+            f'<span style="color:#d82d25;">v{_html_escape(release.get("version", "?"))}</span>'
+        )
+        header.addWidget(title)
+        header.addStretch(1)
+
+        date = str(release.get("date", release.get("release_date", "")))
+        if date:
+            date_label = QtWidgets.QLabel(date)
+            date_label.setObjectName("changelogDate")
+            header.addWidget(date_label)
+        lay.addLayout(header)
+
+        # Hybrid mode:
+        # Telegram renders only Telegram-sourced text/custom emoji.
+        # Everything else (header, media, controls) remains native Q3Elite UI.
+        explicit_text = str(release.get("text", "") or "")
+        use_telegram_text = bool(source_url and not explicit_text and TELEGRAM_WEBENGINE_AVAILABLE)
+
+        if use_telegram_text:
+            lay.addWidget(TelegramTextView(source_url, self))
+
+        # Manual/native text + changelog are combined into ONE QTextBrowser.
+        # This fixes selection being limited to one QLabel/one line.
+        changes = release.get(
+            "changelog",
+            release.get("changes", release.get("items", release.get("notes", [])))
+        )
+        list_mode = bool(release.get("list", True))
+
+        if isinstance(changes, str):
+            raw_changes = changes.strip()
+            if raw_changes.casefold().startswith("[list]") and raw_changes.casefold().endswith("[/list]"):
+                list_mode = True
+                raw_changes = raw_changes[6:-7].strip()
+            elif raw_changes.casefold().startswith("[nolist]") and raw_changes.casefold().endswith("[/nolist]"):
+                list_mode = False
+                raw_changes = raw_changes[8:-9].strip()
+            changes = [line for line in raw_changes.splitlines() if line.strip()]
+
+        native_body = explicit_text
+        if not native_body and source_url and not use_telegram_text:
+            native_body = str(tg.get("text", "") or "")
+
+        native_parts = []
+        if native_body:
+            native_parts.append(
+                '<div class="body">' +
+                _html_escape(native_body).replace("\n", "<br>") +
+                '</div>'
+            )
+
+        if isinstance(changes, list) and changes:
+            if list_mode:
+                native_parts.append("<ul>")
+            else:
+                native_parts.append('<div class="plainList">')
+
+            for item in changes:
+                if isinstance(item, dict):
+                    label = str(item.get("text", item.get("label", item.get("title", ""))))
+                    link = str(item.get("link", item.get("url", "")))
+                    content = (
+                        f'<a href="{_url_attr(link)}">{_html_escape(label or link)}</a>'
+                        if link else _html_escape(label)
+                    )
+                else:
+                    content = _html_escape(str(item))
+
+                if list_mode:
+                    native_parts.append(f"<li>{content}</li>")
+                else:
+                    native_parts.append(f'<div class="plainLine">{content}</div>')
+
+            native_parts.append("</ul>" if list_mode else "</div>")
+
+        if native_parts:
+            native = QtWidgets.QTextBrowser()
+            native.setObjectName("changelogSelectableText")
+            native.setOpenExternalLinks(True)
+            native.setFrameShape(QtWidgets.QFrame.Shape.NoFrame)
+            native.setVerticalScrollBarPolicy(QtCore.Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+            native.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+            native.setSizePolicy(
+                QtWidgets.QSizePolicy.Policy.Expanding,
+                QtWidgets.QSizePolicy.Policy.Fixed,
+            )
+            native.document().setDefaultStyleSheet("""
+                body { color:#ded9d3; font-size:13px; margin:0; padding:0; }
+                .body { margin:0 0 7px 0; line-height:1.45; }
+                ul { margin:0; padding-left:17px; }
+                li { margin:3px 0; }
+                .plainList { margin:0; }
+                .plainLine { margin:3px 0; }
+                a { color:#d79a28; text-decoration:none; }
+            """)
+            native.setHtml("".join(native_parts))
+            native.document().documentLayout().documentSizeChanged.connect(
+                lambda size, w=native: w.setFixedHeight(max(28, int(size.height()) + 8))
+            )
+            native.setFixedHeight(max(28, int(native.document().size().height()) + 8))
+            lay.addWidget(native)
+
+        # Native media ------------------------------------------------------
+        images = release.get("images", release.get("image", []))
+        if isinstance(images, str):
+            images = [images]
+        if not isinstance(images, list):
+            images = []
+
+        resolved = []
+        for value in images:
+            value = str(value).strip()
+            if not value:
+                continue
+            if "t.me/" in value:
+                media = _telegram_public_post_data(value).get("image", "")
+                if media:
+                    resolved.append(media)
+            else:
+                parsed = urllib.parse.urlparse(value)
+                if parsed.netloc.casefold() in ("imgur.com", "www.imgur.com"):
+                    name = parsed.path.strip("/")
+                    if name and "." not in name:
+                        value = f"https://i.imgur.com/{name}.png"
+                resolved.append(value)
+
+        if not resolved and tg.get("image"):
+            resolved.append(tg["image"])
+
+        video = str(release.get("video", "")).strip()
+
+        # For YouTube entries, show a 16:9 preview even if no screenshot was
+        # explicitly supplied. Clicking WATCH VIDEO still opens the real video.
+        if video and not resolved:
+            yt = _youtube_embed_url(video)
+            yt_id = ""
+            match = re.search(r"/embed/([^?&/]+)", yt)
+            if match:
+                yt_id = match.group(1)
+            if yt_id:
+                resolved.append(f"https://i.ytimg.com/vi/{yt_id}/maxresdefault.jpg")
+
+        if resolved:
+            lay.addWidget(ChangelogMediaCarousel(resolved, self))
+
+        # Native action buttons ---------------------------------------------
+        source_link = str(release.get("link", "")).strip() or source_url
+        buttons = QtWidgets.QHBoxLayout()
+
+        if video:
+            watch = GlowButton("WATCH VIDEO")
+            watch.setObjectName("changelogLinkButton")
+            if qta is not None:
+                watch.setIcon(qta.icon("fa5s.play", color="#d79a28"))
+            watch.clicked.connect(
+                lambda checked=False, u=video:
+                QtGui.QDesktopServices.openUrl(QtCore.QUrl(u))
+            )
+            buttons.addWidget(watch)
+
+        if source_link:
+            source = GlowButton("OPEN SOURCE")
+            source.setObjectName("changelogLinkButton")
+            if qta is not None:
+                source.setIcon(qta.icon("fa5s.external-link-alt", color="#d79a28"))
+            source.clicked.connect(
+                lambda checked=False, u=source_link:
+                QtGui.QDesktopServices.openUrl(QtCore.QUrl(u))
+            )
+            buttons.addWidget(source)
+
+        buttons.addStretch(1)
+        lay.addLayout(buttons)
+
+
 class ModernLauncherWindow(QtWidgets.QMainWindow):
     """1368x768 frameless Q3Elite launcher. Backend stays in launch.pyw."""
 
@@ -2189,9 +2877,14 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
         self.minButton.clicked.connect(self.minimize_launcher)
         top.addWidget(self.minButton)
 
-        self.closeButton = GlowButton("×")
+        self.closeButton = GlowButton("")
         self.closeButton.setObjectName("closeButton")
         self.closeButton.setFixedSize(42, 36)
+        if qta is not None:
+            self.closeButton.setIcon(qta.icon("fa5s.times", color="#aaaaaa"))
+            self.closeButton.setIconSize(QtCore.QSize(15, 15))
+        else:
+            self.closeButton.setText("×")
         self.closeButton.clicked.connect(self.close)
         top.addWidget(self.closeButton)
         body_layout.addLayout(top)
@@ -2303,15 +2996,25 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
         self.heroCounter.setObjectName("heroCounter")
         hc.addWidget(self.heroCounter)
 
-        self.heroPrev = QtWidgets.QPushButton("‹")
+        self.heroPrev = QtWidgets.QPushButton("")
         self.heroPrev.setObjectName("sliderArrow")
         self.heroPrev.setFixedSize(38, 38)
+        if qta is not None:
+            self.heroPrev.setIcon(qta.icon("fa5s.chevron-left", color="#b9b4ae"))
+            self.heroPrev.setIconSize(QtCore.QSize(13, 13))
+        else:
+            self.heroPrev.setText("‹")
         self.heroPrev.clicked.connect(lambda: self.change_hero_image(-1))
         hc.addWidget(self.heroPrev)
 
-        self.heroNext = QtWidgets.QPushButton("›")
+        self.heroNext = QtWidgets.QPushButton("")
         self.heroNext.setObjectName("sliderArrow")
         self.heroNext.setFixedSize(38, 38)
+        if qta is not None:
+            self.heroNext.setIcon(qta.icon("fa5s.chevron-right", color="#b9b4ae"))
+            self.heroNext.setIconSize(QtCore.QSize(13, 13))
+        else:
+            self.heroNext.setText("›")
         self.heroNext.clicked.connect(lambda: self.change_hero_image(1))
         hc.addWidget(self.heroNext)
 
@@ -2584,43 +3287,52 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
 
     def _build_changelog(self):
         page = QtWidgets.QWidget()
-        lay = QtWidgets.QVBoxLayout(page)
-        lay.setContentsMargins(4, 4, 4, 4)
+        root = QtWidgets.QVBoxLayout(page)
+        root.setContentsMargins(4, 4, 4, 4)
+        root.setSpacing(10)
+
+        header = QtWidgets.QHBoxLayout()
         title = QtWidgets.QLabel("CHANGELOG")
         title.setObjectName("pageTitle")
-        lay.addWidget(title)
+        header.addWidget(title)
+        header.addStretch(1)
+        hint = QtWidgets.QLabel("Launcher  •  Quake 3 Elite  •  Telegram")
+        hint.setObjectName("muted")
+        header.addWidget(hint)
+        root.addLayout(header)
 
-        browser = QtWidgets.QTextBrowser()
-        browser.setObjectName("changelogBrowser")
-        releases = sorted_launcher_releases()
-        if releases:
-            parts = []
-            for release in releases:
-                version = str(release.get("version", "?"))
-                import html
-                date = str(release.get("date", release.get("release_date", release.get("published_at", ""))))
-                changes = release.get(
-                    "changes",
-                    release.get("items", release.get("notes", release.get("change_log", release.get("release_notes", []))))
-                )
-                if isinstance(changes, str):
-                    changes = [changes]
-                if not isinstance(changes, list):
-                    changes = []
-                heading = f"<h2>Launcher {html.escape(version)}</h2>"
-                if date:
-                    heading += f"<p><b>{html.escape(date)}</b></p>"
-                parts.append(heading)
-                if changes:
-                    parts.append("<ul>" + "".join(f"<li>{html.escape(str(item))}</li>" for item in changes) + "</ul>")
-            browser.setHtml("".join(parts))
+        scroll = QtWidgets.QScrollArea()
+        scroll.setObjectName("changelogScroll")
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QtWidgets.QFrame.Shape.NoFrame)
+
+        content = QtWidgets.QWidget()
+        content.setObjectName("changelogContent")
+        feed = QtWidgets.QVBoxLayout(content)
+        feed.setContentsMargins(0, 0, 8, 0)
+        feed.setSpacing(12)
+
+        entries = read_changelog_entries()
+        if entries:
+            from datetime import datetime
+            def _key(item):
+                value = str(item.get("date", item.get("release_date", "")))
+                for fmt in ("%Y-%m-%d", "%Y/%m/%d", "%d.%m.%Y"):
+                    try:
+                        return datetime.strptime(value[:10], fmt)
+                    except ValueError:
+                        pass
+                return datetime.min
+            for release in sorted(entries, key=_key, reverse=True):
+                feed.addWidget(ChangelogCard(release, content))
         else:
-            meta = read_launcher_metadata()
-            browser.setHtml(
-                f"<h2>Launcher {meta.get('version', '—')}</h2>"
-                "<p>No changelog entries were found in the local version metadata.</p>"
-            )
-        lay.addWidget(browser, 1)
+            empty = QtWidgets.QLabel("No changelog entries found.")
+            empty.setObjectName("muted")
+            feed.addWidget(empty)
+
+        feed.addStretch(1)
+        scroll.setWidget(content)
+        root.addWidget(scroll, 1)
         return page
 
     def show_page(self, page):

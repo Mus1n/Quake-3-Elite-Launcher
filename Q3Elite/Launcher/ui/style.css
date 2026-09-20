@@ -121,3 +121,121 @@ QFrame#firstInstallCard {
     border: 1px solid rgba(150, 120, 95, 60);
     border-radius: 9px;
 }
+
+
+/* v0.07 UI polish */
+QCheckBox:hover {
+    color: #f0e8df;
+}
+QCheckBox::indicator:hover {
+    border: 1px solid #d79a28;
+    background: rgba(90, 22, 16, 190);
+}
+QCheckBox::indicator:checked:hover {
+    border-color: #e0a04a;
+    background: #a21c15;
+}
+QPushButton#sliderArrow,
+QPushButton#closeButton,
+QPushButton#windowButton {
+    padding: 0px;
+    margin: 0px;
+}
+QTextBrowser#changelogBrowser {
+    padding: 10px 18px;
+}
+
+
+/* v0.07.1 native changelog cards */
+QScrollArea#changelogScroll,
+QWidget#changelogContent {
+    background: transparent;
+    border: none;
+}
+QFrame#changelogCard {
+    background-color: rgba(5, 6, 7, 205);
+    border: 1px solid rgba(120, 112, 102, 45);
+    border-radius: 10px;
+}
+QLabel#changelogCardTitle {
+    color: #f0ece7;
+    font-size: 20px;
+    font-weight: 700;
+}
+QLabel#changelogDate,
+QLabel#changelogCounter {
+    color: rgba(190, 184, 176, 135);
+    font-size: 11px;
+}
+QLabel#changelogText {
+    color: #d7d2cc;
+    font-size: 13px;
+}
+QLabel#changelogItem {
+    color: #e2ddd7;
+    font-size: 13px;
+    padding: 1px 0px;
+}
+QLabel#changelogImage {
+    background-color: rgba(0, 0, 0, 115);
+    border: 1px solid rgba(150, 140, 128, 45);
+    border-radius: 8px;
+    color: rgba(210, 205, 198, 100);
+}
+QFrame#changelogMedia {
+    background: transparent;
+    border: none;
+}
+QPushButton#changelogArrow {
+    padding: 0px;
+    margin: 0px;
+    background-color: rgba(12, 12, 14, 170);
+    border: 1px solid rgba(140, 130, 120, 45);
+    border-radius: 7px;
+}
+QPushButton#changelogArrow:hover {
+    background-color: rgba(78, 22, 18, 200);
+    border-color: rgba(215, 154, 40, 125);
+}
+QPushButton#changelogLinkButton {
+    color: #d79a28;
+    background: transparent;
+    border: none;
+    padding: 5px 8px;
+    font-weight: 700;
+}
+QPushButton#changelogLinkButton:hover {
+    color: #f0b13a;
+    background-color: rgba(215, 154, 40, 18);
+    border-radius: 5px;
+}
+
+
+/* v0.07.2 */
+QLabel#changelogImage {
+    qproperty-alignment: AlignCenter;
+}
+QPushButton#openCacheButton,
+QPushButton#cacheButton {
+    min-width: 42px;
+    max-width: 42px;
+    min-height: 42px;
+    max-height: 42px;
+    padding: 0px;
+    margin: 0px;
+}
+
+
+/* v0.07.3 hybrid Telegram/native changelog */
+QTextBrowser#changelogSelectableText {
+    background: transparent;
+    border: none;
+    padding: 0px;
+    margin: 0px;
+    selection-background-color: rgba(162, 28, 21, 180);
+    selection-color: #ffffff;
+}
+QWidget#telegramTextView {
+    background: transparent;
+    border: none;
+}
