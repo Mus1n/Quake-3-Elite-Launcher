@@ -472,8 +472,10 @@ def install_basic(external_maps=False, music_playlist=False, autoexec_update=Fal
     # including base music 1..5 which lives outside the CORE folder.
     downloaded = _install_group(basic, control, progress_callback)
 
-    if external_maps:
-        downloaded += _install_group(selected_map_files(files), control, progress_callback)
+    # External Maps are intentionally NOT installed through _install_group().
+    # Their dedicated install_maps() path uses the pCloud Maps ZIP accelerator.
+    # This keeps Basic extraction and optional Maps installation as two distinct
+    # phases and prevents a fresh install from downloading maps one-by-one.
 
     # Commit release metadata only after required payload is valid.
     atomic_json(LOCAL_MANIFEST, manifest)
@@ -481,7 +483,7 @@ def install_basic(external_maps=False, music_playlist=False, autoexec_update=Fal
 
     state=load_state()
     state["basic"]=True
-    state["external_maps"]=bool(external_maps)
+    state["external_maps"]=False
     state["autoexec_update"]=bool(autoexec_update)
     save_state(state)
 

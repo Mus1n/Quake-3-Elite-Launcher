@@ -98,3 +98,26 @@ QPushButton:disabled {
     background-color: rgba(25, 25, 25, 65);
     border-color: rgba(130, 130, 130, 30);
 }
+
+
+/* Locked actions: explicit IDs override normal #applyButton/#playButton styling. */
+QPushButton#applyButton:disabled,
+QPushButton#secondaryButton:disabled,
+QPushButton#smallButton:disabled {
+    color: rgba(205, 205, 205, 70);
+    background-color: rgba(28, 28, 30, 70);
+    border: 1px solid rgba(150, 150, 150, 35);
+}
+
+QPushButton#applyButton:disabled:hover,
+QPushButton#applyButton:disabled:pressed {
+    color: rgba(205, 205, 205, 70);
+    background-color: rgba(28, 28, 30, 70);
+    border: 1px solid rgba(150, 150, 150, 35);
+}
+
+QFrame#firstInstallCard {
+    background-color: rgba(9, 9, 11, 185);
+    border: 1px solid rgba(150, 120, 95, 60);
+    border-radius: 9px;
+}

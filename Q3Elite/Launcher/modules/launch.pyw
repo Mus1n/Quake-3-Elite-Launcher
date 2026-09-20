@@ -561,13 +561,32 @@ class Q3EliteDownload(QtCore.QThread):
             #   Autoexec Update  OFF
             #
             # Step 19 GUI will pass the user's checkbox selections here.
+            # Always install/extract BASIC first. Optional components must not
+            # influence Basic's manifest repair pass.
             q3components.install_basic(
-                external_maps=self.external_maps,
-                music_playlist=self.music_playlist,
+                external_maps=False,
+                music_playlist=False,
                 autoexec_update=False,
                 control=download_control,
                 progress_callback=download_progress_callback,
             )
+
+            # Only after Basic is physically installed may optional components run.
+            # Maps use their dedicated pCloud ZIP installer instead of falling back
+            # to hundreds of individual manifest downloads.
+            if self.external_maps:
+                print("\nBasic installed. Installing External Maps...")
+                q3components.install_maps(
+                    download_control,
+                    download_progress_callback,
+                )
+
+            if self.music_playlist:
+                print("\nBasic installed. Installing Music Playlist...")
+                q3components.install_music(
+                    download_control,
+                    download_progress_callback,
+                )
 
             # Strong postcondition for the first-install worker.
             if not q3elite_is_installed():
@@ -1400,6 +1419,8 @@ def set_gui_ready(offline=False):
             window.firstInstallCard.hide()
         if hasattr(window, "autoexecUpdateButton"):
             window.autoexecUpdateButton.setEnabled(True)
+        if hasattr(window, "applyAddonsButton"):
+            window.applyAddonsButton.setEnabled(True)
         if hasattr(window, "configEditorButton"):
             window.configEditorButton.setEnabled(config_editor_available())
 
@@ -1466,13 +1487,23 @@ def toggle_download_pause():
 
 
 def refresh_component_gui():
+    installed = q3elite_is_installed()
     state = q3components.load_state()
+
     window.mapsBox.blockSignals(True)
     window.musicBox.blockSignals(True)
-    window.mapsBox.setChecked(bool(state.get("external_maps", False)))
-    window.musicBox.setChecked(bool(state.get("music_playlist", False)))
+    window.mapsBox.setChecked(bool(state.get("external_maps", False)) if installed else False)
+    window.musicBox.setChecked(bool(state.get("music_playlist", False)) if installed else False)
     window.mapsBox.blockSignals(False)
     window.musicBox.blockSignals(False)
+
+    window.mapsBox.setEnabled(installed)
+    window.musicBox.setEnabled(installed)
+    if hasattr(window, "applyAddonsButton"):
+        window.applyAddonsButton.setEnabled(installed)
+    if hasattr(window, "autoexecUpdateButton"):
+        window.autoexecUpdateButton.setEnabled(installed)
+
     window.capture_component_baseline()
 
 
@@ -1598,6 +1629,8 @@ def prepare_first_install():
     window.installedValue.setText("Not installed")
     if hasattr(window, "autoexecUpdateButton"):
         window.autoexecUpdateButton.setEnabled(False)
+    if hasattr(window, "applyAddonsButton"):
+        window.applyAddonsButton.setEnabled(False)
     if hasattr(window, "configEditorButton"):
         window.configEditorButton.setEnabled(False)
     set_status("Ready to install", "Choose components and press INSTALL.", "normal")
@@ -2291,17 +2324,25 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
         upper.addLayout(right, 1)
         layout.addLayout(upper, 3)
 
-        self.firstInstallCard = self._card("settingsCard")
+        self.firstInstallCard = self._card("firstInstallCard")
         fic = QtWidgets.QHBoxLayout(self.firstInstallCard)
-        fic.setContentsMargins(18, 10, 18, 10)
-        fit = QtWidgets.QLabel("FIRST INSTALLATION")
+        fic.setContentsMargins(18, 12, 18, 12)
+        fic.setSpacing(16)
+
+        install_text = QtWidgets.QVBoxLayout()
+        fit = QtWidgets.QLabel("INSTALL OPTIONS")
         fit.setObjectName("sectionTitle")
-        fic.addWidget(fit)
+        install_text.addWidget(fit)
+        fis = QtWidgets.QLabel("Optional content can also be installed later from INSTALL ADDONS.")
+        fis.setObjectName("muted")
+        install_text.addWidget(fis)
+        fic.addLayout(install_text, 1)
+
         self.firstInstallMapsBox = QtWidgets.QCheckBox("External Maps")
         self.firstInstallMusicBox = QtWidgets.QCheckBox("Music Playlist")
-        fic.addStretch(1)
         fic.addWidget(self.firstInstallMapsBox)
         fic.addWidget(self.firstInstallMusicBox)
+
         self.firstInstallCard.setVisible(not q3elite_is_installed())
         layout.addWidget(self.firstInstallCard)
 
@@ -2422,10 +2463,11 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
         cancel.setObjectName("secondaryButton")
         cancel.clicked.connect(refresh_component_gui)
         buttons.addWidget(cancel)
-        apply = GlowButton("APPLY CHANGES")
-        apply.setObjectName("applyButton")
-        apply.clicked.connect(apply_component_changes)
-        buttons.addWidget(apply)
+        self.applyAddonsButton = GlowButton("APPLY CHANGES")
+        self.applyAddonsButton.setObjectName("applyButton")
+        self.applyAddonsButton.clicked.connect(apply_component_changes)
+        self.applyAddonsButton.setEnabled(q3elite_is_installed())
+        buttons.addWidget(self.applyAddonsButton)
         lay.addLayout(buttons)
         return page
 
