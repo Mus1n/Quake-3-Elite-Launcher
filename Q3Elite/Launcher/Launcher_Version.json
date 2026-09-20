@@ -1,7 +1,9 @@
 {
-    "version": "0.06",
-    "update_type": "optional",
+    "version": "0.06.7",
+    "date": "2026-09-20",
     "changelog": [
-        "Background Image Update, delete sticker"
+        "Fixed addon downloads",
+        "Fixed launcher version display",
+        "Improved addon installation UI"
     ]
 }

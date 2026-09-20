@@ -1125,7 +1125,13 @@ def set_start_with_windows(enabled):
 
 
 def launcher_version_file():
+    # Keep this aligned with launcher_updater.py. Launcher_Version.json is the
+    # authoritative local metadata written by the detached update helper.
     candidates = [
+        LAUNCHER_DIR / "Launcher_Version.json",
+        LAUNCHER_DIR / "Launcher_version.json",
+        LAUNCHER_DIR / "Updater_Version.json",
+        LAUNCHER_DIR / "updater_Version.json",
         LAUNCHER_DIR / "Version.json",
         LAUNCHER_DIR / "version.json",
         LAUNCHER_DIR / "version.txt",
@@ -1156,12 +1162,24 @@ def read_launcher_metadata():
             ]
         elif isinstance(releases, str):
             releases = [{"version": version, "changes": [releases]}]
-        elif not isinstance(releases, list):
+        elif isinstance(releases, list):
+            # Common compact syntax:
+            # "changelog": ["Fixed X", "Added Y"]
+            if releases and all(not isinstance(item, dict) for item in releases):
+                releases = [{
+                    "version": version,
+                    "date": raw.get("date", raw.get("release_date", raw.get("published_at", ""))),
+                    "changes": [str(item) for item in releases],
+                }]
+        else:
             releases = []
 
-        # Some Version.json files keep notes directly at the top level.
+        # Some Launcher_Version.json files keep notes directly at the top level.
         if not releases:
-            changes = raw.get("changes", raw.get("notes", raw.get("items", [])))
+            changes = raw.get(
+                "changes",
+                raw.get("notes", raw.get("items", raw.get("change_log", raw.get("release_notes", []))))
+            )
             if isinstance(changes, str):
                 changes = [changes]
             if isinstance(changes, list) and changes:
@@ -1184,7 +1202,7 @@ def sorted_launcher_releases():
     def key(item):
         if not isinstance(item, dict):
             return datetime.min
-        value = str(item.get("date", item.get("release_date", "")))
+        value = str(item.get("date", item.get("release_date", item.get("published_at", ""))))
         for fmt in ("%Y-%m-%d", "%Y/%m/%d", "%d.%m.%Y"):
             try:
                 return datetime.strptime(value[:10], fmt)
@@ -1514,9 +1532,24 @@ def start_component_action(action):
         return
     if component_worker is not None and component_worker.isRunning():
         return
+
     download_control.reset()
+    window.set_addon_message("")
     window.set_navigation_enabled(False)
-    set_gui_checking("Updating addons...")
+
+    # Addon installation/removal uses the same central action/progress area as
+    # first installation and updates. Do not leave the user on a locked submenu.
+    window.show_page("home")
+
+    labels = {
+        "install-maps": "Installing External Maps...",
+        "remove-maps": "Removing External Maps...",
+        "install-music": "Installing Music Playlist...",
+        "remove-music": "Removing Music Playlist...",
+        "update-autoexec": "Updating Autoexec...",
+    }
+    set_gui_checking(labels.get(action, "Updating addons..."))
+
     component_worker = ComponentWorker(action)
     component_worker.result_ready.connect(component_action_result)
     component_worker.start()
@@ -1530,16 +1563,19 @@ def _next_component_action():
     window.set_navigation_enabled(True)
     refresh_component_gui()
     set_gui_ready(offline=install_state["offline"])
-    window.show_page("addons")
+    window.show_page("home")
     window.set_addon_message("Changes applied successfully.")
+    set_status("Addons updated", "Selected addon changes were applied successfully.", "ok")
 
 
 def component_action_result(success, detail):
     if not success:
         window.set_navigation_enabled(True)
+        refresh_component_gui()
         set_gui_ready(offline=install_state["offline"])
-        window.show_page("addons")
+        window.show_page("home")
         window.set_addon_message("Operation failed: " + detail, error=True)
+        set_status("Addon installation failed", detail, "critical")
         return
     _next_component_action()
 
@@ -2557,15 +2593,22 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
             parts = []
             for release in releases:
                 version = str(release.get("version", "?"))
-                date = str(release.get("date", release.get("release_date", "")))
-                changes = release.get("changes", release.get("items", release.get("notes", [])))
+                import html
+                date = str(release.get("date", release.get("release_date", release.get("published_at", ""))))
+                changes = release.get(
+                    "changes",
+                    release.get("items", release.get("notes", release.get("change_log", release.get("release_notes", []))))
+                )
                 if isinstance(changes, str):
                     changes = [changes]
                 if not isinstance(changes, list):
                     changes = []
-                parts.append(f"<h2>Launcher {version}</h2><p><b>{date}</b></p>")
+                heading = f"<h2>Launcher {html.escape(version)}</h2>"
+                if date:
+                    heading += f"<p><b>{html.escape(date)}</b></p>"
+                parts.append(heading)
                 if changes:
-                    parts.append("<ul>" + "".join(f"<li>{str(item)}</li>" for item in changes) + "</ul>")
+                    parts.append("<ul>" + "".join(f"<li>{html.escape(str(item))}</li>" for item in changes) + "</ul>")
             browser.setHtml("".join(parts))
         else:
             meta = read_launcher_metadata()
