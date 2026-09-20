@@ -10,22 +10,6 @@ import zipfile
 from pathlib import Path
 
 from PyQt6 import QtCore, QtGui, QtWidgets, QtNetwork
-try:
-    from PyQt6.QtMultimedia import QMediaPlayer, QAudioOutput
-    from PyQt6.QtMultimediaWidgets import QVideoWidget
-    NATIVE_VIDEO_AVAILABLE = True
-except Exception as error:
-    print(f"[video] Qt Multimedia unavailable: {error}")
-    QMediaPlayer = QAudioOutput = QVideoWidget = None
-    NATIVE_VIDEO_AVAILABLE = False
-
-try:
-    import yt_dlp
-    YTDLP_AVAILABLE = True
-except Exception as error:
-    print(f"[video] yt-dlp unavailable: {error}")
-    yt_dlp = None
-    YTDLP_AVAILABLE = False
 
 try:
     from PyQt6.QtWebEngineWidgets import QWebEngineView
@@ -1313,49 +1297,46 @@ def _telegram_public_post_data(url):
             fragment = re.sub(r"<[^>]+>", "", fragment)
             result["text"] = _html.unescape(fragment).strip()
 
-        # Telegram photos/albums. Public Telegram HTML stores the actual
-        # CDN image directly on:
-        # <a class="tgme_widget_message_photo_wrap ..." style="...background-image:url('...')">
+        # Telegram screenshots / albums.
+        # Parse ONLY photo_wrap anchors from the target message. This excludes
+        # avatar images and animated custom-emoji WEBM assets.
         photos = []
-
-        tags = re.findall(
-            r'<a\b[^>]*\bclass=(["\'])(?:(?!\1).)*?'
-            r'tgme_widget_message_photo_wrap(?:(?!\1).)*?\1[^>]*>',
-            block,
-            flags=re.I | re.S,
-        )
-
-        # The capture above is useful for matching but returns only quote chars;
-        # scan complete <a> tags and filter them explicitly.
-        tags = re.findall(r'<a\b[^>]*>', block, flags=re.I | re.S)
-        for tag in tags:
-            cm = re.search(r'class=["\']([^"\']*)["\']', tag, flags=re.I | re.S)
-            if not cm or "tgme_widget_message_photo_wrap" not in cm.group(1):
+        for tag in re.findall(r'<a\b[^>]*>', block, flags=re.I | re.S):
+            class_match = re.search(
+                r'class\s*=\s*(["\'])(.*?)\1', tag, flags=re.I | re.S
+            )
+            if not class_match:
+                continue
+            classes = class_match.group(2)
+            if "tgme_widget_message_photo_wrap" not in classes:
                 continue
 
-            sm = re.search(r'style=["\'](.*?)["\']', tag, flags=re.I | re.S)
-            if not sm:
+            style_match = re.search(
+                r'style\s*=\s*(["\'])(.*?)\1', tag, flags=re.I | re.S
+            )
+            if not style_match:
                 continue
 
-            style_value = _html.unescape(sm.group(1))
-            bm = re.search(
-                r'background-image\s*:\s*url\(\s*["\']?([^"\')]+)["\']?\s*\)',
-                style_value,
+            style = _html.unescape(style_match.group(2))
+            bg = re.search(
+                r'background-image\s*:\s*url\(\s*(?:&quot;|["\']|&#39;)?'
+                r'(.*?)'
+                r'(?:&quot;|["\']|&#39;)?\s*\)',
+                style,
                 flags=re.I | re.S,
             )
-            if not bm:
+            if not bg:
                 continue
 
-            media = _html.unescape(bm.group(1)).replace("&amp;", "&").strip()
+            media = _html.unescape(bg.group(1)).strip(" '\"")
+            media = media.replace("&amp;", "&")
             if media.startswith("//"):
                 media = "https:" + media
 
-            # Telegram post photos are normally served by telesco.pe.
-            # This also rejects emoji/sticker WEBM assets.
-            lower = media.casefold()
+            low = media.casefold()
             if (
                 media.startswith("http")
-                and not lower.endswith((".webm", ".mp4", ".tgs"))
+                and not low.endswith((".webm", ".mp4", ".tgs"))
                 and media not in photos
             ):
                 photos.append(media)
@@ -2480,10 +2461,19 @@ class TelegramTextView(QWebEngineView if QWebEngineView is not None else QtWidge
     @staticmethod
     def _public_url(url):
         value = str(url or "").strip()
-        match = re.match(r"https?://t\.me/(?:s/)?([^/?#]+)/(\d+)", value)
-        if match:
-            return f"https://t.me/s/{match.group(1)}/{match.group(2)}"
-        return value
+        # Accept all useful user forms:
+        # t.me/Q3News/260
+        # t.me/s/Q3News/260
+        # t.me/Q3News/s/260
+        m = re.search(
+            r"https?://t\.me/(?:s/)?([^/?#]+)/(?:(?:s)/)?(\d+)",
+            value,
+            flags=re.I,
+        )
+        if not m:
+            return value
+        channel, post_id = m.group(1), m.group(2)
+        return f"https://t.me/s/{channel}/{post_id}"
 
     def _telegram_title_changed(self, title):
         prefix = "Q3ELITE_MEDIA:"
@@ -2523,8 +2513,7 @@ class TelegramTextView(QWebEngineView if QWebEngineView is not None else QtWidge
             const text = msg.querySelector('.tgme_widget_message_text');
             if (!text) return 0;
 
-            // Telegram photos are carried by photo_wrap anchors.
-            // Do not inspect generic VIDEO nodes: custom emoji are WEBM too.
+            // Extract only actual screenshot/photo containers.
             const media = {images: [], video: "", poster: ""};
             const addImage = u => {
                 if (!u) return;
@@ -2535,26 +2524,10 @@ class TelegramTextView(QWebEngineView if QWebEngineView is not None else QtWidge
             };
 
             msg.querySelectorAll('a.tgme_widget_message_photo_wrap').forEach(el => {
-                const inline = el.style.backgroundImage || '';
-                const computed = getComputedStyle(el).backgroundImage || '';
-                const bg = inline || computed;
-                const m = bg.match(/url\\(["']?(.*?)["']?\\)/i);
-                if (m) addImage(m[1]);
+                let bg = el.style.backgroundImage || getComputedStyle(el).backgroundImage || '';
+                let m = bg.match(/url\((?:"|')?(.*?)(?:"|')?\)/i);
+                if (m && m[1]) addImage(m[1]);
             });
-
-            // Real post video only: Telegram's dedicated player/wrap.
-            const videoRoot = msg.querySelector(
-                '.tgme_widget_message_video_player, .tgme_widget_message_video_wrap'
-            );
-            if (videoRoot) {
-                const v = videoRoot.querySelector('video');
-                const s = videoRoot.querySelector('source');
-                if (v) {
-                    media.video = v.currentSrc || v.src || '';
-                    media.poster = v.poster || '';
-                }
-                if (!media.video && s) media.video = s.src || '';
-            }
 
             document.title = 'Q3ELITE_MEDIA:' + encodeURIComponent(JSON.stringify(media));
 
@@ -2910,311 +2883,144 @@ class ChangelogMediaCarousel(QtWidgets.QFrame):
 
 
 
-class YoutubeResolveWorker(QtCore.QThread):
-    resolved = QtCore.pyqtSignal(dict)
-    failed = QtCore.pyqtSignal(str)
+class YoutubeThumbnail(QtWidgets.QFrame):
+    """Lightweight YouTube preview: HQ thumbnail + native Play overlay."""
 
-    def __init__(self, url, parent=None):
+    def __init__(self, youtube_url, parent=None):
         super().__init__(parent)
-        self.url = str(url)
+        self.setObjectName("youtubeThumbnail")
+        self.youtube_url = str(youtube_url or "").strip()
+        self.video_id = self._video_id(self.youtube_url)
+        self.setFixedSize(800, 450)
+        self.setCursor(QtCore.Qt.CursorShape.PointingHandCursor)
 
-    def run(self):
-        if not YTDLP_AVAILABLE:
-            self.failed.emit("yt-dlp is not installed")
-            return
-        try:
-            # QMediaPlayer needs ONE URL containing both audio + video.
-            # Prefer the highest progressive/combined stream up to 1080p.
-            opts = {
-                "quiet": True,
-                "no_warnings": True,
-                "noplaylist": True,
-                "format": "best[height<=1080][vcodec!=none][acodec!=none]/best[height<=1080]/best",
-            }
-            with yt_dlp.YoutubeDL(opts) as ydl:
-                info = ydl.extract_info(self.url, download=False)
+        self.image = QtWidgets.QLabel(self)
+        self.image.setObjectName("youtubeThumbnailImage")
+        self.image.setGeometry(0, 0, 800, 450)
+        self.image.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
+        self.image.setScaledContents(False)
 
-            media_url = str(info.get("url") or "")
-            if not media_url:
-                self.failed.emit("No directly playable YouTube stream was returned")
-                return
+        self.play = QtWidgets.QPushButton("▶", self)
+        self.play.setObjectName("youtubePlayOverlay")
+        self.play.setFixedSize(76, 54)
+        self.play.clicked.connect(self.open_video)
+        self.play.raise_()
 
-            self.resolved.emit({
-                "url": media_url,
-                "title": str(info.get("title") or ""),
-                "height": int(info.get("height") or 0),
-                "width": int(info.get("width") or 0),
-                "format": str(info.get("format_note") or info.get("format") or ""),
-                "http_headers": info.get("http_headers") or {},
-            })
-        except Exception as error:
-            self.failed.emit(str(error))
-
-
-class NativeYoutubePlayer(QtWidgets.QFrame):
-    """YouTube -> yt-dlp direct stream -> Qt Multimedia/QMediaPlayer."""
-
-    def __init__(self, url, parent=None):
-        super().__init__(parent)
-        self.setObjectName("nativeYoutubePlayer")
-        self.setFixedSize(800, 500)
-        self.youtube_url = str(url)
-        self._resolved = {}
-        self._fullscreen = None
-
-        root = QtWidgets.QVBoxLayout(self)
-        root.setContentsMargins(0, 0, 0, 0)
-        root.setSpacing(0)
-
-        self.videoHost = QtWidgets.QWidget()
-        self.videoHost.setObjectName("nativeVideoHost")
-        video_lay = QtWidgets.QVBoxLayout(self.videoHost)
-        video_lay.setContentsMargins(0, 0, 0, 0)
-
-        if NATIVE_VIDEO_AVAILABLE:
-            self.video = QVideoWidget()
-            self.video.setObjectName("nativeVideoWidget")
-            video_lay.addWidget(self.video)
-            self.player = QMediaPlayer(self)
-            self.audio = QAudioOutput(self)
-            self.audio.setVolume(0.0)  # muted by default
-            self.player.setAudioOutput(self.audio)
-            self.player.setVideoOutput(self.video)
-            self.player.positionChanged.connect(self._position_changed)
-            self.player.durationChanged.connect(self._duration_changed)
-            self.player.playbackStateChanged.connect(self._state_changed)
-            self.player.errorOccurred.connect(self._player_error)
+        self._manager = QtNetwork.QNetworkAccessManager(self)
+        self._try_index = 0
+        self._candidates = []
+        if self.video_id:
+            # maxres is normally 1280x720. sd/default are graceful fallbacks.
+            self._candidates = [
+                f"https://i.ytimg.com/vi/{self.video_id}/maxresdefault.jpg",
+                f"https://i.ytimg.com/vi/{self.video_id}/sddefault.jpg",
+                f"https://i.ytimg.com/vi/{self.video_id}/hqdefault.jpg",
+            ]
+            self._load_next()
         else:
-            self.video = QtWidgets.QLabel("Qt Multimedia unavailable")
-            self.video.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
-            video_lay.addWidget(self.video)
-            self.player = None
-            self.audio = None
-
-        root.addWidget(self.videoHost, 1)
-
-        controls = QtWidgets.QHBoxLayout()
-        controls.setContentsMargins(10, 6, 10, 8)
-        controls.setSpacing(8)
-
-        self.playButton = QtWidgets.QPushButton("▶")
-        self.playButton.setObjectName("nativeVideoControl")
-        self.playButton.setFixedSize(34, 30)
-        self.playButton.clicked.connect(self.toggle_play)
-        controls.addWidget(self.playButton)
-
-        self.slider = QtWidgets.QSlider(QtCore.Qt.Orientation.Horizontal)
-        self.slider.setRange(0, 0)
-        self.slider.sliderMoved.connect(self._seek)
-        controls.addWidget(self.slider, 1)
-
-        self.timeLabel = QtWidgets.QLabel("0:00 / 0:00")
-        self.timeLabel.setObjectName("nativeVideoTime")
-        controls.addWidget(self.timeLabel)
-
-        self.muteButton = QtWidgets.QPushButton("MUTE")
-        self.muteButton.setObjectName("nativeVideoControl")
-        self.muteButton.clicked.connect(self.toggle_mute)
-        controls.addWidget(self.muteButton)
-
-        self.qualityLabel = QtWidgets.QLabel("Resolving…")
-        self.qualityLabel.setObjectName("nativeVideoQuality")
-        controls.addWidget(self.qualityLabel)
-
-        self.fullscreenButton = QtWidgets.QPushButton("⛶")
-        self.fullscreenButton.setObjectName("nativeVideoControl")
-        self.fullscreenButton.setFixedSize(36, 30)
-        self.fullscreenButton.clicked.connect(self.open_fullscreen)
-        controls.addWidget(self.fullscreenButton)
-
-        root.addLayout(controls)
-
-        if not (NATIVE_VIDEO_AVAILABLE and YTDLP_AVAILABLE):
-            missing = []
-            if not NATIVE_VIDEO_AVAILABLE:
-                missing.append("Qt Multimedia")
-            if not YTDLP_AVAILABLE:
-                missing.append("yt-dlp")
-            self.qualityLabel.setText("Missing: " + ", ".join(missing))
-            self.playButton.setEnabled(False)
-        else:
-            self.worker = YoutubeResolveWorker(self.youtube_url, self)
-            self.worker.resolved.connect(self._resolved_stream)
-            self.worker.failed.connect(self._resolve_failed)
-            self.worker.start()
+            self.image.setText("YouTube preview unavailable")
 
     @staticmethod
-    def _clock(ms):
-        seconds = max(0, int(ms / 1000))
-        return f"{seconds // 60}:{seconds % 60:02d}"
-
-    def _resolved_stream(self, data):
-        self._resolved = dict(data)
-        height = int(data.get("height") or 0)
-        self.qualityLabel.setText(f"{height}p native" if height else "Native stream")
-        self.player.setSource(QtCore.QUrl(data["url"]))
-
-    def _resolve_failed(self, error):
-        print(f"[video] yt-dlp resolve failed: {error}")
-        self.qualityLabel.setText("Native stream unavailable")
-        self.playButton.setEnabled(False)
-
-    def _player_error(self, error, error_string):
-        print(f"[video] QMediaPlayer: {error_string}")
-        self.qualityLabel.setText("Playback error")
-
-    def toggle_play(self):
-        if not self.player:
-            return
-        if self.player.playbackState() == QMediaPlayer.PlaybackState.PlayingState:
-            self.player.pause()
-        else:
-            self.player.play()
-
-    def _state_changed(self, state):
-        self.playButton.setText(
-            "❚❚" if state == QMediaPlayer.PlaybackState.PlayingState else "▶"
-        )
-
-    def toggle_mute(self):
-        if not self.audio:
-            return
-        if self.audio.volume() <= 0.001:
-            self.audio.setVolume(0.75)
-            self.muteButton.setText("SOUND")
-        else:
-            self.audio.setVolume(0.0)
-            self.muteButton.setText("MUTE")
-
-    def _duration_changed(self, duration):
-        self.slider.setRange(0, max(0, int(duration)))
-        self._position_changed(self.player.position() if self.player else 0)
-
-    def _position_changed(self, position):
-        if not self.slider.isSliderDown():
-            self.slider.setValue(int(position))
-        duration = self.player.duration() if self.player else 0
-        self.timeLabel.setText(f"{self._clock(position)} / {self._clock(duration)}")
-
-    def _seek(self, position):
-        if self.player:
-            self.player.setPosition(int(position))
-
-    def open_fullscreen(self):
-        if not self.player or not self.video:
-            return
-        if self._fullscreen is not None:
-            return
-
-        self._fullscreen = NativeVideoFullscreen(self)
-        self._fullscreen.open()
-
-    def _restore_from_fullscreen(self):
-        if not self.video:
-            return
-        self.video.setParent(self.videoHost)
-        self.videoHost.layout().addWidget(self.video)
-        self.player.setVideoOutput(self.video)
-        self.video.show()
-        self._fullscreen = None
-
-
-class NativeVideoFullscreen(QtWidgets.QWidget):
-    def __init__(self, owner):
-        super().__init__(None)
-        self.owner = owner
-        self.setObjectName("nativeVideoFullscreen")
-        self.setWindowFlags(
-            QtCore.Qt.WindowType.Window |
-            QtCore.Qt.WindowType.FramelessWindowHint |
-            QtCore.Qt.WindowType.WindowStaysOnTopHint
-        )
-        self.setFocusPolicy(QtCore.Qt.FocusPolicy.StrongFocus)
-
-        lay = QtWidgets.QVBoxLayout(self)
-        lay.setContentsMargins(0, 0, 0, 0)
-
-        owner.video.setParent(self)
-        owner.player.setVideoOutput(owner.video)
-        lay.addWidget(owner.video, 1)
-
-        app = QtWidgets.QApplication.instance()
-        if app:
-            app.installEventFilter(self)
-
-    def open(self):
-        self.showFullScreen()
-        self.raise_()
-        self.activateWindow()
-        self.setFocus(QtCore.Qt.FocusReason.ActiveWindowFocusReason)
-
-    def eventFilter(self, obj, event):
-        if (
-            self.isVisible()
-            and event.type() == QtCore.QEvent.Type.KeyPress
-            and event.key() == QtCore.Qt.Key.Key_Escape
+    def _video_id(url):
+        value = str(url or "")
+        for pattern in (
+            r"(?:youtube\.com/watch\?(?:[^#]*&)?v=)([A-Za-z0-9_-]{6,})",
+            r"(?:youtu\.be/)([A-Za-z0-9_-]{6,})",
+            r"(?:youtube\.com/embed/)([A-Za-z0-9_-]{6,})",
         ):
-            self.close()
-            return True
-        return False
+            match = re.search(pattern, value, flags=re.I)
+            if match:
+                return match.group(1)
+        return ""
 
-    def mouseDoubleClickEvent(self, event):
-        self.close()
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self.image.setGeometry(self.rect())
+        self.play.move(
+            (self.width() - self.play.width()) // 2,
+            (self.height() - self.play.height()) // 2,
+        )
+        self.play.raise_()
 
-    def closeEvent(self, event):
-        app = QtWidgets.QApplication.instance()
-        if app:
-            try:
-                app.removeEventFilter(self)
-            except Exception:
-                pass
-        self.owner._restore_from_fullscreen()
-        super().closeEvent(event)
+    def mouseReleaseEvent(self, event):
+        if event.button() == QtCore.Qt.MouseButton.LeftButton:
+            self.open_video()
+            event.accept()
+            return
+        super().mouseReleaseEvent(event)
+
+    def open_video(self):
+        if self.youtube_url:
+            QtGui.QDesktopServices.openUrl(QtCore.QUrl(self.youtube_url))
+
+    def _load_next(self):
+        if self._try_index >= len(self._candidates):
+            self.image.setText("YouTube preview unavailable")
+            return
+        url = self._candidates[self._try_index]
+        self._try_index += 1
+        reply = self._manager.get(QtNetwork.QNetworkRequest(QtCore.QUrl(url)))
+        reply.finished.connect(lambda r=reply: self._thumbnail_reply(r))
+
+    def _thumbnail_reply(self, reply):
+        try:
+            if reply.error() == QtNetwork.QNetworkReply.NetworkError.NoError:
+                data = bytes(reply.readAll())
+                pix = QtGui.QPixmap()
+                if pix.loadFromData(data) and pix.width() >= 480:
+                    scaled = pix.scaled(
+                        self.size(),
+                        QtCore.Qt.AspectRatioMode.KeepAspectRatioByExpanding,
+                        QtCore.Qt.TransformationMode.SmoothTransformation,
+                    )
+                    x = max(0, (scaled.width() - self.width()) // 2)
+                    y = max(0, (scaled.height() - self.height()) // 2)
+                    self.image.setPixmap(
+                        scaled.copy(x, y, self.width(), self.height())
+                    )
+                    return
+        finally:
+            reply.deleteLater()
+        self._load_next()
 
 
 class ChangelogVideoContainer(QtWidgets.QFrame):
-    """Native YouTube player; non-YouTube URLs retain the old WebEngine player."""
+    """Video entries use a lightweight thumbnail; playback opens in browser."""
     def __init__(self, url, parent=None):
         super().__init__(parent)
         self.setObjectName("changelogVideoContainer")
         self.url = str(url or "")
+        self.setFixedSize(800, 450)
         lay = QtWidgets.QVBoxLayout(self)
         lay.setContentsMargins(0, 0, 0, 0)
 
         if re.search(r"(youtube\.com|youtu\.be)", self.url, flags=re.I):
-            self.setFixedSize(800, 500)
-            self.player = NativeYoutubePlayer(self.url, self)
+            self.player = YoutubeThumbnail(self.url, self)
         else:
-            self.setFixedSize(800, 450)
-            self.player = ChangelogVideoView(
-                self.url, self, compact=True, show_fullscreen_button=False
-            )
+            self.player = ChangelogVideoView(self.url, self)
         lay.addWidget(self.player)
 
 
 class ChangelogVideoView(QWebEngineView if QWebEngineView is not None else QtWidgets.QWidget):
-    """Fallback player for direct MP4/WEBM URLs."""
-    def __init__(self, url, parent=None, compact=True, show_fullscreen_button=True):
+    """Fallback only for direct MP4/WEBM URLs."""
+    def __init__(self, url, parent=None):
         super().__init__(parent)
         self.setObjectName("changelogVideo")
         self.url = str(url or "").strip()
-        if compact:
-            self.setFixedSize(800, 450)
+        self.setFixedSize(800, 450)
         if QWebEngineView is None:
             return
-
         self.page().setBackgroundColor(QtGui.QColor(0, 0, 0, 255))
         if re.search(r"\.(?:mp4|webm)(?:\?|$)", self.url, flags=re.I):
             safe = _html_escape(self.url)
-            html = f"""
-            <html><body style="margin:0;background:#000;overflow:hidden">
-            <video controls muted playsinline preload="metadata"
-                   style="width:100%;height:100%;object-fit:contain;background:#000">
-              <source src="{safe}">
-            </video>
-            </body></html>
-            """
-            self.setHtml(html, QtCore.QUrl(self.url))
+            self.setHtml(
+                f"""<!doctype html><html><body style="margin:0;background:#000;overflow:hidden">
+                <video controls muted playsinline preload="metadata"
+                       style="width:100%;height:100%;object-fit:contain;background:#000">
+                  <source src="{safe}">
+                </video></body></html>""",
+                QtCore.QUrl(self.url),
+            )
         else:
             self.setUrl(QtCore.QUrl(self.url))
 

@@ -372,28 +372,34 @@ QWidget#changelogVideoFullscreen {
 }
 
 
-/* v0.08.2 native video */
-QFrame#nativeYoutubePlayer,
-QWidget#nativeVideoHost,
-QVideoWidget#nativeVideoWidget {
+/* v0.08.3 HTTPS-hosted YouTube */
+QWidget#hostedYoutubeView {
     background: #000000;
+    min-width: 800px;
+    max-width: 800px;
+    min-height: 450px;
+    max-height: 450px;
 }
-QWidget#nativeVideoFullscreen {
+
+
+/* v0.08.4 - lightweight YouTube preview */
+QFrame#youtubeThumbnail {
     background: #000000;
+    border: 1px solid rgba(170, 165, 155, 90);
+    border-radius: 9px;
 }
-QPushButton#nativeVideoControl {
-    min-width: 34px;
-    min-height: 30px;
-    padding: 0px 8px;
-    border: 1px solid rgba(220, 210, 200, 65);
-    border-radius: 5px;
-    background: rgba(0, 0, 0, 165);
+QLabel#youtubeThumbnailImage {
+    background: #000000;
+    border-radius: 8px;
 }
-QPushButton#nativeVideoControl:hover {
-    border-color: rgba(215, 154, 40, 180);
-    background: rgba(100, 20, 15, 190);
+QPushButton#youtubePlayOverlay {
+    background-color: rgba(220, 0, 35, 235);
+    color: white;
+    border: none;
+    border-radius: 13px;
+    font-size: 27px;
+    padding-left: 4px;
 }
-QLabel#nativeVideoTime,
-QLabel#nativeVideoQuality {
-    color: #c9c4bd;
+QPushButton#youtubePlayOverlay:hover {
+    background-color: rgba(245, 20, 45, 255);
 }
