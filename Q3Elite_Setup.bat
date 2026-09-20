@@ -179,7 +179,7 @@ set "DESKTOP_SHORTCUT=%USERPROFILE%\Desktop\Q3Elite.lnk"
 set "LOCAL_SHORTCUT=%ROOT%Q3Elite.lnk"
 
 set "TARGET=%LAUNCHER%\launch.bat"
-set "ICON=%LAUNCHER%\icons\b3.ico"
+set "ICON=%LAUNCHER%\assets\icons\favicon.ico"
 set "WORKDIR=%LAUNCHER%"
 
 
@@ -225,7 +225,7 @@ echo Starting Q3Elite Launcher installation...
 echo ============================================================
 echo.
 
-call ".\python\setup_python.bat" ".\modules\flaunch.pyw"
+call ".\python\setup_python.bat" ".\modules\launch.pyw"
 
 set "SETUP_RESULT=%ERRORLEVEL%"
 

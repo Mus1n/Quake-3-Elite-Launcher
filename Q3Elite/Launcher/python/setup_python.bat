@@ -5,6 +5,8 @@ set "BASE_DIR=%~dp0"
 set "PY_ROOT=%BASE_DIR%pyenv"
 set "UV_EXE=%PY_ROOT%\uv.exe"
 set "VENV_DIR=%PY_ROOT%\venv"
+set "PYTHON_EXE=%VENV_DIR%\Scripts\python.exe"
+set "PYTHONW_EXE=%VENV_DIR%\Scripts\pythonw.exe"
 set "REQUIREMENTS=%BASE_DIR%requirements.txt"
 set "PYTHON_VERSION=3.12"
 set "UV_ZIP_URL=https://github.com/astral-sh/uv/releases/latest/download/uv-x86_64-pc-windows-msvc.zip"
@@ -16,6 +18,27 @@ set "UV_TOOL_BIN_DIR=%PY_ROOT%\bin"
 set "UV_PYTHON_BIN_DIR=%PY_ROOT%\bin"
 set "UV_NO_MODIFY_PATH=1"
 set "UV_PYTHON_PREFERENCE=only-managed"
+
+:: ============================================================
+:: FAST PATH
+:: Existing healthy environment -> launch immediately.
+:: ============================================================
+
+if exist "%PYTHON_EXE%" if exist "%PYTHONW_EXE%" (
+    "%PYTHON_EXE%" -c "import PyQt6; import vulkan" >nul 2>&1
+    if not errorlevel 1 (
+        echo Existing Q3Elite Python environment is ready.
+        goto START_LAUNCHER
+    )
+
+    echo Existing Python environment is incomplete.
+    echo Repairing dependencies...
+    echo.
+)
+
+:: ============================================================
+:: PREPARE UV
+:: ============================================================
 
 if not exist "%PY_ROOT%" mkdir "%PY_ROOT%"
 
@@ -42,7 +65,11 @@ if not exist "%UV_EXE%" (
     )
 )
 
-echo Installing Python %PYTHON_VERSION%...
+:: ============================================================
+:: PYTHON
+:: ============================================================
+
+echo Installing/verifying Python %PYTHON_VERSION%...
 
 "%UV_EXE%" python install %PYTHON_VERSION% --no-registry
 
@@ -52,36 +79,69 @@ if !ERRORLEVEL! neq 0 (
     exit /b 1
 )
 
-for /f "delims=" %%P in ('"%UV_EXE%" python find %PYTHON_VERSION%') do set "BASE_PYTHON=%%P"
-if not defined BASE_PYTHON (
-    echo ERROR: could not find base Python interpreter.
-    exit /b 1
-)
-
-
 if not exist "%VENV_DIR%\Scripts\python.exe" (
     echo Creating virtual environment...
     "%UV_EXE%" venv "%VENV_DIR%" --python %PYTHON_VERSION%
+
     if !ERRORLEVEL! neq 0 (
         echo ERROR: failed to create venv.
+        pause
         exit /b 1
     )
 )
+
+:: ============================================================
+:: DEPENDENCIES
+:: ============================================================
 
 if exist "%REQUIREMENTS%" (
-    echo Installing dependencies...
-    "%UV_EXE%" pip install --python "%VENV_DIR%\Scripts\python.exe" --link-mode copy -r "%REQUIREMENTS%"
+    echo Installing/verifying dependencies...
+    "%UV_EXE%" pip install --python "%PYTHON_EXE%" --link-mode copy -r "%REQUIREMENTS%"
+
     if !ERRORLEVEL! neq 0 (
         echo ERROR: failed to install dependencies.
+        pause
         exit /b 1
     )
 )
 
-set "VIRTUAL_ENV=%VENV_DIR%"
+:: Final verification is intentional: do not start pythonw.exe if
+:: the environment cannot actually import the launcher dependencies.
+echo Verifying Python dependencies...
+
+"%PYTHON_EXE%" -c "import PyQt6; import vulkan"
+
+if !ERRORLEVEL! neq 0 (
+    echo.
+    echo ERROR: Q3Elite Python dependencies are incomplete.
+    echo PyQt6 and/or vulkan could not be imported.
+    echo.
+    pause
+    exit /b 1
+)
+
+:: ============================================================
+:: START
+:: ============================================================
+
+:START_LAUNCHER
+
+if "%~1"=="" (
+    echo ERROR: no launcher script was supplied.
+    pause
+    exit /b 1
+)
+
+if not exist "%~1" (
+    echo ERROR: launcher script not found:
+    echo "%~1"
+    pause
+    exit /b 1
+)
 
 echo.
-echo Starting Q3Elite installation...
+echo Starting Q3Elite Launcher...
 
-start "" "%VENV_DIR%\Scripts\pythonw.exe" %*
+start "" "%PYTHONW_EXE%" "%~1"
 
 exit /b 0
