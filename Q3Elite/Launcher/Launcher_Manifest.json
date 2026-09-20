@@ -1,29 +1,29 @@
 {
     "format": 2,
     "files": {
-        "Q3Elite/Launcher/download_confs/Quake 3 Elite pcloud.dconf": "eb7829d1b7b7ddb89e38d3f8a079139111e845c4fa7110b1eec0baab4d13b28c",
-        "Q3Elite/Launcher/download_confs/base.dconf": "967f791a225ea6f710aa3a20827237a2ea2fe2c20cb29acfd7a9b07eda0d33bf",
-        "Q3Elite/Launcher/icons/b3.ico": "8e8b4c764d9ba62da11f77c75b913f6b86c7435f201c0ace22bb93bf4418d718",
-        "Q3Elite/Launcher/icons/b3.png": "83637c62586e915459d9d5911225ffd02ddc26956ac759d3898ddd67ee95a45b",
-        "Q3Elite/Launcher/icons/back.png": "8bba8ca5e21f1275ea609cb2bb9934c1f1ff19e4ab2f4ae2532405e4c418fc57",
-        "Q3Elite/Launcher/icons/tback.png": "eb458aa24f05864eacb71485376c586f9ea9e0608655809d0880cdd6488c5e84",
-        "Q3Elite/Launcher/launch.bat": "6bab840149177376a9e847b6f5c4b6dc1807b586586417da792b753279c38f1a",
-        "Q3Elite/Launcher/modules/base_methods.py": "5ce52c7188a6ca3ba4fe4ec7553a4cd0ff4ac0a28e72bd0b674bbf3311d397c4",
-        "Q3Elite/Launcher/modules/download_tools.py": "2c40b679e1682afa0d3e4b8adf698f62595fb98523524f27523294792b3ca079",
-        "Q3Elite/Launcher/modules/gui_tools.py": "3b69cb16d22129d795803b2720ac391f1fdd043393fa83b840e754960944fa28",
-        "Q3Elite/Launcher/modules/launch.pyw": "e7e9fe3afcd788f4c6d26dea0b6a30653ff0bb8a8241e58920e70d4fd03dfd6c",
-        "Q3Elite/Launcher/modules/launcher_update_helper.py": "ef9f8ad8fa352494731b8d3da6c371a580e34ae1da954db462ffdd057cca1a38",
-        "Q3Elite/Launcher/modules/launcher_updater.py": "b4c8f479b8ebd946b93b5d88cdaf87387a8aa7e6c58da1f8906afa2f0245d23d",
-        "Q3Elite/Launcher/modules/osp_updater.py": "8668be383c45a18957b4527686cba17dbc25333b755f11d3e31845a04c143b71",
-        "Q3Elite/Launcher/modules/pak_verifier.py": "f9600217633eb170b66879502872315916a4b2c974846c74c2122e5f9d39aedc",
-        "Q3Elite/Launcher/python/requirements.txt": "cbf142fcae82183e3205208a1f60eb17a15f5d613e2a4980060cf60ea7f08360",
-        "Q3Elite/Launcher/python/setup_python.bat": "175f1ed9e15b6986232f6122881743543e6bb01c3e471ff60bac3f4f1f3d639e",
+        "Q3Elite/Launcher/assets/icons/favicon.ico": "4b55b88b1e02764025fbf56e2565ed4e1e4d444cef1ef7a4feb2f3ce45d1460b",
+        "Q3Elite/Launcher/assets/icons/favicon.png": "8d46e1948aae2dd5a180ff41dbe90dee4d2c95aebfd2fb8f5bd3b14d494716cc",
+        "Q3Elite/Launcher/assets/images/background.png": "7b85fae056ab0488291ca2cb3573a1dd19a86fef212a8c0d501054e21c1a8ca7",
+        "Q3Elite/Launcher/download_confs/Quake 3 Elite pcloud.dconf": "d14986f62ae94131b2dd7663098645ae1bb2cb3ea2c50d75b49f54d947c8bfde",
+        "Q3Elite/Launcher/download_confs/base.dconf": "b5601dd88ad3905b85c620be2ce273eb4e806daa06b13e8e4f7b4c152880e14e",
+        "Q3Elite/Launcher/launch.bat": "bb22d385006645f854967375f762b69416c68b5269514a5c15d9f6b8370d76ba",
+        "Q3Elite/Launcher/modules/base_methods.py": "eeb8836ddbd6541986810277fcf3e4f03a0db60cf3d4de6deef44085b25836aa",
+        "Q3Elite/Launcher/modules/download_tools.py": "ee6e2d88663b0aa3b4d8aecda336e169db34ce78a23374fb4bb4b4ae36c5534d",
+        "Q3Elite/Launcher/modules/gui_tools.py": "03e5011883178c28e0d2d3a2f5c6a02c67a8aeac6e4a9d0f3adb8f5c84fbcd8e",
+        "Q3Elite/Launcher/modules/launch.pyw": "237620d97d745dd4d5739b18b1f205d9fabb23f026b49278118861d9f40a9e06",
+        "Q3Elite/Launcher/modules/launcher_update_helper.py": "942220f4e558d64ee885d567ba50852d667201e312b52f07e590094e909ed6fb",
+        "Q3Elite/Launcher/modules/launcher_updater.py": "e0942545ef3ae5b39509289e90d3db58c6dacc3c44ff9471352e3392a68e0180",
+        "Q3Elite/Launcher/modules/osp_updater.py": "2ad8dd72738412425854625abf695c4b541fb408c79d123d2ac1b90b7b924b25",
+        "Q3Elite/Launcher/modules/pak_verifier.py": "ed5b42828a639a8c9881a6f79546dfff28f2534f5b5c417237f4f5bfe588d9bf",
+        "Q3Elite/Launcher/modules/pcloud_q3elite.py": "ba2b795641c98b2d1f02147f9c490f9c2400994d7be58f872b4a63bf2005648f",
+        "Q3Elite/Launcher/modules/q3elite_components.py": "f310cd59fb36cdefaee8fcd7db4ff8aedfee250510616d96aa02e887b746eeea",
+        "Q3Elite/Launcher/modules/q3elite_music.py": "e58d5e291c8f59e30d816afe64068665888f8214442d3879433c2c4375361b50",
+        "Q3Elite/Launcher/modules/q3elite_updater.py": "9016ff0be7e3c26ce69633425129b110df4130f495b75e73dfd897989b6b3b27",
+        "Q3Elite/Launcher/python/requirements.txt": "03ce13a1e901b30ef806a3fe3e353e0a574c7c1c445d8b5a8084b67a618f3768",
+        "Q3Elite/Launcher/python/setup_python.bat": "3302bc40bb0895482b1fc15878aa6d224e17aeaf8791593e2c85ad98e27230d1",
         "Q3Elite/Launcher/ui/FiraCode-Regular.ttf": "5dc1651a1143c53169d4394dfc55585860d13c158cc0bcc2e56c23a1da5dd777",
         "Q3Elite/Launcher/ui/ShareTech-Regular.ttf": "9c90378d69f569cd65a925aa7cb479d82d075dcdeb5e93c99da1d77b4d30e412",
-        "Q3Elite/Launcher/ui/style.css": "6cd24091ccfa8d7fc1bbf11af35517f899f3f8df0c59685670af2fbe01aaf88a"
+        "Q3Elite/Launcher/ui/style.css": "f9ee28487851fe83a53cce9ea422c15e528c5f8aecb8ed64f53a62c5e97c7c4e"
     },
-    "deleted": [
-        "Q3Elite/Launcher/icons/anonimus.webp",
-        "Q3Elite/Launcher/icons/sticker.webp"
-    ]
+    "deleted": []
 }
