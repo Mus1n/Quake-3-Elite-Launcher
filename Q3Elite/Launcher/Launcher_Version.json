@@ -11,7 +11,7 @@
 {
 	"type": Quake 3 Elite"
     "version": "1.3",
-    "date": "2026-06-5",
+    "date": "2026-07-4",
     "changelog": [
 	"Modern HUD with SpectatorHUD",
 	"→ Item timers 🔢",
@@ -20,4 +20,10 @@
 	"→ Responsive elements using new visflags"
 	"link": "https://t.me/Q3News/244"
     ]
+}
+{
+	"type": Quake 3 Elite"
+    "version": "1.15",
+    "date": "2026-06-24",
+	"source":"https://t.me/Q3News/217"
 }
