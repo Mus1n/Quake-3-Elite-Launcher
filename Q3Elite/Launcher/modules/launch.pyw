@@ -9,6 +9,8 @@ import zipfile
 from pathlib import Path
 
 from PyQt6 import QtCore, QtGui, QtWidgets, QtNetwork
+from PyQt6.QtWebEngineWidgets import QWebEngineView
+from PyQt6.QtWebEngineCore import QWebEngineSettings
 from PyQt6.QtCore import QLockFile, pyqtSignal
 from PyQt6.QtWidgets import QApplication
 from PyQt6.QtGui import QFontDatabase
@@ -1080,10 +1082,10 @@ def set_start_with_windows(enabled):
     value_name = "Q3Elite Launcher"
     # Prefer the launcher executable when frozen; otherwise use pythonw + this script.
     if getattr(sys, "frozen", False):
-        command = f'"{Path(sys.executable).resolve()}"'
+        command = f'"{Path(sys.executable).resolve()}" --autostart'
     else:
         pythonw = Path(sys.executable).with_name("pythonw.exe")
-        command = f'"{pythonw}" "{Path(__file__).resolve()}"'
+        command = f'"{pythonw}" "{Path(__file__).resolve()}" --autostart'
     with winreg.OpenKey(winreg.HKEY_CURRENT_USER, run_key, 0, winreg.KEY_SET_VALUE) as key:
         if enabled:
             winreg.SetValueEx(key, value_name, 0, winreg.REG_SZ, command)
@@ -1451,7 +1453,6 @@ def refresh_component_gui():
     state = q3components.load_state()
     window.mapsBox.blockSignals(True)
     window.musicBox.blockSignals(True)
-    window.autoexecBox.blockSignals(True)
     window.mapsBox.setChecked(bool(state.get("external_maps", False)))
     window.musicBox.setChecked(bool(state.get("music_playlist", False)))
     window.mapsBox.blockSignals(False)
@@ -1624,13 +1625,12 @@ def start_game_checks():
     else:
         print()
         print("Q3Elite is not installed.")
-        print("Starting first installation...")
+        print("Waiting for the user to press INSTALL.")
         print()
 
         install_state["q3elite_done"] = False
         install_state["q3elite_ok"] = False
-        set_gui_checking("Installing...")
-        q3elite_download.start()
+        prepare_first_install()
 
 
 def launcher_self_update_result(action):
@@ -1756,63 +1756,238 @@ class AnimatedEmoji(QtWidgets.QLabel):
 
 
 class ConfigEditorDialog(QtWidgets.QDialog):
+    """Two-pane Q3 config editor with zero-indent // section navigation and Ctrl+F."""
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Q3Elite Config Editor")
-        self.resize(1120, 680)
+        self.resize(1240, 720)
         self.autoexec_path = GAME_ROOT / "baseq3" / "mods" / "osp" / "autoexec.cfg"
         self.userconfig_path = GAME_ROOT / "baseq3" / "mods" / "osp" / "UserConfig.cfg"
 
         root = QtWidgets.QVBoxLayout(self)
         panes = QtWidgets.QHBoxLayout()
+        panes.setSpacing(12)
 
-        left = QtWidgets.QVBoxLayout()
-        left.addWidget(QtWidgets.QLabel("AUTOEXEC.CFG  •  READ ONLY"))
-        self.autoexecEdit = QtWidgets.QPlainTextEdit()
-        self.autoexecEdit.setReadOnly(True)
-        left.addWidget(self.autoexecEdit, 1)
-
-        right = QtWidgets.QVBoxLayout()
-        right.addWidget(QtWidgets.QLabel("USERCONFIG.CFG  •  EDITABLE"))
-        self.userEdit = QtWidgets.QPlainTextEdit()
-        right.addWidget(self.userEdit, 1)
-
-        panes.addLayout(left, 1)
-        panes.addLayout(right, 1)
+        self.autoexecPanel = self._build_editor_panel(
+            "AUTOEXEC.CFG  •  READ ONLY", read_only=True
+        )
+        self.userPanel = self._build_editor_panel(
+            "USERCONFIG.CFG  •  EDITABLE", read_only=False
+        )
+        panes.addWidget(self.autoexecPanel["widget"], 1)
+        panes.addWidget(self.userPanel["widget"], 1)
         root.addLayout(panes, 1)
 
         row = QtWidgets.QHBoxLayout()
         self.message = QtWidgets.QLabel("")
         self.message.setObjectName("message")
         row.addWidget(self.message, 1)
+
         reload_button = GlowButton("RELOAD")
         reload_button.setObjectName("secondaryButton")
         reload_button.clicked.connect(self.reload_files)
         row.addWidget(reload_button)
+
         save_button = GlowButton("SAVE USER CONFIG")
         save_button.setObjectName("applyButton")
         save_button.clicked.connect(self.save_user_config)
         row.addWidget(save_button)
         root.addLayout(row)
+
+        self.autoexecEdit = self.autoexecPanel["edit"]
+        self.userEdit = self.userPanel["edit"]
         self.reload_files()
 
-    def _read(self, path):
+    def _build_editor_panel(self, title, read_only):
+        frame = QtWidgets.QFrame()
+        frame.setObjectName("configEditorPanel")
+        layout = QtWidgets.QVBoxLayout(frame)
+        layout.setContentsMargins(8, 8, 8, 8)
+
+        label = QtWidgets.QLabel(title)
+        label.setObjectName("sectionTitle")
+        layout.addWidget(label)
+
+        find_row = QtWidgets.QHBoxLayout()
+        find_edit = QtWidgets.QLineEdit()
+        find_edit.setPlaceholderText("Find...")
+        find_edit.hide()
+        find_prev = QtWidgets.QPushButton("↑")
+        find_next = QtWidgets.QPushButton("↓")
+        find_close = QtWidgets.QPushButton("×")
+        find_count = QtWidgets.QLabel("")
+        for w in (find_prev, find_next, find_count, find_close):
+            w.hide()
+        find_row.addWidget(find_edit, 1)
+        find_row.addWidget(find_prev)
+        find_row.addWidget(find_next)
+        find_row.addWidget(find_count)
+        find_row.addWidget(find_close)
+        layout.addLayout(find_row)
+
+        body = QtWidgets.QHBoxLayout()
+        sections = QtWidgets.QListWidget()
+        sections.setObjectName("configSections")
+        sections.setFixedWidth(150)
+        sections.setHorizontalScrollBarPolicy(
+            QtCore.Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+        )
+        body.addWidget(sections)
+
+        edit = QtWidgets.QPlainTextEdit()
+        edit.setReadOnly(read_only)
+        edit.setTabStopDistance(
+            QtGui.QFontMetricsF(edit.font()).horizontalAdvance(" ") * 4
+        )
+        body.addWidget(edit, 1)
+        layout.addLayout(body, 1)
+
+        panel = {
+            "widget": frame,
+            "edit": edit,
+            "sections": sections,
+            "find": find_edit,
+            "find_prev": find_prev,
+            "find_next": find_next,
+            "find_close": find_close,
+            "find_count": find_count,
+        }
+
+        sections.itemClicked.connect(
+            lambda item, p=panel: self._jump_to_section(p, item)
+        )
+        find_edit.returnPressed.connect(
+            lambda p=panel: self._find(p, backwards=False)
+        )
+        find_next.clicked.connect(lambda _=False, p=panel: self._find(p, False))
+        find_prev.clicked.connect(lambda _=False, p=panel: self._find(p, True))
+        find_close.clicked.connect(lambda _=False, p=panel: self._close_find(p))
+
+        shortcut = QtGui.QShortcut(QtGui.QKeySequence("Ctrl+F"), edit)
+        shortcut.setContext(QtCore.Qt.ShortcutContext.WidgetWithChildrenShortcut)
+        shortcut.activated.connect(lambda p=panel: self._open_find(p))
+
+        escape = QtGui.QShortcut(QtGui.QKeySequence("Esc"), frame)
+        escape.setContext(QtCore.Qt.ShortcutContext.WidgetWithChildrenShortcut)
+        escape.activated.connect(lambda p=panel: self._close_find(p))
+
+        return panel
+
+    def _read(self, path, editable=False):
         try:
             return path.read_text(encoding="utf-8", errors="replace")
         except FileNotFoundError:
-            return f"// File not found:\\n// {path}\\n"
+            if editable:
+                return (
+                    "// UserConfig.cfg does not exist yet.\n"
+                    "// Saving this editor will create it.\n"
+                    f"// Path: {path}\n"
+                )
+            return f"// File not found:\n// {path}\n"
+
+    @staticmethod
+    def _section_rows(text):
+        """Only zero-indent // comments are navigation sections."""
+        rows = []
+        for line_number, line in enumerate(text.splitlines()):
+            if line.startswith("//"):
+                title = line[2:].strip()
+                if title:
+                    rows.append((title, line_number))
+        return rows
+
+    def _rebuild_sections(self, panel):
+        panel["sections"].clear()
+        for title, line_number in self._section_rows(panel["edit"].toPlainText()):
+            item = QtWidgets.QListWidgetItem(title)
+            item.setData(QtCore.Qt.ItemDataRole.UserRole, line_number)
+            panel["sections"].addItem(item)
+
+    def _jump_to_section(self, panel, item):
+        line_number = int(item.data(QtCore.Qt.ItemDataRole.UserRole) or 0)
+        block = panel["edit"].document().findBlockByNumber(line_number)
+        cursor = QtGui.QTextCursor(block)
+        panel["edit"].setTextCursor(cursor)
+        panel["edit"].centerCursor()
+        panel["edit"].setFocus()
+
+    def _open_find(self, panel):
+        for key in ("find", "find_prev", "find_next", "find_count", "find_close"):
+            panel[key].show()
+        selected = panel["edit"].textCursor().selectedText()
+        if selected and "\n" not in selected:
+            panel["find"].setText(selected)
+        panel["find"].setFocus()
+        panel["find"].selectAll()
+        self._update_find_count(panel)
+
+    def _close_find(self, panel):
+        for key in ("find", "find_prev", "find_next", "find_count", "find_close"):
+            panel[key].hide()
+        panel["edit"].setFocus()
+
+    def _all_matches(self, panel):
+        query = panel["find"].text()
+        if not query:
+            return []
+        document = panel["edit"].document()
+        cursor = QtGui.QTextCursor(document)
+        matches = []
+        while True:
+            cursor = document.find(query, cursor)
+            if cursor.isNull():
+                break
+            matches.append((cursor.selectionStart(), cursor.selectionEnd()))
+        return matches
+
+    def _update_find_count(self, panel):
+        matches = self._all_matches(panel)
+        if not matches:
+            panel["find_count"].setText("0 / 0")
+            return
+        pos = panel["edit"].textCursor().selectionStart()
+        current = 1
+        for index, (start, end) in enumerate(matches, 1):
+            if start <= pos <= end:
+                current = index
+                break
+            if start < pos:
+                current = min(index + 1, len(matches))
+        panel["find_count"].setText(f"{current} / {len(matches)}")
+
+    def _find(self, panel, backwards=False):
+        query = panel["find"].text()
+        if not query:
+            return
+        flags = QtGui.QTextDocument.FindFlag.FindBackward if backwards else QtGui.QTextDocument.FindFlag(0)
+        found = panel["edit"].find(query, flags)
+        if not found:
+            cursor = panel["edit"].textCursor()
+            cursor.movePosition(
+                QtGui.QTextCursor.MoveOperation.End if backwards
+                else QtGui.QTextCursor.MoveOperation.Start
+            )
+            panel["edit"].setTextCursor(cursor)
+            panel["edit"].find(query, flags)
+        self._update_find_count(panel)
 
     def reload_files(self):
         self.autoexecEdit.setPlainText(self._read(self.autoexec_path))
-        self.userEdit.setPlainText(self._read(self.userconfig_path))
+        self.userEdit.setPlainText(self._read(self.userconfig_path, editable=True))
+        self._rebuild_sections(self.autoexecPanel)
+        self._rebuild_sections(self.userPanel)
         self.message.setText("Reloaded.")
 
     def save_user_config(self):
         try:
             self.userconfig_path.parent.mkdir(parents=True, exist_ok=True)
-            temp = self.userconfig_path.with_suffix(self.userconfig_path.suffix + ".tmp")
+            temp = self.userconfig_path.with_suffix(
+                self.userconfig_path.suffix + ".tmp"
+            )
             temp.write_text(self.userEdit.toPlainText(), encoding="utf-8")
             os.replace(temp, self.userconfig_path)
+            self._rebuild_sections(self.userPanel)
             self.message.setText("UserConfig.cfg saved.")
         except Exception as error:
             self.message.setText(f"Could not save UserConfig.cfg: {error}")
@@ -1988,23 +2163,25 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
         layout.setSpacing(14)
 
         video_card = self._card("videoCard")
-        video_l = QtWidgets.QHBoxLayout(video_card)
-        video_l.setContentsMargins(18, 12, 18, 12)
-        video_text = QtWidgets.QVBoxLayout()
-        video_title = QtWidgets.QLabel("PRESENTATION VIDEO")
-        video_title.setObjectName("sectionTitle")
-        video_text.addWidget(video_title)
-        video_name = QtWidgets.QLabel("Quake 3 Elite • YouTube")
-        video_name.setObjectName("statusTitle")
-        video_text.addWidget(video_name)
-        video_note = QtWidgets.QLabel("Default presentation media • muted inline playback can be enabled with Qt WebEngine.")
-        video_note.setObjectName("muted")
-        video_text.addWidget(video_note)
-        video_l.addLayout(video_text, 1)
-        watch = GlowButton("▶  WATCH")
-        watch.setObjectName("secondaryButton")
-        watch.clicked.connect(lambda: QtGui.QDesktopServices.openUrl(QtCore.QUrl("https://www.youtube.com/watch?v=i1PfqzHkKLw")))
-        video_l.addWidget(watch)
+        video_l = QtWidgets.QVBoxLayout(video_card)
+        video_l.setContentsMargins(0, 0, 0, 0)
+        video_l.setSpacing(0)
+
+        self.videoView = QWebEngineView()
+        self.videoView.setObjectName("presentationVideo")
+        self.videoView.setMinimumHeight(300)
+        self.videoView.settings().setAttribute(
+            QWebEngineSettings.WebAttribute.PlaybackRequiresUserGesture, False
+        )
+        self.videoView.settings().setAttribute(
+            QWebEngineSettings.WebAttribute.FullScreenSupportEnabled, False
+        )
+        self.videoView.setUrl(QtCore.QUrl(
+            "https://www.youtube.com/embed/i1PfqzHkKLw"
+            "?autoplay=1&mute=1&controls=0&loop=1"
+            "&playlist=i1PfqzHkKLw&rel=0&modestbranding=1&playsinline=1"
+        ))
+        video_l.addWidget(self.videoView)
         layout.addWidget(video_card)
 
         upper = QtWidgets.QHBoxLayout()
@@ -2761,7 +2938,12 @@ def main():
 
         window = ModernLauncherWindow()
 
-        window.show()
+        autostart_mode = "--autostart" in sys.argv
+        if autostart_mode and QtWidgets.QSystemTrayIcon.isSystemTrayAvailable():
+            window.trayIcon.show()
+            window.hide()
+        else:
+            window.show()
 
         download_timer = QtCore.QTimer(window)
         download_timer.timeout.connect(update_download_overlay)

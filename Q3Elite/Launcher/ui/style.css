@@ -70,3 +70,29 @@ QFrame#videoCard { background-color:rgba(5,5,6,135); border-color:rgba(155,35,25
 QPushButton#applyButton:hover { background-color:rgba(105,5,5,210); border-color:rgba(220,125,55,190); color:#f3d19b; }
 QPushButton#applyButton:pressed { background-color:rgba(130,0,0,225); border-color:rgba(240,155,70,210); padding-top:10px; padding-bottom:8px; }
 QPlainTextEdit { background-color:rgba(0,0,0,180); border:1px solid rgba(150,135,120,65); border-radius:8px; padding:10px; font-family:"Fira Code","Consolas",monospace; }
+
+QFrame#configEditorPanel {
+    background-color: rgba(4,4,5,145);
+    border: 1px solid rgba(145,125,105,55);
+    border-radius: 9px;
+}
+QListWidget#configSections {
+    background-color: rgba(0,0,0,105);
+    border: 1px solid rgba(145,125,105,45);
+    border-radius: 7px;
+    padding: 4px;
+}
+QListWidget#configSections::item {
+    padding: 7px 8px;
+    border-radius: 5px;
+}
+QListWidget#configSections::item:hover {
+    background-color: rgba(125,35,25,75);
+}
+QListWidget#configSections::item:selected {
+    background-color: rgba(145,30,20,120);
+}
+QWebEngineView#presentationVideo {
+    background: #000;
+    border: 0;
+}
