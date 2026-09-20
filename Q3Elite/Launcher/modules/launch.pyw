@@ -1621,19 +1621,6 @@ class AnimatedEmoji(QtWidgets.QLabel):
     def __init__(self, name, size=30, parent=None):
         super().__init__(parent); self.setFixedSize(size,size); self.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
         self.setAttribute(QtCore.Qt.WidgetAttribute.WA_TranslucentBackground, True)
-        icon_path = APP_ICON_ICO if APP_ICON_ICO.is_file() else APP_ICON_PNG
-        if icon_path.is_file():
-            self.setWindowIcon(QtGui.QIcon(str(icon_path)))
-        self.trayIcon = QtWidgets.QSystemTrayIcon(self.windowIcon(), self)
-        tray_menu = QtWidgets.QMenu(self)
-        tray_show = tray_menu.addAction("Open Q3Elite Launcher")
-        tray_show.triggered.connect(self.restore_from_tray)
-        tray_menu.addSeparator()
-        tray_exit = tray_menu.addAction("Exit")
-        tray_exit.triggered.connect(self.exit_from_tray)
-        self.trayIcon.setContextMenu(tray_menu)
-        self.trayIcon.activated.connect(self._tray_activated)
-        self._allow_close = False
         root=ASSETS_DIR/'emojis'; self._movie=None
         for ext in ('.webp','.gif','.png'):
             path=root/(name+ext)
@@ -1660,6 +1647,21 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
             | QtCore.Qt.WindowType.Window
         )
         self.setAttribute(QtCore.Qt.WidgetAttribute.WA_TranslucentBackground, True)
+
+        icon_path = APP_ICON_ICO if APP_ICON_ICO.is_file() else APP_ICON_PNG
+        if icon_path.is_file():
+            self.setWindowIcon(QtGui.QIcon(str(icon_path)))
+
+        self.trayIcon = QtWidgets.QSystemTrayIcon(self.windowIcon(), self)
+        tray_menu = QtWidgets.QMenu(self)
+        tray_show = tray_menu.addAction("Open Q3Elite Launcher")
+        tray_show.triggered.connect(self.restore_from_tray)
+        tray_menu.addSeparator()
+        tray_exit = tray_menu.addAction("Exit")
+        tray_exit.triggered.connect(self.exit_from_tray)
+        self.trayIcon.setContextMenu(tray_menu)
+        self.trayIcon.activated.connect(self._tray_activated)
+        self._allow_close = False
 
         self._drag_pos = None
         self.pending_component_actions = []

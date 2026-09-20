@@ -11,7 +11,7 @@ set "REQUIREMENTS=%BASE_DIR%requirements.txt"
 set "PYTHON_VERSION=3.12"
 set "UV_ZIP_URL=https://github.com/astral-sh/uv/releases/latest/download/uv-x86_64-pc-windows-msvc.zip"
 
-set "UV_CACHE_DIR=%PY_ROOT%\cache"
+set "UV_CACHE_DIR=%LOCALAPPDATA%\Quake 3 Elite\PythonCache\uv"
 set "UV_PYTHON_INSTALL_DIR=%PY_ROOT%\python"
 set "UV_TOOL_DIR=%PY_ROOT%\tools"
 set "UV_TOOL_BIN_DIR=%PY_ROOT%\bin"
@@ -139,9 +139,11 @@ if not exist "%~1" (
     exit /b 1
 )
 
+for %%I in ("%~1") do set "LAUNCHER_SCRIPT=%%~fI"
+
 echo.
 echo Starting Q3Elite Launcher...
 
-start "" "%PYTHONW_EXE%" "%~1"
+start "" "%PYTHONW_EXE%" "%LAUNCHER_SCRIPT%"
 
 exit /b 0
