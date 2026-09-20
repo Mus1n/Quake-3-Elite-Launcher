@@ -10,9 +10,26 @@ import zipfile
 from pathlib import Path
 
 from PyQt6 import QtCore, QtGui, QtWidgets, QtNetwork
+try:
+    from PyQt6.QtMultimedia import QMediaPlayer, QAudioOutput
+    from PyQt6.QtMultimediaWidgets import QVideoWidget
+    NATIVE_VIDEO_AVAILABLE = True
+except Exception as error:
+    print(f"[video] Qt Multimedia unavailable: {error}")
+    QMediaPlayer = QAudioOutput = QVideoWidget = None
+    NATIVE_VIDEO_AVAILABLE = False
+
+try:
+    import yt_dlp
+    YTDLP_AVAILABLE = True
+except Exception as error:
+    print(f"[video] yt-dlp unavailable: {error}")
+    yt_dlp = None
+    YTDLP_AVAILABLE = False
 
 try:
     from PyQt6.QtWebEngineWidgets import QWebEngineView
+    from PyQt6.QtWebEngineCore import QWebEngineSettings
     TELEGRAM_WEBENGINE_AVAILABLE = True
 except Exception:
     QWebEngineView = None
@@ -1240,12 +1257,11 @@ def _youtube_embed_url(url):
 
 
 def _telegram_public_post_data(url):
-    """Best-effort extraction from Telegram's public post page."""
+    """Best-effort extraction of text + media from a Telegram public post."""
     value = str(url or "").strip()
     if not value or "t.me/" not in value:
         return {}
 
-    # /s/channel/id is convenient for scraping the public post view.
     fetch_url = value
     match = re.match(r"https?://t\.me/(?!s/)([^/?#]+)/(\d+)", value)
     if match:
@@ -1271,10 +1287,25 @@ def _telegram_public_post_data(url):
         import html as _html
         result = {}
 
-        # Public Telegram page text.
+        # Narrow to the requested message when possible, so neighbouring /s/
+        # posts do not leak their media into this release.
+        post_id = ""
+        m = re.search(r"/(\d+)(?:[/?#]|$)", value)
+        if m:
+            post_id = m.group(1)
+        block = page
+        if post_id:
+            marker = f'data-post="'
+            pos = page.find(f'/{post_id}"')
+            if pos >= 0:
+                begin = page.rfind('<div class="tgme_widget_message', 0, pos)
+                next_begin = page.find('<div class="tgme_widget_message', pos + 1)
+                if begin >= 0:
+                    block = page[begin: next_begin if next_begin >= 0 else len(page)]
+
         text_match = re.search(
             r'<div class="tgme_widget_message_text[^"]*"[^>]*>(.*?)</div>',
-            page, flags=re.I | re.S
+            block, flags=re.I | re.S
         )
         if text_match:
             fragment = text_match.group(1)
@@ -1282,19 +1313,74 @@ def _telegram_public_post_data(url):
             fragment = re.sub(r"<[^>]+>", "", fragment)
             result["text"] = _html.unescape(fragment).strip()
 
-        # Prefer the photo used by the actual public message renderer. This can
-        # be larger than the generic OpenGraph thumbnail.
-        photo_match = re.search(
-            r'tgme_widget_message_photo_wrap[^>]+style="[^"]*background-image:url\\([\'"]?([^\'")]+)',
-            page, flags=re.I | re.S
-        )
-        if photo_match:
-            result["image"] = _html.unescape(photo_match.group(1)).replace("&amp;", "&")
+        # Telegram photos/albums. Public Telegram HTML stores the actual
+        # CDN image directly on:
+        # <a class="tgme_widget_message_photo_wrap ..." style="...background-image:url('...')">
+        photos = []
 
-        # OG remains a robust fallback.
+        tags = re.findall(
+            r'<a\b[^>]*\bclass=(["\'])(?:(?!\1).)*?'
+            r'tgme_widget_message_photo_wrap(?:(?!\1).)*?\1[^>]*>',
+            block,
+            flags=re.I | re.S,
+        )
+
+        # The capture above is useful for matching but returns only quote chars;
+        # scan complete <a> tags and filter them explicitly.
+        tags = re.findall(r'<a\b[^>]*>', block, flags=re.I | re.S)
+        for tag in tags:
+            cm = re.search(r'class=["\']([^"\']*)["\']', tag, flags=re.I | re.S)
+            if not cm or "tgme_widget_message_photo_wrap" not in cm.group(1):
+                continue
+
+            sm = re.search(r'style=["\'](.*?)["\']', tag, flags=re.I | re.S)
+            if not sm:
+                continue
+
+            style_value = _html.unescape(sm.group(1))
+            bm = re.search(
+                r'background-image\s*:\s*url\(\s*["\']?([^"\')]+)["\']?\s*\)',
+                style_value,
+                flags=re.I | re.S,
+            )
+            if not bm:
+                continue
+
+            media = _html.unescape(bm.group(1)).replace("&amp;", "&").strip()
+            if media.startswith("//"):
+                media = "https:" + media
+
+            # Telegram post photos are normally served by telesco.pe.
+            # This also rejects emoji/sticker WEBM assets.
+            lower = media.casefold()
+            if (
+                media.startswith("http")
+                and not lower.endswith((".webm", ".mp4", ".tgs"))
+                and media not in photos
+            ):
+                photos.append(media)
+
+        if photos:
+            result["images"] = photos
+            result["image"] = photos[0]
+
+        # Public Telegram video markup usually exposes a poster and/or source.
+        poster = ""
+        pm = re.search(r'<video[^>]+poster=["\']([^"\']+)["\']', block, flags=re.I | re.S)
+        if pm:
+            poster = _html.unescape(pm.group(1)).replace("&amp;", "&")
+            if poster.startswith("//"):
+                poster = "https:" + poster
+            result["video_poster"] = poster
+
+        # Do not infer post video from generic <video>/<source> HTML here:
+        # Telegram custom emoji and stickers can also be WEBM. The rendered DOM
+        # extractor handles real message video containers safely.
+
+
+        # OG fallbacks.
         patterns = {
             "text": r'<meta\s+property="og:description"\s+content="([^"]*)"',
-            "image": r'<meta\s+property="og:image"\s+content="([^"]*)"',
             "title": r'<meta\s+property="og:title"\s+content="([^"]*)"',
         }
         for key, pattern in patterns.items():
@@ -1304,9 +1390,7 @@ def _telegram_public_post_data(url):
             if found:
                 result[key] = _html.unescape(found.group(1)).strip()
 
-        # Preserve custom-emoji IDs for a future animated renderer. Native Qt
-        # currently displays Telegram's Unicode fallback emoji.
-        emoji_ids = re.findall(r'data-document-id="(\d+)"', page, flags=re.I)
+        emoji_ids = re.findall(r'data-document-id="(\d+)"', block, flags=re.I)
         if emoji_ids:
             result["custom_emoji_ids"] = list(dict.fromkeys(emoji_ids))
 
@@ -2339,8 +2423,34 @@ class ConfigEditorDialog(QtWidgets.QDialog):
 
 
 
+
+if TELEGRAM_WEBENGINE_AVAILABLE:
+    from PyQt6.QtWebEngineCore import QWebEnginePage
+
+    class TelegramExternalPage(QWebEnginePage):
+        """Never let user links replace the embedded Telegram post."""
+        def acceptNavigationRequest(self, url, nav_type, is_main_frame):
+            if nav_type == QWebEnginePage.NavigationType.NavigationTypeLinkClicked:
+                QtGui.QDesktopServices.openUrl(url)
+                return False
+            return super().acceptNavigationRequest(url, nav_type, is_main_frame)
+
+        def createWindow(self, window_type):
+            # Telegram sometimes requests a new tab/window. Return a temporary
+            # page that forwards its first URL to the system browser.
+            page = QWebEnginePage(self)
+            page.urlChanged.connect(
+                lambda url: QtGui.QDesktopServices.openUrl(url)
+                if url.isValid() and url.scheme() in ("http", "https") else None
+            )
+            return page
+else:
+    TelegramExternalPage = None
+
+
 class TelegramTextView(QWebEngineView if QWebEngineView is not None else QtWidgets.QWidget):
     """Telegram's real web renderer, reduced to message text/custom emoji only."""
+    mediaDetected = QtCore.pyqtSignal(object)
     def __init__(self, url, parent=None):
         if QWebEngineView is None:
             super().__init__(parent)
@@ -2349,14 +2459,22 @@ class TelegramTextView(QWebEngineView if QWebEngineView is not None else QtWidge
         super().__init__(parent)
         self.setObjectName("telegramTextView")
         self.setContextMenuPolicy(QtCore.Qt.ContextMenuPolicy.NoContextMenu)
+        self.setPage(TelegramExternalPage(self))
         self.setMinimumHeight(40)
-        self.setMaximumHeight(420)
+        self.setMaximumHeight(900)
         self.setSizePolicy(
             QtWidgets.QSizePolicy.Policy.Expanding,
             QtWidgets.QSizePolicy.Policy.Fixed,
         )
-        self.page().setBackgroundColor(QtGui.QColor(0, 0, 0, 0))
+        # WebEngine is transparent again. The Qt host below paints the
+        # changelog/card surface, preventing the Windows-desktop bleed-through
+        # while allowing Background.png to remain visible through the card.
+        # Chromium transparency on Windows can punch through the whole
+        # translucent launcher. Keep Chromium composited on a very dark,
+        # slightly translucent-looking surface instead of WA_TranslucentBackground.
+        self.page().setBackgroundColor(QtGui.QColor(8, 9, 10, 255))
         self.loadFinished.connect(self._telegram_loaded)
+        self.titleChanged.connect(self._telegram_title_changed)
         self.setUrl(QtCore.QUrl(self._public_url(url)))
 
     @staticmethod
@@ -2366,6 +2484,23 @@ class TelegramTextView(QWebEngineView if QWebEngineView is not None else QtWidge
         if match:
             return f"https://t.me/s/{match.group(1)}/{match.group(2)}"
         return value
+
+    def _telegram_title_changed(self, title):
+        prefix = "Q3ELITE_MEDIA:"
+        if not str(title).startswith(prefix):
+            return
+        try:
+            import json as _json
+            payload = urllib.parse.unquote(str(title)[len(prefix):])
+            data = _json.loads(payload)
+            self.mediaDetected.emit(data)
+        except Exception as error:
+            print(f"[changelog] Telegram DOM media decode failed: {error}")
+
+    def reload_post(self):
+        self.show()
+        self.setFixedHeight(40)
+        self.reload()
 
     def _telegram_loaded(self, ok):
         if not ok:
@@ -2388,6 +2523,41 @@ class TelegramTextView(QWebEngineView if QWebEngineView is not None else QtWidge
             const text = msg.querySelector('.tgme_widget_message_text');
             if (!text) return 0;
 
+            // Telegram photos are carried by photo_wrap anchors.
+            // Do not inspect generic VIDEO nodes: custom emoji are WEBM too.
+            const media = {images: [], video: "", poster: ""};
+            const addImage = u => {
+                if (!u) return;
+                try { u = new URL(u, location.href).href; } catch(e) {}
+                const low = String(u).toLowerCase();
+                if (low.endsWith('.webm') || low.endsWith('.mp4') || low.endsWith('.tgs')) return;
+                if (!media.images.includes(u)) media.images.push(u);
+            };
+
+            msg.querySelectorAll('a.tgme_widget_message_photo_wrap').forEach(el => {
+                const inline = el.style.backgroundImage || '';
+                const computed = getComputedStyle(el).backgroundImage || '';
+                const bg = inline || computed;
+                const m = bg.match(/url\\(["']?(.*?)["']?\\)/i);
+                if (m) addImage(m[1]);
+            });
+
+            // Real post video only: Telegram's dedicated player/wrap.
+            const videoRoot = msg.querySelector(
+                '.tgme_widget_message_video_player, .tgme_widget_message_video_wrap'
+            );
+            if (videoRoot) {
+                const v = videoRoot.querySelector('video');
+                const s = videoRoot.querySelector('source');
+                if (v) {
+                    media.video = v.currentSrc || v.src || '';
+                    media.poster = v.poster || '';
+                }
+                if (!media.video && s) media.video = s.src || '';
+            }
+
+            document.title = 'Q3ELITE_MEDIA:' + encodeURIComponent(JSON.stringify(media));
+
             // Preserve Telegram's text DOM (including custom emoji elements),
             // but remove everything else from the public channel page.
             document.body.innerHTML = '';
@@ -2398,20 +2568,27 @@ class TelegramTextView(QWebEngineView if QWebEngineView is not None else QtWidge
                 html, body {
                     margin: 0 !important;
                     padding: 0 !important;
-                    background: transparent !important;
+                    background: #08090a !important;
                     overflow: hidden !important;
                     color: #d7d2cc !important;
+                }
+                body {
+                    display: flex !important;
+                    justify-content: flex-start !important;
                 }
                 body, .tgme_widget_message_text {
                     font-family: "Segoe UI", Arial, sans-serif !important;
                     font-size: 13px !important;
                     line-height: 1.48 !important;
                     color: #d7d2cc !important;
-                    background: transparent !important;
+                    background: #08090a !important;
                     margin: 0 !important;
                     padding: 0 !important;
-                    max-width: none !important;
-                    width: 100% !important;
+                }
+                .tgme_widget_message_text {
+                    width: min(100%, 760px) !important;
+                    max-width: 760px !important;
+                    background: #08090a !important;
                 }
                 a { color: #d79a28 !important; }
                 .emoji, .tgme_widget_message_text .emoji {
@@ -2419,6 +2596,16 @@ class TelegramTextView(QWebEngineView if QWebEngineView is not None else QtWidge
                 }
             `;
             document.head.appendChild(style);
+
+            // Telegram normally intercepts links and displays its own
+            // "Open this link?" confirmation. Remove Telegram's handlers and
+            // let QWebEnginePage route the click straight to the OS browser.
+            document.querySelectorAll('a[href]').forEach(a => {
+                const clean = a.cloneNode(true);
+                clean.removeAttribute('onclick');
+                clean.removeAttribute('target');
+                a.replaceWith(clean);
+            });
 
             return Math.ceil(Math.max(
                 document.body.scrollHeight,
@@ -2436,32 +2623,114 @@ class TelegramTextView(QWebEngineView if QWebEngineView is not None else QtWidge
         if height <= 0:
             self.hide()
             return
-        self.setFixedHeight(max(40, min(height, 420)))
+        # Give the full Telegram text to the OUTER changelog QScrollArea.
+        # The embedded browser itself never becomes independently scrollable.
+        self.setFixedHeight(max(40, min(height, 900)))
 
+
+
+
+class ImageLightbox(QtWidgets.QWidget):
+    """Stable external fullscreen viewer for changelog screenshots."""
+    def __init__(self, pixmap, parent=None):
+        super().__init__(None)
+        self.setObjectName("imageLightbox")
+        self.setAttribute(QtCore.Qt.WidgetAttribute.WA_DeleteOnClose, True)
+        self.setWindowTitle("Q3Elite Screenshot")
+        self.setWindowFlags(
+            QtCore.Qt.WindowType.Window |
+            QtCore.Qt.WindowType.FramelessWindowHint |
+            QtCore.Qt.WindowType.WindowStaysOnTopHint
+        )
+        QtWidgets.QApplication.instance().installEventFilter(self)
+        self._pixmap = QtGui.QPixmap(pixmap)
+
+        layout = QtWidgets.QVBoxLayout(self)
+        layout.setContentsMargins(24, 24, 24, 18)
+        layout.setSpacing(8)
+
+        self.imageLabel = QtWidgets.QLabel()
+        self.imageLabel.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(self.imageLabel, 1)
+
+        self.hint = QtWidgets.QLabel("Click anywhere or press ESC to close")
+        self.hint.setObjectName("lightboxHint")
+        self.hint.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(self.hint)
+
+    def open_fullscreen(self):
+        screen = QtGui.QGuiApplication.screenAt(QtGui.QCursor.pos())
+        if screen is not None:
+            self.setGeometry(screen.geometry())
+        self.showFullScreen()
+        self.player.setMinimumSize(1, 1)
+        self.player.setMaximumSize(16777215, 16777215)
+        self.player.setSizePolicy(
+            QtWidgets.QSizePolicy.Policy.Expanding,
+            QtWidgets.QSizePolicy.Policy.Expanding,
+        )
+        self.raise_()
+        self.activateWindow()
+        self.setFocus(QtCore.Qt.FocusReason.ActiveWindowFocusReason)
+        self._rescale()
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        self._rescale()
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._rescale()
+
+    def _rescale(self):
+        if self._pixmap.isNull():
+            return
+        target = QtCore.QSize(
+            max(100, self.width() - 60),
+            max(100, self.height() - 80),
+        )
+        self.imageLabel.setPixmap(
+            self._pixmap.scaled(
+                target,
+                QtCore.Qt.AspectRatioMode.KeepAspectRatio,
+                QtCore.Qt.TransformationMode.SmoothTransformation,
+            )
+        )
+
+    def mousePressEvent(self, event):
+        self.close()
+
+    def keyPressEvent(self, event):
+        if event.key() in (QtCore.Qt.Key.Key_Escape, QtCore.Qt.Key.Key_Return):
+            self.close()
+            return
+        super().keyPressEvent(event)
 
 
 class ChangelogImage(QtWidgets.QLabel):
-    """Native cached 16:9 changelog image."""
+    """Fixed 16:9 media viewport with rounded clipping and fullscreen preview."""
+    BASE_WIDTH = 720
+
     def __init__(self, url="", parent=None):
         super().__init__(parent)
         self.setObjectName("changelogImage")
         self.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
-        self.setMinimumWidth(320)
+        self.setCursor(QtCore.Qt.CursorShape.PointingHandCursor)
         self.setSizePolicy(
-            QtWidgets.QSizePolicy.Policy.Expanding,
+            QtWidgets.QSizePolicy.Policy.Fixed,
             QtWidgets.QSizePolicy.Policy.Fixed,
         )
         self._pixmap_original = None
+        self._lightbox = None
         self._url = str(url or "")
+
+        # Reserve final geometry immediately. This prevents the "large -> small"
+        # jump when a remote image finishes loading.
+        self.setFixedSize(self.BASE_WIDTH, round(self.BASE_WIDTH * 9 / 16))
+        self._apply_rounded_mask()
         self.setText("Loading image...")
-        self._update_169_height()
         if self._url:
             self._load()
-
-    def _update_169_height(self):
-        width = max(320, self.width())
-        height = max(180, round(width * 9 / 16))
-        self.setFixedHeight(height)
 
     def _cache_path(self):
         import hashlib
@@ -2499,72 +2768,122 @@ class ChangelogImage(QtWidgets.QLabel):
             if data and pix.loadFromData(data):
                 self._pixmap_original = pix
                 self.setText("")
-                self._rescale()
+                self._render_pixmap()
             else:
                 self.setText("Image preview unavailable")
         except Exception as error:
             print(f"[changelog] Image unavailable: {error}")
             self.setText("Image preview unavailable")
+            # Avoid a large empty 16:9 hole for failed Telegram/CDN media.
+            self.setFixedHeight(42)
 
-    def _rescale(self):
-        if self._pixmap_original is None:
+    def _render_pixmap(self):
+        if self._pixmap_original is None or self._pixmap_original.isNull():
             return
-        self._update_169_height()
-        target = QtCore.QSize(max(1, self.width() - 4), max(1, self.height() - 4))
-        # Preserve the original image. The widget itself is always 16:9;
-        # non-16:9 media is letterboxed instead of stretched/cropped.
-        pix = self._pixmap_original.scaled(
+
+        target = self.size()
+
+        # Cover the 16:9 viewport and crop overflow. This guarantees that the
+        # rounded corners clip image pixels rather than an empty label area.
+        scaled = self._pixmap_original.scaled(
             target,
-            QtCore.Qt.AspectRatioMode.KeepAspectRatio,
+            QtCore.Qt.AspectRatioMode.KeepAspectRatioByExpanding,
             QtCore.Qt.TransformationMode.SmoothTransformation,
         )
-        self.setPixmap(pix)
+        x = max(0, (scaled.width() - target.width()) // 2)
+        y = max(0, (scaled.height() - target.height()) // 2)
+        cropped = scaled.copy(x, y, target.width(), target.height())
+        self.setPixmap(cropped)
+        self._apply_rounded_mask()
+
+    def _apply_rounded_mask(self):
+        path = QtGui.QPainterPath()
+        path.addRoundedRect(QtCore.QRectF(self.rect()), 9.0, 9.0)
+        self.setMask(QtGui.QRegion(path.toFillPolygon().toPolygon()))
+
+    def mousePressEvent(self, event):
+        if (
+            event.button() == QtCore.Qt.MouseButton.LeftButton
+            and self._pixmap_original is not None
+            and not self._pixmap_original.isNull()
+        ):
+            if self._lightbox is not None:
+                try:
+                    self._lightbox.close()
+                except Exception:
+                    pass
+            self._lightbox = ImageLightbox(self._pixmap_original)
+            self._lightbox.destroyed.connect(
+                lambda: setattr(self, "_lightbox", None)
+            )
+            self._lightbox.open_fullscreen()
+            return
+        super().mousePressEvent(event)
+
+    def paintEvent(self, event):
+        super().paintEvent(event)
+        painter = QtGui.QPainter(self)
+        painter.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing, True)
+        pen = QtGui.QPen(QtGui.QColor(125, 118, 108, 120))
+        pen.setWidth(1)
+        painter.setPen(pen)
+        painter.setBrush(QtCore.Qt.BrushStyle.NoBrush)
+        rect = QtCore.QRectF(self.rect()).adjusted(0.5, 0.5, -0.5, -0.5)
+        painter.drawRoundedRect(rect, 9.0, 9.0)
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
-        self._update_169_height()
-        self._rescale()
+        self._apply_rounded_mask()
+        self._render_pixmap()
 
 
 class ChangelogMediaCarousel(QtWidgets.QFrame):
     def __init__(self, urls, parent=None):
         super().__init__(parent)
         self.setObjectName("changelogMedia")
+        self.setFixedSize(720, 429)
         self.urls = [str(u) for u in urls if str(u).strip()]
         self.index = 0
+
         lay = QtWidgets.QVBoxLayout(self)
         lay.setContentsMargins(0, 0, 0, 0)
-        lay.setSpacing(6)
-        row = QtWidgets.QHBoxLayout()
+        lay.setSpacing(4)
 
-        self.prevButton = QtWidgets.QPushButton("")
+        self.stage = QtWidgets.QWidget()
+        self.stage.setObjectName("changelogMediaStage")
+        self.stage.setFixedSize(720, 405)
+
+        self.image = ChangelogImage(parent=self.stage)
+        self.image.move(0, 0)
+
+        self.prevButton = QtWidgets.QPushButton("", self.stage)
         self.prevButton.setObjectName("changelogArrow")
-        self.prevButton.setFixedSize(34, 48)
+        self.prevButton.setFixedSize(38, 58)
+        self.prevButton.move(12, (405 - 58) // 2)
         if qta is not None:
-            self.prevButton.setIcon(qta.icon("fa5s.chevron-left", color="#b9b4ae"))
+            self.prevButton.setIcon(qta.icon("fa5s.chevron-left", color="#f1ece5"))
         else:
             self.prevButton.setText("‹")
         self.prevButton.clicked.connect(lambda: self.change(-1))
-        row.addWidget(self.prevButton)
 
-        self.image = ChangelogImage()
-        row.addWidget(self.image, 1)
-
-        self.nextButton = QtWidgets.QPushButton("")
+        self.nextButton = QtWidgets.QPushButton("", self.stage)
         self.nextButton.setObjectName("changelogArrow")
-        self.nextButton.setFixedSize(34, 48)
+        self.nextButton.setFixedSize(38, 58)
+        self.nextButton.move(720 - 50, (405 - 58) // 2)
         if qta is not None:
-            self.nextButton.setIcon(qta.icon("fa5s.chevron-right", color="#b9b4ae"))
+            self.nextButton.setIcon(qta.icon("fa5s.chevron-right", color="#f1ece5"))
         else:
             self.nextButton.setText("›")
         self.nextButton.clicked.connect(lambda: self.change(1))
-        row.addWidget(self.nextButton)
-        lay.addLayout(row)
+
+        lay.addWidget(self.stage)
 
         self.counter = QtWidgets.QLabel("")
         self.counter.setObjectName("changelogCounter")
         self.counter.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
+        self.counter.setFixedHeight(20)
         lay.addWidget(self.counter)
+
         self.show_current()
 
     def show_current(self):
@@ -2580,6 +2899,8 @@ class ChangelogMediaCarousel(QtWidgets.QFrame):
         self.counter.setText(f"{self.index + 1} / {count}" if count > 1 else "")
         self.prevButton.setVisible(count > 1)
         self.nextButton.setVisible(count > 1)
+        self.prevButton.raise_()
+        self.nextButton.raise_()
 
     def change(self, delta):
         if self.urls:
@@ -2587,8 +2908,319 @@ class ChangelogMediaCarousel(QtWidgets.QFrame):
             self.show_current()
 
 
+
+
+class YoutubeResolveWorker(QtCore.QThread):
+    resolved = QtCore.pyqtSignal(dict)
+    failed = QtCore.pyqtSignal(str)
+
+    def __init__(self, url, parent=None):
+        super().__init__(parent)
+        self.url = str(url)
+
+    def run(self):
+        if not YTDLP_AVAILABLE:
+            self.failed.emit("yt-dlp is not installed")
+            return
+        try:
+            # QMediaPlayer needs ONE URL containing both audio + video.
+            # Prefer the highest progressive/combined stream up to 1080p.
+            opts = {
+                "quiet": True,
+                "no_warnings": True,
+                "noplaylist": True,
+                "format": "best[height<=1080][vcodec!=none][acodec!=none]/best[height<=1080]/best",
+            }
+            with yt_dlp.YoutubeDL(opts) as ydl:
+                info = ydl.extract_info(self.url, download=False)
+
+            media_url = str(info.get("url") or "")
+            if not media_url:
+                self.failed.emit("No directly playable YouTube stream was returned")
+                return
+
+            self.resolved.emit({
+                "url": media_url,
+                "title": str(info.get("title") or ""),
+                "height": int(info.get("height") or 0),
+                "width": int(info.get("width") or 0),
+                "format": str(info.get("format_note") or info.get("format") or ""),
+                "http_headers": info.get("http_headers") or {},
+            })
+        except Exception as error:
+            self.failed.emit(str(error))
+
+
+class NativeYoutubePlayer(QtWidgets.QFrame):
+    """YouTube -> yt-dlp direct stream -> Qt Multimedia/QMediaPlayer."""
+
+    def __init__(self, url, parent=None):
+        super().__init__(parent)
+        self.setObjectName("nativeYoutubePlayer")
+        self.setFixedSize(800, 500)
+        self.youtube_url = str(url)
+        self._resolved = {}
+        self._fullscreen = None
+
+        root = QtWidgets.QVBoxLayout(self)
+        root.setContentsMargins(0, 0, 0, 0)
+        root.setSpacing(0)
+
+        self.videoHost = QtWidgets.QWidget()
+        self.videoHost.setObjectName("nativeVideoHost")
+        video_lay = QtWidgets.QVBoxLayout(self.videoHost)
+        video_lay.setContentsMargins(0, 0, 0, 0)
+
+        if NATIVE_VIDEO_AVAILABLE:
+            self.video = QVideoWidget()
+            self.video.setObjectName("nativeVideoWidget")
+            video_lay.addWidget(self.video)
+            self.player = QMediaPlayer(self)
+            self.audio = QAudioOutput(self)
+            self.audio.setVolume(0.0)  # muted by default
+            self.player.setAudioOutput(self.audio)
+            self.player.setVideoOutput(self.video)
+            self.player.positionChanged.connect(self._position_changed)
+            self.player.durationChanged.connect(self._duration_changed)
+            self.player.playbackStateChanged.connect(self._state_changed)
+            self.player.errorOccurred.connect(self._player_error)
+        else:
+            self.video = QtWidgets.QLabel("Qt Multimedia unavailable")
+            self.video.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
+            video_lay.addWidget(self.video)
+            self.player = None
+            self.audio = None
+
+        root.addWidget(self.videoHost, 1)
+
+        controls = QtWidgets.QHBoxLayout()
+        controls.setContentsMargins(10, 6, 10, 8)
+        controls.setSpacing(8)
+
+        self.playButton = QtWidgets.QPushButton("▶")
+        self.playButton.setObjectName("nativeVideoControl")
+        self.playButton.setFixedSize(34, 30)
+        self.playButton.clicked.connect(self.toggle_play)
+        controls.addWidget(self.playButton)
+
+        self.slider = QtWidgets.QSlider(QtCore.Qt.Orientation.Horizontal)
+        self.slider.setRange(0, 0)
+        self.slider.sliderMoved.connect(self._seek)
+        controls.addWidget(self.slider, 1)
+
+        self.timeLabel = QtWidgets.QLabel("0:00 / 0:00")
+        self.timeLabel.setObjectName("nativeVideoTime")
+        controls.addWidget(self.timeLabel)
+
+        self.muteButton = QtWidgets.QPushButton("MUTE")
+        self.muteButton.setObjectName("nativeVideoControl")
+        self.muteButton.clicked.connect(self.toggle_mute)
+        controls.addWidget(self.muteButton)
+
+        self.qualityLabel = QtWidgets.QLabel("Resolving…")
+        self.qualityLabel.setObjectName("nativeVideoQuality")
+        controls.addWidget(self.qualityLabel)
+
+        self.fullscreenButton = QtWidgets.QPushButton("⛶")
+        self.fullscreenButton.setObjectName("nativeVideoControl")
+        self.fullscreenButton.setFixedSize(36, 30)
+        self.fullscreenButton.clicked.connect(self.open_fullscreen)
+        controls.addWidget(self.fullscreenButton)
+
+        root.addLayout(controls)
+
+        if not (NATIVE_VIDEO_AVAILABLE and YTDLP_AVAILABLE):
+            missing = []
+            if not NATIVE_VIDEO_AVAILABLE:
+                missing.append("Qt Multimedia")
+            if not YTDLP_AVAILABLE:
+                missing.append("yt-dlp")
+            self.qualityLabel.setText("Missing: " + ", ".join(missing))
+            self.playButton.setEnabled(False)
+        else:
+            self.worker = YoutubeResolveWorker(self.youtube_url, self)
+            self.worker.resolved.connect(self._resolved_stream)
+            self.worker.failed.connect(self._resolve_failed)
+            self.worker.start()
+
+    @staticmethod
+    def _clock(ms):
+        seconds = max(0, int(ms / 1000))
+        return f"{seconds // 60}:{seconds % 60:02d}"
+
+    def _resolved_stream(self, data):
+        self._resolved = dict(data)
+        height = int(data.get("height") or 0)
+        self.qualityLabel.setText(f"{height}p native" if height else "Native stream")
+        self.player.setSource(QtCore.QUrl(data["url"]))
+
+    def _resolve_failed(self, error):
+        print(f"[video] yt-dlp resolve failed: {error}")
+        self.qualityLabel.setText("Native stream unavailable")
+        self.playButton.setEnabled(False)
+
+    def _player_error(self, error, error_string):
+        print(f"[video] QMediaPlayer: {error_string}")
+        self.qualityLabel.setText("Playback error")
+
+    def toggle_play(self):
+        if not self.player:
+            return
+        if self.player.playbackState() == QMediaPlayer.PlaybackState.PlayingState:
+            self.player.pause()
+        else:
+            self.player.play()
+
+    def _state_changed(self, state):
+        self.playButton.setText(
+            "❚❚" if state == QMediaPlayer.PlaybackState.PlayingState else "▶"
+        )
+
+    def toggle_mute(self):
+        if not self.audio:
+            return
+        if self.audio.volume() <= 0.001:
+            self.audio.setVolume(0.75)
+            self.muteButton.setText("SOUND")
+        else:
+            self.audio.setVolume(0.0)
+            self.muteButton.setText("MUTE")
+
+    def _duration_changed(self, duration):
+        self.slider.setRange(0, max(0, int(duration)))
+        self._position_changed(self.player.position() if self.player else 0)
+
+    def _position_changed(self, position):
+        if not self.slider.isSliderDown():
+            self.slider.setValue(int(position))
+        duration = self.player.duration() if self.player else 0
+        self.timeLabel.setText(f"{self._clock(position)} / {self._clock(duration)}")
+
+    def _seek(self, position):
+        if self.player:
+            self.player.setPosition(int(position))
+
+    def open_fullscreen(self):
+        if not self.player or not self.video:
+            return
+        if self._fullscreen is not None:
+            return
+
+        self._fullscreen = NativeVideoFullscreen(self)
+        self._fullscreen.open()
+
+    def _restore_from_fullscreen(self):
+        if not self.video:
+            return
+        self.video.setParent(self.videoHost)
+        self.videoHost.layout().addWidget(self.video)
+        self.player.setVideoOutput(self.video)
+        self.video.show()
+        self._fullscreen = None
+
+
+class NativeVideoFullscreen(QtWidgets.QWidget):
+    def __init__(self, owner):
+        super().__init__(None)
+        self.owner = owner
+        self.setObjectName("nativeVideoFullscreen")
+        self.setWindowFlags(
+            QtCore.Qt.WindowType.Window |
+            QtCore.Qt.WindowType.FramelessWindowHint |
+            QtCore.Qt.WindowType.WindowStaysOnTopHint
+        )
+        self.setFocusPolicy(QtCore.Qt.FocusPolicy.StrongFocus)
+
+        lay = QtWidgets.QVBoxLayout(self)
+        lay.setContentsMargins(0, 0, 0, 0)
+
+        owner.video.setParent(self)
+        owner.player.setVideoOutput(owner.video)
+        lay.addWidget(owner.video, 1)
+
+        app = QtWidgets.QApplication.instance()
+        if app:
+            app.installEventFilter(self)
+
+    def open(self):
+        self.showFullScreen()
+        self.raise_()
+        self.activateWindow()
+        self.setFocus(QtCore.Qt.FocusReason.ActiveWindowFocusReason)
+
+    def eventFilter(self, obj, event):
+        if (
+            self.isVisible()
+            and event.type() == QtCore.QEvent.Type.KeyPress
+            and event.key() == QtCore.Qt.Key.Key_Escape
+        ):
+            self.close()
+            return True
+        return False
+
+    def mouseDoubleClickEvent(self, event):
+        self.close()
+
+    def closeEvent(self, event):
+        app = QtWidgets.QApplication.instance()
+        if app:
+            try:
+                app.removeEventFilter(self)
+            except Exception:
+                pass
+        self.owner._restore_from_fullscreen()
+        super().closeEvent(event)
+
+
+class ChangelogVideoContainer(QtWidgets.QFrame):
+    """Native YouTube player; non-YouTube URLs retain the old WebEngine player."""
+    def __init__(self, url, parent=None):
+        super().__init__(parent)
+        self.setObjectName("changelogVideoContainer")
+        self.url = str(url or "")
+        lay = QtWidgets.QVBoxLayout(self)
+        lay.setContentsMargins(0, 0, 0, 0)
+
+        if re.search(r"(youtube\.com|youtu\.be)", self.url, flags=re.I):
+            self.setFixedSize(800, 500)
+            self.player = NativeYoutubePlayer(self.url, self)
+        else:
+            self.setFixedSize(800, 450)
+            self.player = ChangelogVideoView(
+                self.url, self, compact=True, show_fullscreen_button=False
+            )
+        lay.addWidget(self.player)
+
+
+class ChangelogVideoView(QWebEngineView if QWebEngineView is not None else QtWidgets.QWidget):
+    """Fallback player for direct MP4/WEBM URLs."""
+    def __init__(self, url, parent=None, compact=True, show_fullscreen_button=True):
+        super().__init__(parent)
+        self.setObjectName("changelogVideo")
+        self.url = str(url or "").strip()
+        if compact:
+            self.setFixedSize(800, 450)
+        if QWebEngineView is None:
+            return
+
+        self.page().setBackgroundColor(QtGui.QColor(0, 0, 0, 255))
+        if re.search(r"\.(?:mp4|webm)(?:\?|$)", self.url, flags=re.I):
+            safe = _html_escape(self.url)
+            html = f"""
+            <html><body style="margin:0;background:#000;overflow:hidden">
+            <video controls muted playsinline preload="metadata"
+                   style="width:100%;height:100%;object-fit:contain;background:#000">
+              <source src="{safe}">
+            </video>
+            </body></html>
+            """
+            self.setHtml(html, QtCore.QUrl(self.url))
+        else:
+            self.setUrl(QtCore.QUrl(self.url))
+
+
 class ChangelogCard(QtWidgets.QFrame):
-    def __init__(self, release, parent=None):
+    def __init__(self, release, parent=None, expanded=True):
         super().__init__(parent)
         self.setObjectName("changelogCard")
         release = dict(release)
@@ -2616,7 +3248,27 @@ class ChangelogCard(QtWidgets.QFrame):
             date_label = QtWidgets.QLabel(date)
             date_label.setObjectName("changelogDate")
             header.addWidget(date_label)
+
+        self.toggleButton = QtWidgets.QPushButton("")
+        self.toggleButton.setObjectName("changelogToggle")
+        self.toggleButton.setFixedSize(28, 28)
+        header.addWidget(self.toggleButton)
         lay.addLayout(header)
+
+        self.bodyWidget = QtWidgets.QWidget()
+        self.bodyWidget.setObjectName("changelogCardBody")
+        bodyLayout = QtWidgets.QVBoxLayout(self.bodyWidget)
+        bodyLayout.setContentsMargins(0, 0, 0, 0)
+        bodyLayout.setSpacing(9)
+        lay.addWidget(self.bodyWidget)
+
+        # Everything after the title bar belongs to the collapsible body.
+        lay = bodyLayout
+
+        self._expanded = bool(expanded)
+        self.toggleButton.clicked.connect(self._toggle)
+        self.bodyWidget.setVisible(self._expanded)
+        self._update_toggle_icon()
 
         # Hybrid mode:
         # Telegram renders only Telegram-sourced text/custom emoji.
@@ -2624,8 +3276,11 @@ class ChangelogCard(QtWidgets.QFrame):
         explicit_text = str(release.get("text", "") or "")
         use_telegram_text = bool(source_url and not explicit_text and TELEGRAM_WEBENGINE_AVAILABLE)
 
+        self.telegramView = None
         if use_telegram_text:
-            lay.addWidget(TelegramTextView(source_url, self))
+            self.telegramView = TelegramTextView(source_url, self)
+            self.telegramView.mediaDetected.connect(self._apply_telegram_media)
+            lay.addWidget(self.telegramView)
 
         # Manual/native text + changelog are combined into ONE QTextBrowser.
         # This fixes selection being limited to one QLabel/one line.
@@ -2684,6 +3339,7 @@ class ChangelogCard(QtWidgets.QFrame):
         if native_parts:
             native = QtWidgets.QTextBrowser()
             native.setObjectName("changelogSelectableText")
+            native.setMaximumWidth(820)
             native.setOpenExternalLinks(True)
             native.setFrameShape(QtWidgets.QFrame.Shape.NoFrame)
             native.setVerticalScrollBarPolicy(QtCore.Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
@@ -2709,6 +3365,14 @@ class ChangelogCard(QtWidgets.QFrame):
             lay.addWidget(native)
 
         # Native media ------------------------------------------------------
+        self.dynamicMediaHost = QtWidgets.QWidget()
+        self.dynamicMediaHost.setObjectName("dynamicMediaHost")
+        self.dynamicMediaLayout = QtWidgets.QVBoxLayout(self.dynamicMediaHost)
+        self.dynamicMediaLayout.setContentsMargins(0, 0, 0, 0)
+        self.dynamicMediaLayout.setSpacing(0)
+        self.dynamicMediaHost.hide()
+        lay.addWidget(self.dynamicMediaHost, 0, QtCore.Qt.AlignmentFlag.AlignLeft)
+
         images = release.get("images", release.get("image", []))
         if isinstance(images, str):
             images = [images]
@@ -2721,35 +3385,39 @@ class ChangelogCard(QtWidgets.QFrame):
             if not value:
                 continue
             if "t.me/" in value:
-                media = _telegram_public_post_data(value).get("image", "")
-                if media:
-                    resolved.append(media)
+                media_data = _telegram_public_post_data(value)
+                for media in media_data.get("images", []):
+                    if media and media not in resolved:
+                        resolved.append(media)
             else:
                 parsed = urllib.parse.urlparse(value)
                 if parsed.netloc.casefold() in ("imgur.com", "www.imgur.com"):
                     name = parsed.path.strip("/")
                     if name and "." not in name:
                         value = f"https://i.imgur.com/{name}.png"
-                resolved.append(value)
+                if value not in resolved:
+                    resolved.append(value)
 
-        if not resolved and tg.get("image"):
-            resolved.append(tg["image"])
+        # A Telegram-backed post can populate its media automatically.
+        if source_url:
+            for media in tg.get("images", []):
+                if media and media not in resolved:
+                    resolved.append(media)
 
-        video = str(release.get("video", "")).strip()
+        video = str(release.get("video", "") or tg.get("video", "")).strip()
 
-        # For YouTube entries, show a 16:9 preview even if no screenshot was
-        # explicitly supplied. Clicking WATCH VIDEO still opens the real video.
-        if video and not resolved:
-            yt = _youtube_embed_url(video)
-            yt_id = ""
-            match = re.search(r"/embed/([^?&/]+)", yt)
-            if match:
-                yt_id = match.group(1)
-            if yt_id:
-                resolved.append(f"https://i.ytimg.com/vi/{yt_id}/maxresdefault.jpg")
-
-        if resolved:
-            lay.addWidget(ChangelogMediaCarousel(resolved, self))
+        if video and TELEGRAM_WEBENGINE_AVAILABLE:
+            player = ChangelogVideoContainer(video, self)
+            self.dynamicMediaLayout.addWidget(player)
+            self.dynamicMediaHost.show()
+        elif resolved:
+            media = ChangelogMediaCarousel(resolved, self)
+            self.dynamicMediaLayout.addWidget(media)
+            self.dynamicMediaHost.show()
+        elif tg.get("video_poster"):
+            media = ChangelogMediaCarousel([tg["video_poster"]], self)
+            self.dynamicMediaLayout.addWidget(media)
+            self.dynamicMediaHost.show()
 
         # Native action buttons ---------------------------------------------
         source_link = str(release.get("link", "")).strip() or source_url
@@ -2766,6 +3434,16 @@ class ChangelogCard(QtWidgets.QFrame):
             )
             buttons.addWidget(watch)
 
+        if source_url and self.telegramView is not None:
+            reload_post = GlowButton("RELOAD")
+            reload_post.setObjectName("changelogLinkButton")
+            if qta is not None:
+                reload_post.setIcon(qta.icon("fa5s.sync-alt", color="#d79a28"))
+            reload_post.clicked.connect(
+                lambda checked=False: self.telegramView.reload_post()
+            )
+            buttons.addWidget(reload_post)
+
         if source_link:
             source = GlowButton("OPEN SOURCE")
             source.setObjectName("changelogLinkButton")
@@ -2779,6 +3457,47 @@ class ChangelogCard(QtWidgets.QFrame):
 
         buttons.addStretch(1)
         lay.addLayout(buttons)
+
+
+    def _apply_telegram_media(self, data):
+        if not isinstance(data, dict):
+            return
+        # Explicit JSON media wins over auto-detected Telegram media.
+        if self.dynamicMediaHost.isVisible() and self.dynamicMediaLayout.count():
+            return
+
+        images = []
+        for url in data.get("images", []) or []:
+            url = str(url or "").strip()
+            if url and url not in images:
+                images.append(url)
+
+        video = str(data.get("video", "") or "").strip()
+        poster = str(data.get("poster", "") or "").strip()
+
+        if video and TELEGRAM_WEBENGINE_AVAILABLE:
+            self.dynamicMediaLayout.addWidget(ChangelogVideoContainer(video, self))
+            self.dynamicMediaHost.show()
+        elif images:
+            self.dynamicMediaLayout.addWidget(ChangelogMediaCarousel(images, self))
+            self.dynamicMediaHost.show()
+        elif poster:
+            self.dynamicMediaLayout.addWidget(ChangelogMediaCarousel([poster], self))
+            self.dynamicMediaHost.show()
+
+    def _update_toggle_icon(self):
+        if qta is not None:
+            name = "fa5s.chevron-up" if self._expanded else "fa5s.chevron-down"
+            self.toggleButton.setIcon(qta.icon(name, color="#b9b4ae"))
+            self.toggleButton.setIconSize(QtCore.QSize(11, 11))
+        else:
+            self.toggleButton.setText("▲" if self._expanded else "▼")
+
+    def _toggle(self):
+        self._expanded = not self._expanded
+        self.bodyWidget.setVisible(self._expanded)
+        self._update_toggle_icon()
+
 
 
 class ModernLauncherWindow(QtWidgets.QMainWindow):
@@ -3323,8 +4042,13 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
                     except ValueError:
                         pass
                 return datetime.min
-            for release in sorted(entries, key=_key, reverse=True):
-                feed.addWidget(ChangelogCard(release, content))
+            sorted_entries = sorted(entries, key=_key, reverse=True)
+            for index, release in enumerate(sorted_entries):
+                # The newest three updates are immediately readable. Older
+                # history keeps only its title bar until explicitly expanded.
+                feed.addWidget(
+                    ChangelogCard(release, content, expanded=(index < 3))
+                )
         else:
             empty = QtWidgets.QLabel("No changelog entries found.")
             empty.setObjectName("muted")

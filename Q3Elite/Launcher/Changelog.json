@@ -6,8 +6,8 @@
         "list": false,
         "text": "Hybrid native Qt + Telegram web-rendered changelog.",
         "images": [
-            "https://imgur.com/jNrScdr",
-            "https://t.me/Q3News/219"
+            "https://t.me/Q3News/250",
+            "https://t.me/Q3News/250"
         ],
         "changelog": [
             "Multi-line mouse selection",
@@ -30,9 +30,35 @@
         "link": "https://t.me/Q3News/244"
     },
     {
+        "type": "Quake 3 News",
+        "version": "1.19",
+        "date": "2026-06-29",
+        "telegram": "https://t.me/Q3News/264"
+    },
+    {
+        "type": "Quake 3 Elite",
+        "version": "1.18",
+        "date": "2026-06-27",
+        "telegram": "https://t.me/Q3News/250"
+    },
+    {
         "type": "Quake 3 Elite",
         "version": "1.15",
         "date": "2026-06-24",
         "telegram": "https://t.me/Q3News/217"
+    },
+    {
+        "type": "Quake 3 Elite",
+        "version": "1.1",
+        "date": "2026-01-01",
+        "video": "https://www.youtube.com/watch?v=TLAGOkNoRUM",
+        "changelog": [
+            "Modern HUD with SpectatorHUD",
+            "→ Item timers 🔢",
+            "→ Player X-ray 🪿",
+            "→ Any Player Status in Teamoverlay",
+            "→ Responsive elements using new visflags"
+        ],
+        "link": "https://t.me/Q3News/244"
     }
 ]

@@ -1,4 +1,1 @@
-PyQt6
-PyQt6-WebEngine
-vulkan
-qtawesome
+yt-dlp

@@ -1,6 +1,11 @@
-[
-    {
-        "type": "Launcher",
-        "version": "0.07.3"
-	}
-]
+{
+    "version": "0.07.5",
+    "date": "2026-09-20",
+    "changelog": [
+        "Added collapsible changelog cards",
+        "Added fullscreen screenshot viewer",
+        "Fixed Telegram WebEngine background",
+        "Improved changelog media presentation",
+        "Improved Settings cache-folder button"
+    ]
+}

@@ -236,6 +236,164 @@ QTextBrowser#changelogSelectableText {
     selection-color: #ffffff;
 }
 QWidget#telegramTextView {
+    background-color: #08090a;
+}
+
+
+/* v0.07.4 compact post proportions */
+QWidget#telegramTextView {
+    background-color: #08090a;
+}
+QTextBrowser#changelogSelectableText {
+    max-width: 820px;
+}
+QFrame#changelogMedia {
+    max-width: 840px;
+}
+
+
+/* v0.07.5 */
+QWidget#changelogCardBody {
     background: transparent;
-    border: none;
+}
+QPushButton#changelogToggle {
+    padding: 0px;
+    margin: 0px;
+    background: transparent;
+    border: 1px solid rgba(140, 130, 120, 35);
+    border-radius: 5px;
+}
+QPushButton#changelogToggle:hover {
+    background-color: rgba(215, 154, 40, 18);
+    border-color: rgba(215, 154, 40, 95);
+}
+QDialog#imageLightbox {
+    background-color: rgba(0, 0, 0, 245);
+}
+QLabel#lightboxHint {
+    color: rgba(225, 220, 212, 145);
+    font-size: 11px;
+}
+QPushButton#openCacheButton,
+QPushButton#cacheButton {
+    min-width: 44px;
+    max-width: 44px;
+    min-height: 44px;
+    max-height: 44px;
+    padding: 0px;
+}
+
+
+/* v0.07.6 stability/media fixes */
+QLabel#changelogImage {
+    min-width: 720px;
+    max-width: 720px;
+    min-height: 405px;
+    max-height: 405px;
+    padding: 0px;
+    margin: 0px;
+    border-radius: 9px;
+}
+QFrame#changelogMedia {
+    min-width: 804px;
+    max-width: 804px;
+}
+
+
+/* v0.07.7 media */
+QWidget#changelogMediaStage {
+    background: transparent;
+}
+QPushButton#changelogArrow {
+    background-color: rgba(0, 0, 0, 145);
+    border: 1px solid rgba(225, 218, 208, 75);
+    border-radius: 8px;
+}
+QPushButton#changelogArrow:hover {
+    background-color: rgba(110, 24, 18, 210);
+    border-color: rgba(215, 154, 40, 170);
+}
+QWidget#changelogVideo {
+    background-color: #000000;
+    border: 1px solid rgba(125, 118, 108, 120);
+    border-radius: 9px;
+}
+
+
+/* v0.07.9 */
+QWidget#telegramTextView {
+    background-color: #08090a;
+}
+QWidget#dynamicMediaHost {
+    background: transparent;
+}
+QWidget#videoFullscreenWindow {
+    background: #000000;
+}
+QWidget#changelogVideo {
+    min-width: 800px;
+    max-width: 800px;
+    min-height: 450px;
+    max-height: 450px;
+}
+QWidget#changelogVideoFullscreen {
+    min-width: 1px;
+    min-height: 1px;
+    max-width: 16777215px;
+    max-height: 16777215px;
+    background: #000000;
+}
+
+
+/* v0.08.0 */
+QFrame#changelogVideoContainer {
+    background: #000000;
+    border: 1px solid rgba(125, 118, 108, 120);
+    border-radius: 9px;
+}
+QPushButton#videoFullscreenButton {
+    background-color: rgba(0, 0, 0, 165);
+    border: 1px solid rgba(235, 230, 225, 95);
+    border-radius: 7px;
+    padding: 0px;
+}
+QPushButton#videoFullscreenButton:hover {
+    background-color: rgba(120, 24, 18, 220);
+    border-color: rgba(215, 154, 40, 190);
+}
+QWidget#videoFullscreenWindow {
+    background-color: #000000;
+}
+
+
+/* v0.08.1 fullscreen / Telegram media */
+QWidget#changelogVideoFullscreen {
+    background-color: #000000;
+}
+
+
+/* v0.08.2 native video */
+QFrame#nativeYoutubePlayer,
+QWidget#nativeVideoHost,
+QVideoWidget#nativeVideoWidget {
+    background: #000000;
+}
+QWidget#nativeVideoFullscreen {
+    background: #000000;
+}
+QPushButton#nativeVideoControl {
+    min-width: 34px;
+    min-height: 30px;
+    padding: 0px 8px;
+    border: 1px solid rgba(220, 210, 200, 65);
+    border-radius: 5px;
+    background: rgba(0, 0, 0, 165);
+}
+QPushButton#nativeVideoControl:hover {
+    border-color: rgba(215, 154, 40, 180);
+    background: rgba(100, 20, 15, 190);
+}
+QLabel#nativeVideoTime,
+QLabel#nativeVideoQuality {
+    color: #c9c4bd;
 }
