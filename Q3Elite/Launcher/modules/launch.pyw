@@ -28,7 +28,7 @@ GAME_ROOT = LAUNCHER_DIR.parent.parent
 ASSETS_DIR = LAUNCHER_DIR / "assets"
 ICONS_DIR = ASSETS_DIR / "icons"
 IMAGES_DIR = ASSETS_DIR / "images"
-CACHE_DIR = LAUNCHER_DIR / "Cache"
+CACHE_DIR = Path(os.environ.get("APPDATA", Path.home())) / "Quake 3 Elite" / "Cache"
 BACKGROUND_IMAGE = IMAGES_DIR / "background.png"
 APP_ICON_ICO = ICONS_DIR / "favicon.ico"
 APP_ICON_PNG = ICONS_DIR / "favicon.png"
@@ -77,11 +77,12 @@ def q3elite_is_current():
 # ============================================================================
 
 def q3elite_is_installed():
-    """A usable installation requires the Q3Elite engine, not merely an empty directory."""
-    engines_dir = GAME_ROOT / "Q3Elite" / "Engines"
-    engine = engines_dir / "XQ3E_Vulkan.x64.exe"
-    print(f"Q3Elite install marker: {engine}")
-    return engines_dir.is_dir() and engine.is_file()
+    """A usable installation requires both the Vulkan engine and the external OSP marker."""
+    engine = GAME_ROOT / "Q3Elite" / "Engines" / "XQ3E_Vulkan.x64.exe"
+    osp_marker = GAME_ROOT / "baseq3" / "mods" / "osp" / "zzzz-Mus1n-REMASTERED.pk3dir"
+    print(f"Q3Elite engine marker: {engine}")
+    print(f"Q3Elite OSP marker:    {osp_marker}")
+    return engine.is_file() and osp_marker.exists()
 
 
 # ============================================================================
@@ -525,6 +526,15 @@ class Q3EliteDownload(QtCore.QThread):
 
     result_ready = pyqtSignal(bool)
 
+    def __init__(self):
+        super().__init__()
+        self.external_maps = False
+        self.music_playlist = False
+
+    def set_options(self, external_maps=False, music_playlist=False):
+        self.external_maps = bool(external_maps)
+        self.music_playlist = bool(music_playlist)
+
     def run(self):
         try:
             print()
@@ -541,9 +551,9 @@ class Q3EliteDownload(QtCore.QThread):
             #
             # Step 19 GUI will pass the user's checkbox selections here.
             q3components.install_basic(
-                external_maps=bool(getattr(window, "firstInstallMapsBox", window.mapsBox).isChecked()),
-                music_playlist=bool(getattr(window, "firstInstallMusicBox", window.musicBox).isChecked()),
-                autoexec_update=bool(getattr(window, "firstInstallAutoexecBox", window.autoexecBox).isChecked()),
+                external_maps=self.external_maps,
+                music_playlist=self.music_playlist,
+                autoexec_update=False,
                 control=download_control,
                 progress_callback=download_progress_callback,
             )
@@ -589,9 +599,9 @@ class ComponentWorker(QtCore.QThread):
                 q3components.install_music(download_control, download_progress_callback)
             elif self.action == "remove-music":
                 q3components.uninstall_music()
-            elif self.action == "autoexec-on":
+            elif self.action == "update-autoexec":
                 q3components.set_autoexec_update(True)
-            elif self.action == "autoexec-off":
+                # install_basic/update pipeline consumes this state; keep it one-shot in UI.
                 q3components.set_autoexec_update(False)
             else:
                 raise RuntimeError(f"Unknown component action: {self.action}")
@@ -839,14 +849,6 @@ class LauncherSelfUpdate(QtCore.QThread):
             "restart"  -> update staged and helper started; close this launcher
         """
         try:
-            if (
-                not launcher_settings.get("check_updates_on_startup", True)
-                or not launcher_settings.get("auto_update_launcher", True)
-            ):
-                print("[settings] Automatic Launcher update check is disabled.")
-                self.result_ready.emit("continue")
-                return
-
             print()
             print("========================================")
             print(" Checking Launcher update")
@@ -866,6 +868,11 @@ class LauncherSelfUpdate(QtCore.QThread):
             )
             print(f"Changed files: {len(update_info['files'])}")
             print()
+
+            if not launcher_settings.get("auto_update_launcher", True):
+                print("[settings] Launcher update found; automatic installation is disabled.")
+                self.result_ready.emit("continue")
+                return
 
             stage_launcher_update(
                 update_info,
@@ -890,83 +897,178 @@ class LauncherSelfUpdate(QtCore.QThread):
 # WINDOWS / RESHADE / LAUNCHER METADATA
 # ============================================================================
 
-def _run_elevated_powershell(script):
-    """Run a short PowerShell command elevated and wait for its exit code."""
+def _is_admin():
+    if os.name != "nt":
+        return False
+    try:
+        import ctypes
+        return bool(ctypes.windll.shell32.IsUserAnAdmin())
+    except Exception:
+        return False
+
+
+def _reshade_registry_paths():
+    return (
+        (r"SOFTWARE\Khronos\Vulkan\ImplicitLayers", str(RESHADE_DEST / "ReShade64.json"), 0),
+        (r"SOFTWARE\Khronos\Vulkan\ImplicitLayers", str(RESHADE_DEST / "ReShade32.json"), 32),
+    )
+
+
+def _set_reshade_registry_direct(enabled):
+    import winreg
+    entries = _reshade_registry_paths()
+    for key_path, value_name, view in entries:
+        access = winreg.KEY_SET_VALUE
+        access |= winreg.KEY_WOW64_32KEY if view == 32 else winreg.KEY_WOW64_64KEY
+        try:
+            key = winreg.CreateKeyEx(winreg.HKEY_LOCAL_MACHINE, key_path, 0, access)
+            with key:
+                if enabled:
+                    winreg.SetValueEx(key, value_name, 0, winreg.REG_DWORD, 0)
+                else:
+                    try:
+                        winreg.DeleteValue(key, value_name)
+                    except FileNotFoundError:
+                        pass
+        except OSError:
+            if not enabled:
+                continue
+            raise
+
+
+def _run_reshade_registry_helper(enabled):
+    """Elevate only the two HKLM registry operations; return the real child exit code."""
+    import ctypes
     import subprocess
-    escaped = script.replace('"', '\\"')
-    command = (
-        f'Start-Process powershell -Verb RunAs -Wait '
-        f'-ArgumentList \'-NoProfile -ExecutionPolicy Bypass -Command "{escaped}"\''
-    )
-    result = subprocess.run(
-        ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", command],
-        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
-    )
-    return result.returncode == 0
+    import tempfile
 
+    value64 = str(RESHADE_DEST / "ReShade64.json")
+    value32 = str(RESHADE_DEST / "ReShade32.json")
+    if enabled:
+        commands = [
+            f'reg add "HKLM\\SOFTWARE\\Khronos\\Vulkan\\ImplicitLayers" /v "{value64}" /t REG_DWORD /d 0 /f',
+            f'reg add "HKLM\\SOFTWARE\\WOW6432Node\\Khronos\\Vulkan\\ImplicitLayers" /v "{value32}" /t REG_DWORD /d 0 /f',
+        ]
+    else:
+        commands = [
+            f'reg delete "HKLM\\SOFTWARE\\Khronos\\Vulkan\\ImplicitLayers" /v "{value64}" /f 2>nul',
+            f'reg delete "HKLM\\SOFTWARE\\WOW6432Node\\Khronos\\Vulkan\\ImplicitLayers" /v "{value32}" /f 2>nul',
+        ]
 
-def _ps_quote(value):
-    return str(value).replace("'", "''")
+    helper = Path(tempfile.gettempdir()) / "Q3Elite_ReShade_Admin.cmd"
+    helper.write_text(
+        "@echo off\\r\\n" + "\\r\\n".join(commands) + "\\r\\nexit /b 0\\r\\n",
+        encoding="ascii",
+    )
+
+    SEE_MASK_NOCLOSEPROCESS = 0x00000040
+    SW_HIDE = 0
+
+    class SHELLEXECUTEINFOW(ctypes.Structure):
+        _fields_ = [
+            ("cbSize", ctypes.c_ulong),
+            ("fMask", ctypes.c_ulong),
+            ("hwnd", ctypes.c_void_p),
+            ("lpVerb", ctypes.c_wchar_p),
+            ("lpFile", ctypes.c_wchar_p),
+            ("lpParameters", ctypes.c_wchar_p),
+            ("lpDirectory", ctypes.c_wchar_p),
+            ("nShow", ctypes.c_int),
+            ("hInstApp", ctypes.c_void_p),
+            ("lpIDList", ctypes.c_void_p),
+            ("lpClass", ctypes.c_wchar_p),
+            ("hkeyClass", ctypes.c_void_p),
+            ("dwHotKey", ctypes.c_ulong),
+            ("hIconOrMonitor", ctypes.c_void_p),
+            ("hProcess", ctypes.c_void_p),
+        ]
+
+    sei = SHELLEXECUTEINFOW()
+    sei.cbSize = ctypes.sizeof(sei)
+    sei.fMask = SEE_MASK_NOCLOSEPROCESS
+    sei.lpVerb = "runas"
+    sei.lpFile = "cmd.exe"
+    sei.lpParameters = f'/c "{helper}"'
+    sei.nShow = SW_HIDE
+
+    if not ctypes.windll.shell32.ShellExecuteExW(ctypes.byref(sei)):
+        raise RuntimeError("Administrator permission was cancelled.")
+
+    ctypes.windll.kernel32.WaitForSingleObject(sei.hProcess, 0xFFFFFFFF)
+    code = ctypes.c_ulong()
+    ctypes.windll.kernel32.GetExitCodeProcess(sei.hProcess, ctypes.byref(code))
+    ctypes.windll.kernel32.CloseHandle(sei.hProcess)
+    try:
+        helper.unlink(missing_ok=True)
+    except Exception:
+        pass
+    if code.value != 0:
+        raise RuntimeError(f"Administrator helper failed with exit code {code.value}.")
 
 
 def reshade_layer_enabled():
-    """Read the real 64-bit Vulkan implicit-layer registry state."""
+    """Require both 64-bit and 32-bit ReShade Vulkan implicit-layer entries."""
     if os.name != "nt":
         return False
     import winreg
-    value_name = str(RESHADE_DEST / "ReShade64.json")
-    try:
-        with winreg.OpenKey(
-            winreg.HKEY_LOCAL_MACHINE,
-            r"SOFTWARE\Khronos\Vulkan\ImplicitLayers",
-            0,
-            winreg.KEY_READ | winreg.KEY_WOW64_64KEY,
-        ) as key:
-            value, _ = winreg.QueryValueEx(key, value_name)
-            return int(value) == 0
-    except OSError:
-        return False
+    checks = [
+        (r"SOFTWARE\Khronos\Vulkan\ImplicitLayers", str(RESHADE_DEST / "ReShade64.json"), winreg.KEY_WOW64_64KEY),
+        (r"SOFTWARE\Khronos\Vulkan\ImplicitLayers", str(RESHADE_DEST / "ReShade32.json"), winreg.KEY_WOW64_32KEY),
+    ]
+    for key_path, value_name, view in checks:
+        try:
+            with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, key_path, 0, winreg.KEY_READ | view) as key:
+                value, _ = winreg.QueryValueEx(key, value_name)
+                if int(value) != 0:
+                    return False
+        except OSError:
+            return False
+    return True
 
 
 def configure_reshade_vulkan(enabled=True, install_files=False):
-    """Install/register or unregister the ReShade Vulkan implicit layers."""
+    """Install ReShade files when needed and toggle the Vulkan layer registry state."""
     if os.name != "nt":
         raise RuntimeError("ReShade Vulkan layer management is only available on Windows.")
 
-    dst = _ps_quote(RESHADE_DEST)
-    src = _ps_quote(RESHADE_SOURCE)
-    game = _ps_quote(VULKAN_EXE)
-    value64 = _ps_quote(RESHADE_DEST / "ReShade64.json")
-    value32 = _ps_quote(RESHADE_DEST / "ReShade32.json")
-
-    commands = ["$ErrorActionPreference='Stop'"]
     if install_files:
-        commands += [
-            f"New-Item -ItemType Directory -Force -Path '{dst}' | Out-Null",
-            f"Copy-Item -Path '{src}\\\\*' -Destination '{dst}' -Recurse -Force",
-            f"$ini='{dst}\\\\ReShadeApps.ini'",
-            f"$game='{game}'",
-            "if (!(Test-Path $ini)) { Set-Content -Path $ini -Value ('[GENERAL]`r`nApps=' + $game) -Encoding ASCII } "
-            "else { $c=Get-Content $ini -Raw; if ($c -notmatch [regex]::Escape($game)) { "
-            "if ($c -match '(?m)^Apps=.*$') { $c=[regex]::Replace($c,'(?m)^Apps=.*$',{ param($m) $m.Value + ';' + $game }) } "
-            "else { $c += '`r`nApps=' + $game }; Set-Content -Path $ini -Value $c -Encoding ASCII } }",
-        ]
+        RESHADE_DEST.mkdir(parents=True, exist_ok=True)
+        if RESHADE_SOURCE.is_dir():
+            for source in RESHADE_SOURCE.rglob("*"):
+                relative = source.relative_to(RESHADE_SOURCE)
+                destination = RESHADE_DEST / relative
+                if source.is_dir():
+                    destination.mkdir(parents=True, exist_ok=True)
+                else:
+                    destination.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copy2(source, destination)
 
-    if enabled:
-        commands += [
-            r"New-Item -Path 'HKLM:\SOFTWARE\Khronos\Vulkan\ImplicitLayers' -Force | Out-Null",
-            r"New-Item -Path 'HKLM:\SOFTWARE\WOW6432Node\Khronos\Vulkan\ImplicitLayers' -Force | Out-Null",
-            f"New-ItemProperty -Path 'HKLM:\\SOFTWARE\\Khronos\\Vulkan\\ImplicitLayers' -Name '{value64}' -PropertyType DWord -Value 0 -Force | Out-Null",
-            f"New-ItemProperty -Path 'HKLM:\\SOFTWARE\\WOW6432Node\\Khronos\\Vulkan\\ImplicitLayers' -Name '{value32}' -PropertyType DWord -Value 0 -Force | Out-Null",
-        ]
+        ini = RESHADE_DEST / "ReShadeApps.ini"
+        game = str(VULKAN_EXE.resolve())
+        existing = ini.read_text(encoding="utf-8", errors="ignore") if ini.is_file() else ""
+        if game.lower() not in existing.lower():
+            if not existing.strip():
+                existing = "[GENERAL]\\nApps=" + game + "\\n"
+            elif re.search(r"(?mi)^Apps=.*$", existing):
+                existing = re.sub(
+                    r"(?mi)^Apps=(.*)$",
+                    lambda m: "Apps=" + m.group(1).rstrip(";") + ";" + game,
+                    existing,
+                    count=1,
+                )
+            else:
+                existing = existing.rstrip() + "\\nApps=" + game + "\\n"
+            ini.write_text(existing, encoding="utf-8")
+
+    if _is_admin():
+        _set_reshade_registry_direct(enabled)
     else:
-        commands += [
-            f"Remove-ItemProperty -Path 'HKLM:\\SOFTWARE\\Khronos\\Vulkan\\ImplicitLayers' -Name '{value64}' -ErrorAction SilentlyContinue",
-            f"Remove-ItemProperty -Path 'HKLM:\\SOFTWARE\\WOW6432Node\\Khronos\\Vulkan\\ImplicitLayers' -Name '{value32}' -ErrorAction SilentlyContinue",
-        ]
+        _run_reshade_registry_helper(enabled)
 
-    if not _run_elevated_powershell("; ".join(commands)):
-        raise RuntimeError("Administrator operation was cancelled or failed.")
+    # Verify the actual state after the operation.
+    actual = reshade_layer_enabled()
+    if bool(actual) != bool(enabled):
+        raise RuntimeError("Registry operation completed, but the Vulkan layer state did not change.")
 
 
 def set_start_with_windows(enabled):
@@ -1002,26 +1104,44 @@ def launcher_version_file():
 
 
 def read_launcher_metadata():
-    """Read launcher version/changelog from the same local release metadata file."""
+    """Read launcher Version.json while accepting the release formats used by the updater."""
     path = launcher_version_file()
     if path is None:
         return {"version": "—", "releases": []}
     try:
         if path.suffix.lower() == ".txt":
             return {"version": path.read_text(encoding="utf-8").strip(), "releases": []}
+
         raw = json.loads(path.read_text(encoding="utf-8"))
         if not isinstance(raw, dict):
             return {"version": "—", "releases": []}
-        version = str(raw.get("version", raw.get("Version", "—")))
-        releases = raw.get("releases", raw.get("changelog", []))
+
+        version = str(raw.get("version", raw.get("Version", raw.get("launcher_version", "—"))))
+        releases = raw.get("releases", raw.get("changelog", raw.get("history", [])))
+
         if isinstance(releases, dict):
             releases = [
                 dict(v if isinstance(v, dict) else {"changes": v}, version=k)
                 for k, v in releases.items()
             ]
-        if not isinstance(releases, list):
+        elif isinstance(releases, str):
+            releases = [{"version": version, "changes": [releases]}]
+        elif not isinstance(releases, list):
             releases = []
-        return {"version": version, "releases": releases}
+
+        # Some Version.json files keep notes directly at the top level.
+        if not releases:
+            changes = raw.get("changes", raw.get("notes", raw.get("items", [])))
+            if isinstance(changes, str):
+                changes = [changes]
+            if isinstance(changes, list) and changes:
+                releases = [{
+                    "version": version,
+                    "date": raw.get("date", raw.get("release_date", "")),
+                    "changes": changes,
+                }]
+
+        return {"version": version, "releases": releases, "raw": raw}
     except Exception as error:
         print(f"[metadata] Could not read launcher metadata: {error}")
         return {"version": "—", "releases": []}
@@ -1059,7 +1179,6 @@ DEFAULT_SETTINGS = {
     "auto_update_q3elite": True,
     "auto_update_launcher": True,
     "auto_update_osp": True,
-    "check_updates_on_startup": True,
     "start_with_windows": False,
     "minimize_to_tray": False,
 }
@@ -1335,10 +1454,8 @@ def refresh_component_gui():
     window.autoexecBox.blockSignals(True)
     window.mapsBox.setChecked(bool(state.get("external_maps", False)))
     window.musicBox.setChecked(bool(state.get("music_playlist", False)))
-    window.autoexecBox.setChecked(bool(state.get("autoexec_update", False)))
     window.mapsBox.blockSignals(False)
     window.musicBox.blockSignals(False)
-    window.autoexecBox.blockSignals(False)
     window.capture_component_baseline()
 
 
@@ -1392,7 +1509,6 @@ def apply_settings():
         "auto_update_q3elite": window.autoQ3Box.isChecked(),
         "auto_update_launcher": window.autoLauncherBox.isChecked(),
         "auto_update_osp": window.autoOspBox.isChecked(),
-        "check_updates_on_startup": window.checkStartupBox.isChecked(),
         "start_with_windows": window.startWindowsBox.isChecked(),
         "minimize_to_tray": window.trayBox.isChecked(),
     }
@@ -1464,6 +1580,11 @@ def start_first_install():
     if q3elite_download.isRunning():
         return
     _disconnect_main_button()
+    # Read Qt widgets on the GUI thread before starting QThread.
+    q3elite_download.set_options(
+        external_maps=window.firstInstallMapsBox.isChecked(),
+        music_playlist=window.firstInstallMusicBox.isChecked(),
+    )
     window.firstInstallCard.setEnabled(False)
     download_control.reset()
     install_state["base_done"] = False
@@ -1633,6 +1754,71 @@ class AnimatedEmoji(QtWidgets.QLabel):
         self.setText('⛧'); self.setStyleSheet('color:#a00000;font-size:22px;background:transparent;')
 
 
+
+class ConfigEditorDialog(QtWidgets.QDialog):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Q3Elite Config Editor")
+        self.resize(1120, 680)
+        self.autoexec_path = GAME_ROOT / "baseq3" / "mods" / "osp" / "autoexec.cfg"
+        self.userconfig_path = GAME_ROOT / "baseq3" / "mods" / "osp" / "UserConfig.cfg"
+
+        root = QtWidgets.QVBoxLayout(self)
+        panes = QtWidgets.QHBoxLayout()
+
+        left = QtWidgets.QVBoxLayout()
+        left.addWidget(QtWidgets.QLabel("AUTOEXEC.CFG  •  READ ONLY"))
+        self.autoexecEdit = QtWidgets.QPlainTextEdit()
+        self.autoexecEdit.setReadOnly(True)
+        left.addWidget(self.autoexecEdit, 1)
+
+        right = QtWidgets.QVBoxLayout()
+        right.addWidget(QtWidgets.QLabel("USERCONFIG.CFG  •  EDITABLE"))
+        self.userEdit = QtWidgets.QPlainTextEdit()
+        right.addWidget(self.userEdit, 1)
+
+        panes.addLayout(left, 1)
+        panes.addLayout(right, 1)
+        root.addLayout(panes, 1)
+
+        row = QtWidgets.QHBoxLayout()
+        self.message = QtWidgets.QLabel("")
+        self.message.setObjectName("message")
+        row.addWidget(self.message, 1)
+        reload_button = GlowButton("RELOAD")
+        reload_button.setObjectName("secondaryButton")
+        reload_button.clicked.connect(self.reload_files)
+        row.addWidget(reload_button)
+        save_button = GlowButton("SAVE USER CONFIG")
+        save_button.setObjectName("applyButton")
+        save_button.clicked.connect(self.save_user_config)
+        row.addWidget(save_button)
+        root.addLayout(row)
+        self.reload_files()
+
+    def _read(self, path):
+        try:
+            return path.read_text(encoding="utf-8", errors="replace")
+        except FileNotFoundError:
+            return f"// File not found:\\n// {path}\\n"
+
+    def reload_files(self):
+        self.autoexecEdit.setPlainText(self._read(self.autoexec_path))
+        self.userEdit.setPlainText(self._read(self.userconfig_path))
+        self.message.setText("Reloaded.")
+
+    def save_user_config(self):
+        try:
+            self.userconfig_path.parent.mkdir(parents=True, exist_ok=True)
+            temp = self.userconfig_path.with_suffix(self.userconfig_path.suffix + ".tmp")
+            temp.write_text(self.userEdit.toPlainText(), encoding="utf-8")
+            os.replace(temp, self.userconfig_path)
+            self.message.setText("UserConfig.cfg saved.")
+        except Exception as error:
+            self.message.setText(f"Could not save UserConfig.cfg: {error}")
+
+
+
 class ModernLauncherWindow(QtWidgets.QMainWindow):
     """1368x768 frameless Q3Elite launcher. Backend stays in launch.pyw."""
 
@@ -1751,18 +1937,25 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
         self._load_component_state_initial()
         self.load_settings_ui()
 
-        # Screenshot set shared with the public Q3Elite website.
-        self._hero_local = [p for p in [ASSETS_DIR / "screenshots" / f"c{i}.png" for i in range(1, 11)] if p.is_file()]
+        # Screenshots are remote; only the launcher background is stored locally.
+        self._hero_local = []
         self._hero_urls = [
-            "https://i.imgur.com/2fRzLTO.png", "https://i.imgur.com/LdHeuau.png",
-            "https://i.imgur.com/GF6zwPt.png", "https://i.imgur.com/cgYryat.png",
-            "https://i.imgur.com/mWc8Kq2.png", "https://i.imgur.com/YNBOXne.png",
-            "https://i.imgur.com/UQNArcD.png", "https://i.imgur.com/QosQqFM.png",
-            "https://i.imgur.com/5fOcRHo.png", "https://i.imgur.com/UQ7J66U.png",
-            "https://i.imgur.com/U8UN1dj.png", "https://i.imgur.com/Jmj7Ftm.png",
-            "https://i.imgur.com/oGslbD6.png", "https://i.imgur.com/YfwCXyw.png",
-            "https://i.imgur.com/qTw4JRT.png", "https://i.imgur.com/XMOCcCe.png",
-            "https://i.imgur.com/jVZDWBk.png", "https://i.imgur.com/jNrScdr.png",
+            "https://i.imgur.com/2fRzLTO.png",
+            "https://i.imgur.com/LdHeuau.png",
+            "https://i.imgur.com/GF6zwPt.png",
+            "https://i.imgur.com/cgYryat.png",
+            "https://i.imgur.com/mWc8Kq2.png",
+            "https://i.imgur.com/YNBOXne.png",
+            "https://i.imgur.com/UQNArcD.png",
+            "https://i.imgur.com/QosQqFM.png",
+            "https://i.imgur.com/5fOcRHo.png",
+            "https://i.imgur.com/UQ7J66U.png",
+            "https://i.imgur.com/U8UN1dj.png",
+            "https://i.imgur.com/Jmj7Ftm.png",
+            "https://i.imgur.com/oGslbD6.png",
+            "https://i.imgur.com/YfwCXyw.png",
+            "https://i.imgur.com/qTw4JRT.png",
+            "https://i.imgur.com/XMOCcCe.png",
         ]
         self._hero_index = 0
         self._hero_pixmaps = {}
@@ -1793,6 +1986,26 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
         layout = QtWidgets.QVBoxLayout(page)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(14)
+
+        video_card = self._card("videoCard")
+        video_l = QtWidgets.QHBoxLayout(video_card)
+        video_l.setContentsMargins(18, 12, 18, 12)
+        video_text = QtWidgets.QVBoxLayout()
+        video_title = QtWidgets.QLabel("PRESENTATION VIDEO")
+        video_title.setObjectName("sectionTitle")
+        video_text.addWidget(video_title)
+        video_name = QtWidgets.QLabel("Quake 3 Elite • YouTube")
+        video_name.setObjectName("statusTitle")
+        video_text.addWidget(video_name)
+        video_note = QtWidgets.QLabel("Default presentation media • muted inline playback can be enabled with Qt WebEngine.")
+        video_note.setObjectName("muted")
+        video_text.addWidget(video_note)
+        video_l.addLayout(video_text, 1)
+        watch = GlowButton("▶  WATCH")
+        watch.setObjectName("secondaryButton")
+        watch.clicked.connect(lambda: QtGui.QDesktopServices.openUrl(QtCore.QUrl("https://www.youtube.com/watch?v=i1PfqzHkKLw")))
+        video_l.addWidget(watch)
+        layout.addWidget(video_card)
 
         upper = QtWidgets.QHBoxLayout()
         upper.setSpacing(14)
@@ -1831,7 +2044,7 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
         hero_text.addWidget(hero_title)
         hc.addLayout(hero_text, 1)
 
-        self.heroCounter = QtWidgets.QLabel("01 / 18")
+        self.heroCounter = QtWidgets.QLabel("01 / 16")
         self.heroCounter.setObjectName("heroCounter")
         hc.addWidget(self.heroCounter)
 
@@ -1904,11 +2117,9 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
         fic.addWidget(fit)
         self.firstInstallMapsBox = QtWidgets.QCheckBox("External Maps")
         self.firstInstallMusicBox = QtWidgets.QCheckBox("Music Playlist")
-        self.firstInstallAutoexecBox = QtWidgets.QCheckBox("Autoexec Update")
         fic.addStretch(1)
         fic.addWidget(self.firstInstallMapsBox)
         fic.addWidget(self.firstInstallMusicBox)
-        fic.addWidget(self.firstInstallAutoexecBox)
         self.firstInstallCard.setVisible(not q3elite_is_installed())
         layout.addWidget(self.firstInstallCard)
 
@@ -2000,10 +2211,22 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
 
         self.mapsBox = QtWidgets.QCheckBox()
         self.musicBox = QtWidgets.QCheckBox()
-        self.autoexecBox = QtWidgets.QCheckBox()
         lay.addWidget(self._addon_row("External Maps", "Community map collection • cached ZIP retained", self.mapsBox))
         lay.addWidget(self._addon_row("Music Playlist", "Extended Q3Elite music collection • cached ZIP retained", self.musicBox))
-        lay.addWidget(self._addon_row("Autoexec Update", "Keep distributed autoexec.cfg synchronized", self.autoexecBox))
+
+        autoexec_card = self._card("addonCard")
+        autoexec_l = QtWidgets.QHBoxLayout(autoexec_card)
+        autoexec_t = QtWidgets.QVBoxLayout()
+        autoexec_title = QtWidgets.QLabel("Autoexec Update")
+        autoexec_title.setObjectName("addonTitle")
+        autoexec_t.addWidget(autoexec_title)
+        autoexec_t.addWidget(QtWidgets.QLabel("Synchronize the distributed autoexec.cfg once"))
+        autoexec_l.addLayout(autoexec_t, 1)
+        self.autoexecUpdateButton = GlowButton("UPDATE AUTOEXEC")
+        self.autoexecUpdateButton.setObjectName("applyButton")
+        self.autoexecUpdateButton.clicked.connect(lambda: start_component_action("update-autoexec"))
+        autoexec_l.addWidget(self.autoexecUpdateButton)
+        lay.addWidget(autoexec_card)
         lay.addStretch(1)
 
         self.addonMessage = QtWidgets.QLabel("")
@@ -2016,7 +2239,7 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
         cancel.setObjectName("secondaryButton")
         cancel.clicked.connect(refresh_component_gui)
         buttons.addWidget(cancel)
-        apply = QtWidgets.QPushButton("APPLY CHANGES")
+        apply = GlowButton("APPLY CHANGES")
         apply.setObjectName("applyButton")
         apply.clicked.connect(apply_component_changes)
         buttons.addWidget(apply)
@@ -2039,13 +2262,12 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
         self.autoQ3Box = QtWidgets.QCheckBox("Automatically update Q3Elite")
         self.autoLauncherBox = QtWidgets.QCheckBox("Automatically update Launcher")
         self.autoOspBox = QtWidgets.QCheckBox("Automatically update OSP2-BE")
-        self.checkStartupBox = QtWidgets.QCheckBox("Check for updates on startup")
         self.startWindowsBox = QtWidgets.QCheckBox("Start with Windows")
         self.trayBox = QtWidgets.QCheckBox("Minimize to Windows system tray")
-        self.vulkanLayerBox = QtWidgets.QCheckBox("Enable ReShade Vulkan Layer")
+        self.vulkanLayerBox = QtWidgets.QCheckBox("Enable ReShade for Vulkan")
         for box in (
             self.autoQ3Box, self.autoLauncherBox, self.autoOspBox,
-            self.checkStartupBox, self.startWindowsBox, self.trayBox,
+            self.startWindowsBox, self.trayBox,
             self.vulkanLayerBox,
         ):
             c.addWidget(box)
@@ -2069,12 +2291,26 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
         cache_row.addWidget(open_cache)
         cc.addLayout(cache_row)
         lay.addWidget(cache)
+
+        config_card = self._card("settingsCard")
+        config_l = QtWidgets.QHBoxLayout(config_card)
+        config_text = QtWidgets.QVBoxLayout()
+        config_title = QtWidgets.QLabel("CONFIGURATION")
+        config_title.setObjectName("sectionTitle")
+        config_text.addWidget(config_title)
+        config_text.addWidget(QtWidgets.QLabel("View autoexec.cfg and edit UserConfig.cfg"))
+        config_l.addLayout(config_text, 1)
+        config_button = GlowButton("OPEN CONFIG EDITOR")
+        config_button.setObjectName("applyButton")
+        config_button.clicked.connect(self.open_config_editor)
+        config_l.addWidget(config_button)
+        lay.addWidget(config_card)
         lay.addStretch(1)
 
         self.settingsMessage = QtWidgets.QLabel("")
         self.settingsMessage.setObjectName("message")
         lay.addWidget(self.settingsMessage)
-        apply = QtWidgets.QPushButton("SAVE SETTINGS")
+        apply = GlowButton("SAVE SETTINGS")
         apply.setObjectName("applyButton")
         apply.clicked.connect(apply_settings)
         lay.addWidget(apply, 0, QtCore.Qt.AlignmentFlag.AlignRight)
@@ -2137,14 +2373,12 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
         state = q3components.load_state()
         self.mapsBox.setChecked(bool(state.get("external_maps", False)))
         self.musicBox.setChecked(bool(state.get("music_playlist", False)))
-        self.autoexecBox.setChecked(bool(state.get("autoexec_update", False)))
         self.capture_component_baseline()
 
     def capture_component_baseline(self):
         self._component_baseline = {
             "maps": self.mapsBox.isChecked(),
             "music": self.musicBox.isChecked(),
-            "autoexec": self.autoexecBox.isChecked(),
         }
 
     def prepare_component_actions(self):
@@ -2152,15 +2386,12 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
         new = {
             "maps": self.mapsBox.isChecked(),
             "music": self.musicBox.isChecked(),
-            "autoexec": self.autoexecBox.isChecked(),
         }
         actions = []
         if old.get("maps") != new["maps"]:
             actions.append("install-maps" if new["maps"] else "remove-maps")
         if old.get("music") != new["music"]:
             actions.append("install-music" if new["music"] else "remove-music")
-        if old.get("autoexec") != new["autoexec"]:
-            actions.append("autoexec-on" if new["autoexec"] else "autoexec-off")
         self.pending_component_actions = actions
 
     def take_next_component_action(self):
@@ -2178,7 +2409,6 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
         self.autoQ3Box.setChecked(launcher_settings.get("auto_update_q3elite", True))
         self.autoLauncherBox.setChecked(launcher_settings.get("auto_update_launcher", True))
         self.autoOspBox.setChecked(launcher_settings.get("auto_update_osp", True))
-        self.checkStartupBox.setChecked(launcher_settings.get("check_updates_on_startup", True))
         self.startWindowsBox.setChecked(launcher_settings.get("start_with_windows", False))
         self.trayBox.setChecked(launcher_settings.get("minimize_to_tray", False))
         self.vulkanLayerBox.setChecked(reshade_layer_enabled())
@@ -2186,6 +2416,10 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
     def open_cache_folder(self):
         CACHE_DIR.mkdir(parents=True, exist_ok=True)
         QtGui.QDesktopServices.openUrl(QtCore.QUrl.fromLocalFile(str(CACHE_DIR)))
+
+    def open_config_editor(self):
+        dialog = ConfigEditorDialog(self)
+        dialog.exec()
 
     def minimize_launcher(self):
         if launcher_settings.get("minimize_to_tray", False) and QtWidgets.QSystemTrayIcon.isSystemTrayAvailable():

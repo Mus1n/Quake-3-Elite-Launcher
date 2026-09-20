@@ -11,7 +11,7 @@ set "REQUIREMENTS=%BASE_DIR%requirements.txt"
 set "PYTHON_VERSION=3.12"
 set "UV_ZIP_URL=https://github.com/astral-sh/uv/releases/latest/download/uv-x86_64-pc-windows-msvc.zip"
 
-set "UV_CACHE_DIR=%LOCALAPPDATA%\Quake 3 Elite\PythonCache\uv"
+set "UV_CACHE_DIR=%APPDATA%\Quake 3 Elite\Cache\Python\uv"
 set "UV_PYTHON_INSTALL_DIR=%PY_ROOT%\python"
 set "UV_TOOL_DIR=%PY_ROOT%\tools"
 set "UV_TOOL_BIN_DIR=%PY_ROOT%\bin"
