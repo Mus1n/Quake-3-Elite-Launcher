@@ -40,7 +40,6 @@ LOCAL_MANIFEST = ROOT / "Q3Elite" / "Manifest.json"
 LOCAL_VERSION = ROOT / "Q3Elite" / "Version.json"
 
 AUTOEXEC = "baseq3/mods/OSP/autoexec.cfg"
-USER_CONFIG = "baseq3/mods/OSP/UserConfig.cfg"
 MAP_PREFIX = "baseq3/maps/"
 MUSIC_LOCAL_PREFIX = "baseq3/mods/osp/z-Music-Playlist-by-Mus1n.pk3dir/music/"
 BASE_MUSIC = {f"{MUSIC_LOCAL_PREFIX}{n}.ogg".casefold() for n in range(1, 6)}
@@ -48,10 +47,6 @@ BASE_MUSIC = {f"{MUSIC_LOCAL_PREFIX}{n}.ogg".casefold() for n in range(1, 6)}
 
 def norm(v):
     return str(PurePosixPath(str(v).replace("\\", "/").lstrip("/")))
-
-
-def is_user_config(rel):
-    return norm(rel).casefold() == USER_CONFIG.casefold()
 
 
 def sha256_file(path, chunk=4 * 1024 * 1024):
@@ -216,9 +211,6 @@ def human(n):
 
 def _download_managed(rel, digest, control=None, progress_callback=None):
     dest = ROOT / Path(rel)
-    if is_user_config(rel) and dest.is_file():
-        print(f"[preserved user config] {rel}")
-        return False
     if dest.is_file() and sha256_file(dest).lower() == digest.lower():
         print(f"[current] {rel}")
         return False
@@ -304,10 +296,6 @@ def _extract_basic_zip(zip_path, group):
                 continue
 
             dest = ROOT / Path(rel)
-            if is_user_config(rel) and dest.is_file():
-                print(f"[preserved user config] {rel}")
-                extracted.add(rel.casefold())
-                continue
             dest.parent.mkdir(parents=True, exist_ok=True)
             tmp = dest.with_name(dest.name + ".bulk.tmp")
 
@@ -472,10 +460,10 @@ def install_basic(external_maps=False, music_playlist=False, autoexec_update=Fal
     # including base music 1..5 which lives outside the CORE folder.
     downloaded = _install_group(basic, control, progress_callback)
 
-    # External Maps are intentionally NOT installed through _install_group().
-    # Their dedicated install_maps() path uses the pCloud Maps ZIP accelerator.
-    # This keeps Basic extraction and optional Maps installation as two distinct
-    # phases and prevents a fresh install from downloading maps one-by-one.
+    # External Maps are an optional component with their own bulk pCloud ZIP.
+    # Never pass them through the Basic per-file installer here.
+    if external_maps:
+        install_maps(control, progress_callback)
 
     # Commit release metadata only after required payload is valid.
     atomic_json(LOCAL_MANIFEST, manifest)
@@ -483,7 +471,7 @@ def install_basic(external_maps=False, music_playlist=False, autoexec_update=Fal
 
     state=load_state()
     state["basic"]=True
-    state["external_maps"]=False
+    state["external_maps"]=bool(external_maps)
     state["autoexec_update"]=bool(autoexec_update)
     save_state(state)
 

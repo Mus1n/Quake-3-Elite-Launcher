@@ -1535,7 +1535,11 @@ def start_component_action(action):
 
     download_control.reset()
     window.set_addon_message("")
-    window.set_navigation_enabled(False)
+
+    # Addon downloads must behave like the first installation: the transfer
+    # continues in the background while Home / Addons / Settings / Changelog
+    # remain navigable.
+    window.set_navigation_enabled(True)
 
     # Addon installation/removal uses the same central action/progress area as
     # first installation and updates. Do not leave the user on a locked submenu.

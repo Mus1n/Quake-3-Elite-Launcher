@@ -1,9 +1,23 @@
 {
+	"type": Launcher"
     "version": "0.06.7",
     "date": "2026-09-20",
     "changelog": [
         "Fixed addon downloads",
         "Fixed launcher version display",
         "Improved addon installation UI"
+    ]
+}
+{
+	"type": Quake 3 Elite"
+    "version": "1.3",
+    "date": "2026-06-5",
+    "changelog": [
+	"Modern HUD with SpectatorHUD",
+	"→ Item timers 🔢",
+	"→ Player X-ray 🪿",
+	"→ Any Player Status in Teamoverlay  ",
+	"→ Responsive elements using new visflags"
+	"link": "https://t.me/Q3News/244"
     ]
 }
