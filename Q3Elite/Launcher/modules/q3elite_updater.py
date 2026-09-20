@@ -54,12 +54,13 @@ REMOTE_VERSION = "Q3Elite/Version.json"
 FULL = "full"
 CORE = "core"
 
-# Files that are installed by Q3Elite but become user-owned afterwards.
+# Installed once from the manifest, then owned by the user.
 USER_CONFIG = "baseq3/mods/osp/UserConfig.cfg"
 
 # These paths must never be removed by Manifest.json "deleted" entries.
 PRESERVED_FILES = {
     "q3elite/.q3eliteignore",
+    "q3elite/q3eliteignore",  # defensive: pCloud non-ZIP mode may strip the dot
     USER_CONFIG.casefold(),
 }
 PRESERVED_PREFIXES = (
@@ -353,6 +354,13 @@ def download_one(rel, wanted_hash, control=None, progress_callback=None):
         raise RuntimeError(f"Download failed/cancelled: {rel}")
 
     result = Path(result)
+
+    if is_user_config(rel):
+        # Install the default once, but never treat it as immutable payload.
+        # After this point the user may edit it freely.
+        print(f"[installed user config] {rel}")
+        return
+
     actual = sha256_file(result)
     if actual.lower() != wanted_hash.lower():
         bad = result.with_name(result.name + ".bad")
@@ -534,6 +542,10 @@ def recover_from_remote_manifest(remote_manifest, remote_version_data,
         target = GAME_ROOT / Path(rel)
         if not target.is_file():
             raise RuntimeError(f"Recovery verification: missing {rel}")
+        if is_user_config(rel):
+            # UserConfig is install-once. Presence is enough; from now on it is
+            # user-owned and must never be SHA-verified or overwritten.
+            continue
         if sha256_file(target).lower() != managed[rel]:
             raise RuntimeError(f"Recovery verification failed: {rel}")
 
