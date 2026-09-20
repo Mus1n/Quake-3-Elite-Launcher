@@ -27,7 +27,7 @@ if not exist "%CACHE_ROOT%" mkdir "%CACHE_ROOT%"
 
 :: Healthy persistent environment -> no Python/PyQt reinstall.
 if exist "%PYTHON_EXE%" if exist "%PYTHONW_EXE%" (
-    "%PYTHON_EXE%" -c "import PyQt6; import PyQt6.QtWebEngineWidgets; import vulkan" >nul 2>&1
+    "%PYTHON_EXE%" -c "import PyQt6; import vulkan" >nul 2>&1
     if not errorlevel 1 (
         echo Existing Q3Elite Python environment is ready.
         goto START_LAUNCHER
@@ -89,7 +89,7 @@ if exist "%REQUIREMENTS%" (
 )
 
 echo Verifying Python dependencies...
-"%PYTHON_EXE%" -c "import PyQt6; import PyQt6.QtWebEngineWidgets; import vulkan"
+"%PYTHON_EXE%" -c "import PyQt6; import vulkan"
 if !ERRORLEVEL! neq 0 (
     echo.
     echo ERROR: Q3Elite Python dependencies are incomplete.

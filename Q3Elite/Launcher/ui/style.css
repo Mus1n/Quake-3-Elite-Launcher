@@ -92,7 +92,9 @@ QListWidget#configSections::item:hover {
 QListWidget#configSections::item:selected {
     background-color: rgba(145,30,20,120);
 }
-QWebEngineView#presentationVideo {
-    background: #000;
-    border: 0;
+
+QPushButton:disabled {
+    color: rgba(190, 190, 190, 70);
+    background-color: rgba(25, 25, 25, 65);
+    border-color: rgba(130, 130, 130, 30);
 }
