@@ -432,3 +432,71 @@ QWidget#changelogHeader:hover {
     background: rgba(255, 255, 255, 5);
     border-radius: 5px;
 }
+
+
+/* v0.08.8 Telegram video thumbnail */
+QFrame#telegramVideoThumbnail, QLabel#telegramVideoThumbnailImage {
+    background: #000000;
+    border: none;
+    border-radius: 9px;
+}
+QPushButton#telegramPlayOverlay {
+    background-color: rgba(34, 158, 217, 235);
+    color: white;
+    border: none;
+    border-radius: 13px;
+    font-size: 27px;
+    padding-left: 4px;
+}
+QPushButton#telegramPlayOverlay:hover {
+    background-color: rgba(55, 178, 235, 255);
+}
+
+
+/* v0.08.9 changelog preview preference */
+QLabel#sectionTitle {
+    background: transparent;
+}
+
+
+/* v0.09.0 media preview setting + geometrically centered Play */
+QPushButton#youtubePlayOverlay,
+QPushButton#telegramPlayOverlay {
+    padding: 0px;
+    font-size: 0px;
+}
+
+
+/* v0.09.2 */
+QFrame#youtubeThumbnail,
+QFrame#telegramVideoThumbnail,
+QLabel#telegramVideoThumbnailImage {
+    background: transparent;
+    border: none;
+    border-radius: 9px;
+}
+QComboBox#cleanupMediaCombo,
+QSpinBox#cleanupCustomDays {
+    min-height: 28px;
+}
+QLabel#settingsFieldLabel {
+    font-weight: 600;
+}
+QLabel#settingsHint {
+    color: rgba(220, 220, 220, 145);
+}
+
+
+/* v0.09.3 split screenshot/demo cleanup + rounded YouTube frame */
+QComboBox#cleanupScreenshotsCombo,
+QComboBox#cleanupDemosCombo,
+QSpinBox#cleanupScreenshotsCustom,
+QSpinBox#cleanupDemosCustom {
+    min-height: 28px;
+}
+QFrame#youtubeThumbnail,
+QLabel#youtubeThumbnailImage {
+    background: transparent;
+    border: none;
+    border-radius: 9px;
+}

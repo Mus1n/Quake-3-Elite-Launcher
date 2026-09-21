@@ -1265,6 +1265,37 @@ def _telegram_hq_image(media_page):
     return ""
 
 
+
+def _telegram_reupload_link(html_block):
+    """Find a YouTube URL when the Telegram post labels it as a reupload."""
+    plain = re.sub(r"<br\\s*/?>", "\\n", html_block, flags=re.I)
+    plain = re.sub(r"<[^>]+>", " ", plain)
+    plain = _html.unescape(plain).casefold()
+    if "reupload" not in plain:
+        return ""
+
+    href_pattern = r'''href\\s*=\\s*["']([^"']+)["']'''
+    for href in re.findall(href_pattern, html_block, flags=re.I):
+        href = _html.unescape(href).replace("&amp;", "&").strip()
+        decoded = urllib.parse.unquote(href)
+        for candidate in (href, decoded):
+            m = re.search(
+                r'''https?://(?:www\\.)?(?:youtube\\.com/watch\\?[^\\s"'<>]*v=[A-Za-z0-9_-]{6,}|youtu\\.be/[A-Za-z0-9_-]{6,})''',
+                candidate,
+                flags=re.I,
+            )
+            if m:
+                return m.group(0)
+
+    decoded_block = urllib.parse.unquote(_html.unescape(html_block))
+    m = re.search(
+        r'''https?://(?:www\\.)?(?:youtube\\.com/watch\\?[^\\s"'<>]*v=[A-Za-z0-9_-]{6,}|youtu\\.be/[A-Za-z0-9_-]{6,})''',
+        decoded_block,
+        flags=re.I,
+    )
+    return m.group(0) if m else ""
+
+
 def _telegram_public_post_data(url):
     """Best-effort extraction of text + media from a Telegram public post."""
     value = str(url or "").strip()
@@ -1321,6 +1352,10 @@ def _telegram_public_post_data(url):
             fragment = re.sub(r"<br\s*/?>", "\n", fragment, flags=re.I)
             fragment = re.sub(r"<[^>]+>", "", fragment)
             result["text"] = _html.unescape(fragment).strip()
+
+        reupload = _telegram_reupload_link(block)
+        if reupload:
+            result["video_reupload"] = reupload
 
         # Telegram screenshots / albums.
         # Parse ONLY photo_wrap anchors from the target message. This excludes
@@ -1385,18 +1420,29 @@ def _telegram_public_post_data(url):
             result["images"] = final_photos
             result["image"] = final_photos[0]
 
-        # Public Telegram video markup usually exposes a poster and/or source.
-        poster = ""
-        pm = re.search(r'<video[^>]+poster=["\']([^"\']+)["\']', block, flags=re.I | re.S)
-        if pm:
-            poster = _html.unescape(pm.group(1)).replace("&amp;", "&")
-            if poster.startswith("//"):
-                poster = "https:" + poster
-            result["video_poster"] = poster
-
-        # Do not infer post video from generic <video>/<source> HTML here:
-        # Telegram custom emoji and stickers can also be WEBM. The rendered DOM
-        # extractor handles real message video containers safely.
+        # Detect real Telegram message video containers. Telegram currently
+        # uses several class variants such as *_video_player.
+        video_marker = re.search(
+            r'<[^>]+class=["\'][^"\']*tgme_widget_message_video[^"\']*["\'][^>]*>',
+            block, flags=re.I | re.S
+        )
+        if video_marker:
+            result["has_video"] = True
+            video_area = block[video_marker.start():]
+            pm = re.search(
+                r'<video[^>]+poster=["\']([^"\']+)["\']',
+                video_area, flags=re.I | re.S
+            )
+            if not pm:
+                pm = re.search(
+                    r'background-image\s*:\s*url\((?:["\']?)(.*?)(?:["\']?)\)',
+                    video_area[:12000], flags=re.I | re.S
+                )
+            if pm:
+                poster = _html.unescape(pm.group(1)).replace("&amp;", "&")
+                if poster.startswith("//"):
+                    poster = "https:" + poster
+                result["video_poster"] = poster
 
 
         # OG fallbacks.
@@ -1455,6 +1501,7 @@ def _rich_changelog_html(entries):
             release.get("telegram", release.get("text_source", ""))
         ).strip()
         tg = _telegram_public_post_data(source_url) if source_url else {}
+        self.telegram_video_reupload = str(tg.get("video_reupload", "") or "").strip()
 
         custom_text = release.get("text", "")
         if not custom_text:
@@ -1545,7 +1592,7 @@ def _rich_changelog_html(entries):
 
 
 def sorted_launcher_releases():
-    from datetime import datetime
+    from datetime import datetime, timedelta
     releases = read_launcher_metadata().get("releases", [])
 
     def key(item):
@@ -1578,7 +1625,44 @@ DEFAULT_SETTINGS = {
     "auto_update_osp": True,
     "start_with_windows": False,
     "minimize_to_tray": False,
+    "show_changelog_media": False,
+    "cleanup_screenshots_days": 0,
+    "cleanup_demos_days": 0,
 }
+
+
+
+CLEANUP_SCREENSHOT_DIRS = (
+    Path("baseq3") / "mods" / "osp" / "screenshots",
+    Path("Q3Elite") / "Screenshots",
+)
+CLEANUP_DEMO_DIRS = (
+    Path("baseq3") / "mods" / "osp" / "demos",
+)
+
+def cleanup_old_files(relative_dirs, days):
+    """Delete files older than N days from explicitly allowed folders only."""
+    try:
+        days = int(days)
+    except (TypeError, ValueError):
+        return 0
+    if days <= 0:
+        return 0
+
+    cutoff = time.time() - (days * 86400)
+    removed = 0
+    for relative_dir in relative_dirs:
+        folder = GAME_ROOT / relative_dir
+        if not folder.is_dir():
+            continue
+        for path in folder.rglob("*"):
+            try:
+                if path.is_file() and path.stat().st_mtime < cutoff:
+                    path.unlink()
+                    removed += 1
+            except (OSError, PermissionError):
+                continue
+    return removed
 
 
 def load_launcher_settings():
@@ -1589,7 +1673,28 @@ def load_launcher_settings():
             if isinstance(raw, dict):
                 for key in DEFAULT_SETTINGS:
                     if key in raw:
-                        data[key] = bool(raw[key])
+                        if key in ("cleanup_screenshots_days", "cleanup_demos_days"):
+                            try:
+                                data[key] = max(0, int(raw[key]))
+                            except (TypeError, ValueError):
+                                data[key] = 0
+                        else:
+                            data[key] = bool(raw[key])
+
+                # Migrate the short-lived combined cleanup setting from v0.09.2.
+                if "cleanup_media_days" in raw:
+                    try:
+                        legacy_days = max(0, int(raw["cleanup_media_days"]))
+                    except (TypeError, ValueError):
+                        legacy_days = 0
+                    if "cleanup_screenshots_days" not in raw:
+                        data["cleanup_screenshots_days"] = legacy_days
+                    if "cleanup_demos_days" not in raw:
+                        data["cleanup_demos_days"] = legacy_days
+
+                # Migrate the old screenshot-only preference once.
+                if "show_changelog_media" not in raw and "show_changelog_screenshots" in raw:
+                    data["show_changelog_media"] = bool(raw["show_changelog_screenshots"])
     except Exception as error:
         print(f"[settings] Could not read settings: {error}")
     return data
@@ -1605,6 +1710,22 @@ def save_launcher_settings(data):
 
 launcher_settings = load_launcher_settings()
 
+
+try:
+    _screenshots_cleaned = cleanup_old_files(
+        CLEANUP_SCREENSHOT_DIRS,
+        launcher_settings.get("cleanup_screenshots_days", 0),
+    )
+    _demos_cleaned = cleanup_old_files(
+        CLEANUP_DEMO_DIRS,
+        launcher_settings.get("cleanup_demos_days", 0),
+    )
+    if _screenshots_cleaned:
+        print(f"[cleanup] Removed {_screenshots_cleaned} old screenshot file(s).")
+    if _demos_cleaned:
+        print(f"[cleanup] Removed {_demos_cleaned} old demo file(s).")
+except Exception as _cleanup_error:
+    print(f"[cleanup] Failed: {_cleanup_error}")
 
 def read_local_q3elite_version():
     candidates = [
@@ -1948,12 +2069,37 @@ def apply_component_changes():
 def apply_settings():
     global launcher_settings
     old_vulkan = reshade_layer_enabled()
+    old_changelog_media = launcher_settings.get("show_changelog_media", False)
+
+    def selected_cleanup_days(checkbox, combo, custom):
+        if not checkbox.isChecked():
+            return 0
+        days = combo.currentData()
+        if days == -1:
+            days = custom.value()
+        return max(1, int(days or 1))
+
+    cleanup_screenshots_days = selected_cleanup_days(
+        window.cleanupScreenshotsBox,
+        window.cleanupScreenshotsCombo,
+        window.cleanupScreenshotsCustom,
+    )
+    cleanup_demos_days = selected_cleanup_days(
+        window.cleanupDemosBox,
+        window.cleanupDemosCombo,
+        window.cleanupDemosCustom,
+    )
+
     launcher_settings = {
         "auto_update_q3elite": window.autoQ3Box.isChecked(),
         "auto_update_launcher": window.autoLauncherBox.isChecked(),
         "auto_update_osp": window.autoOspBox.isChecked(),
         "start_with_windows": window.startWindowsBox.isChecked(),
         "minimize_to_tray": window.trayBox.isChecked(),
+        # Despite the historical label, this controls ALL changelog media.
+        "show_changelog_media": window.changelogMediaBox.isChecked(),
+        "cleanup_screenshots_days": cleanup_screenshots_days,
+        "cleanup_demos_days": cleanup_demos_days,
     }
     try:
         set_start_with_windows(launcher_settings["start_with_windows"])
@@ -1961,6 +2107,10 @@ def apply_settings():
         if requested_vulkan != old_vulkan:
             configure_reshade_vulkan(requested_vulkan, install_files=requested_vulkan)
         save_launcher_settings(launcher_settings)
+        if old_changelog_media != launcher_settings["show_changelog_media"]:
+            enabled = launcher_settings["show_changelog_media"]
+            for card in window.changelogPage.findChildren(ChangelogCard):
+                card.apply_media_preview_preference(enabled)
         window.settingsMessage.setText("Settings saved.")
     except Exception as error:
         window.vulkanLayerBox.setChecked(reshade_layer_enabled())
@@ -2569,6 +2719,50 @@ class TelegramTextView(QWebEngineView if QWebEngineView is not None else QtWidge
                 if (m && m[1]) addImage(m[1]);
             });
 
+            for (const a of Array.from(msg.querySelectorAll('a[href]'))) {
+                const href = a.href || a.getAttribute('href') || '';
+                if (!/(?:youtube\.com\/|youtu\.be\/)/i.test(href)) continue;
+                const p = (a.parentElement && a.parentElement.innerText) || '';
+                const d = (a.closest('div') && a.closest('div').innerText) || '';
+                const context = (a.innerText + ' ' + p + ' ' + d).toLowerCase();
+                if (context.includes('reupload')) {
+                    media.reupload = href;
+                    break;
+                }
+            }
+
+            // Telegram uses several video class variants, including
+            // tgme_widget_message_video_player. Match by class substring.
+            const videoBox = msg.querySelector('[class*="tgme_widget_message_video"]');
+            if (videoBox) {
+                const v = videoBox.matches('video') ? videoBox : videoBox.querySelector('video');
+                let poster =
+                    (v && (v.poster || v.getAttribute('poster'))) ||
+                    videoBox.getAttribute('data-poster') ||
+                    '';
+
+                const candidates = [videoBox];
+                const nested = videoBox.querySelectorAll('*');
+                nested.forEach(el => candidates.push(el));
+
+                if (!poster) {
+                    for (const el of candidates) {
+                        let bg = el.style.backgroundImage || getComputedStyle(el).backgroundImage || '';
+                        let m = bg.match(/url\((?:"|')?(.*?)(?:"|')?\)/i);
+                        if (m && m[1]) {
+                            poster = m[1];
+                            break;
+                        }
+                    }
+                }
+
+                if (poster) {
+                    try { poster = new URL(poster, location.href).href; } catch(e) {}
+                    media.poster = poster;
+                    media.video = "__telegram_post__";
+                }
+            }
+
             document.title = 'Q3ELITE_MEDIA:' + encodeURIComponent(JSON.stringify(media));
 
             // Preserve Telegram's text DOM (including custom emoji elements),
@@ -2661,97 +2855,78 @@ class TelegramTextView(QWebEngineView if QWebEngineView is not None else QtWidge
             parent.updateGeometry()
             parent = parent.parentWidget()
 
-
-
-
-class ImageLightbox(QtWidgets.QWidget):
-    """Stable external fullscreen viewer for changelog screenshots."""
-    def __init__(self, pixmap, parent=None):
-        super().__init__(None)
-        self.setObjectName("imageLightbox")
-        self.setAttribute(QtCore.Qt.WidgetAttribute.WA_DeleteOnClose, True)
-        self.setWindowTitle("Q3Elite Screenshot")
-        self.setWindowFlags(
-            QtCore.Qt.WindowType.Window |
-            QtCore.Qt.WindowType.FramelessWindowHint |
-            QtCore.Qt.WindowType.WindowStaysOnTopHint
-        )
-        QtWidgets.QApplication.instance().installEventFilter(self)
-        self._pixmap = QtGui.QPixmap(pixmap)
-
-        layout = QtWidgets.QVBoxLayout(self)
-        layout.setContentsMargins(24, 24, 24, 18)
-        layout.setSpacing(8)
-
-        self.imageLabel = QtWidgets.QLabel()
-        self.imageLabel.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
-        layout.addWidget(self.imageLabel, 1)
-
-        self.hint = QtWidgets.QLabel("Click anywhere or press ESC to close")
-        self.hint.setObjectName("lightboxHint")
-        self.hint.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
-        layout.addWidget(self.hint)
-
-    def open_fullscreen(self):
-        screen = QtGui.QGuiApplication.screenAt(QtGui.QCursor.pos())
-        if screen is not None:
-            self.setGeometry(screen.geometry())
-        self.showFullScreen()
-        self.raise_()
-        self.activateWindow()
-        self.setFocus(QtCore.Qt.FocusReason.ActiveWindowFocusReason)
-        self._rescale()
-
-    def showEvent(self, event):
-        super().showEvent(event)
-        self._rescale()
-
-    def resizeEvent(self, event):
-        super().resizeEvent(event)
-        self._rescale()
-
-    def _rescale(self):
-        if self._pixmap.isNull():
+    def emit_media_now(self):
+        if QWebEngineView is None or not self.isVisible():
             return
-        target = QtCore.QSize(
-            max(100, self.width() - 60),
-            max(100, self.height() - 80),
-        )
-        self.imageLabel.setPixmap(
-            self._pixmap.scaled(
-                target,
-                QtCore.Qt.AspectRatioMode.KeepAspectRatio,
-                QtCore.Qt.TransformationMode.SmoothTransformation,
-            )
-        )
+        script = r"""
+        (() => {
+            const msg = document.querySelector('.tgme_widget_message') || document.body;
+            if (!msg) return;
+            const media = {images: [], video: '', poster: '', reupload: ''};
 
-    def eventFilter(self, obj, event):
-        if (
-            self.isVisible()
-            and event.type() == QtCore.QEvent.Type.KeyPress
-            and event.key() == QtCore.Qt.Key.Key_Escape
-        ):
-            self.close()
-            return True
-        return False
+            const addImage = (u) => {
+                if (!u) return;
+                try { u = new URL(u, location.href).href; } catch(e) {}
+                const low = String(u).toLowerCase();
+                if (low.endsWith('.webm') || low.endsWith('.mp4') || low.endsWith('.tgs')) return;
+                if (!media.images.includes(u)) media.images.push(u);
+            };
+            msg.querySelectorAll('a.tgme_widget_message_photo_wrap').forEach(el => {
+                const bg = el.style.backgroundImage || getComputedStyle(el).backgroundImage || '';
+                const m = bg.match(/url\((?:"|')?(.*?)(?:"|')?\)/i);
+                if (m && m[1]) addImage(m[1]);
+            });
 
-    def closeEvent(self, event):
-        app = QtWidgets.QApplication.instance()
-        if app is not None:
-            try:
-                app.removeEventFilter(self)
-            except Exception:
-                pass
-        super().closeEvent(event)
+            // The rendered DOM is more reliable than raw Telegram HTML for links.
+            for (const a of Array.from(msg.querySelectorAll('a[href]'))) {
+                const href = a.href || a.getAttribute('href') || '';
+                if (!/(?:youtube\.com\/|youtu\.be\/)/i.test(href)) continue;
+                const p = (a.parentElement && a.parentElement.innerText) || '';
+                const d = (a.closest('div') && a.closest('div').innerText) || '';
+                const context = (a.innerText + ' ' + p + ' ' + d).toLowerCase();
+                if (context.includes('reupload')) {
+                    media.reupload = href;
+                    break;
+                }
+            }
 
-    def mousePressEvent(self, event):
-        self.close()
+            const videoBox = msg.querySelector('[class*="tgme_widget_message_video"]');
+            if (videoBox) {
+                const v = videoBox.matches('video') ? videoBox : videoBox.querySelector('video');
+                let poster = (v && (v.poster || v.getAttribute('poster'))) ||
+                             videoBox.getAttribute('data-poster') || '';
+                if (!poster) {
+                    const candidates = [videoBox, ...videoBox.querySelectorAll('*')];
+                    for (const el of candidates) {
+                        const bg = el.style.backgroundImage || getComputedStyle(el).backgroundImage || '';
+                        const m = bg.match(/url\((?:"|')?(.*?)(?:"|')?\)/i);
+                        if (m && m[1]) { poster = m[1]; break; }
+                    }
+                }
+                if (poster) {
+                    try { poster = new URL(poster, location.href).href; } catch(e) {}
+                    media.poster = poster;
+                }
+                media.video = '__telegram_post__';
+            }
 
-    def keyPressEvent(self, event):
-        if event.key() in (QtCore.Qt.Key.Key_Escape, QtCore.Qt.Key.Key_Return):
-            self.close()
+            document.title = 'Q3ELITE_MEDIA:' +
+                encodeURIComponent(JSON.stringify(media));
+        })();
+        """
+        self.page().runJavaScript(script)
+
+    def refresh_after_expand(self):
+        """Re-measure a Telegram post after a previously hidden card becomes visible."""
+        if QWebEngineView is None:
             return
-        super().keyPressEvent(event)
+
+        # Hidden WebEngine cards do not get their delayed 180/650 ms measurements.
+        # Run several cheap DOM measurements after Qt has exposed/relaid-out the card.
+        for delay in (0, 40, 120, 300, 650):
+            QtCore.QTimer.singleShot(delay, self._remeasure_height)
+
+
 
 
 class ChangelogImage(QtWidgets.QLabel):
@@ -2762,13 +2937,11 @@ class ChangelogImage(QtWidgets.QLabel):
         super().__init__(parent)
         self.setObjectName("changelogImage")
         self.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
-        self.setCursor(QtCore.Qt.CursorShape.PointingHandCursor)
         self.setSizePolicy(
             QtWidgets.QSizePolicy.Policy.Fixed,
             QtWidgets.QSizePolicy.Policy.Fixed,
         )
         self._pixmap_original = None
-        self._lightbox = None
         self._url = str(url or "")
 
         # Reserve final geometry immediately. This prevents the "large -> small"
@@ -2869,26 +3042,6 @@ class ChangelogImage(QtWidgets.QLabel):
         # The loaded image is clipped precisely in _render_pixmap().
         self.clearMask()
 
-    def mousePressEvent(self, event):
-        if (
-            event.button() == QtCore.Qt.MouseButton.LeftButton
-            and self._pixmap_original is not None
-            and not self._pixmap_original.isNull()
-        ):
-            if self._lightbox is not None:
-                try:
-                    self._lightbox.close()
-                except Exception:
-                    pass
-            self._lightbox = ImageLightbox(self._pixmap_original)
-            self._lightbox.destroyed.connect(
-                lambda: setattr(self, "_lightbox", None)
-            )
-            self._lightbox.open_fullscreen()
-            return
-        super().mousePressEvent(event)
-
-
     def resizeEvent(self, event):
         super().resizeEvent(event)
         self._render_pixmap()
@@ -2967,6 +3120,31 @@ class ChangelogMediaCarousel(QtWidgets.QFrame):
 
 
 
+class PlayOverlayButton(QtWidgets.QPushButton):
+    """Paints a geometrically centered play triangle."""
+    def __init__(self, parent=None):
+        super().__init__("", parent)
+        self.setCursor(QtCore.Qt.CursorShape.PointingHandCursor)
+
+    def paintEvent(self, event):
+        super().paintEvent(event)
+        p = QtGui.QPainter(self)
+        p.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing, True)
+        w, h = 20.0, 24.0
+        # Triangle's visual centroid is offset; compensate slightly left.
+        cx = self.width() / 2.0 - 1.5
+        cy = self.height() / 2.0
+        path = QtGui.QPainterPath()
+        path.moveTo(cx - w / 2.0, cy - h / 2.0)
+        path.lineTo(cx - w / 2.0, cy + h / 2.0)
+        path.lineTo(cx + w / 2.0, cy)
+        path.closeSubpath()
+        p.setPen(QtCore.Qt.PenStyle.NoPen)
+        p.setBrush(QtGui.QColor(255, 255, 255))
+        p.drawPath(path)
+        p.end()
+
+
 class YoutubeThumbnail(QtWidgets.QFrame):
     """Lightweight YouTube preview: HQ thumbnail + native Play overlay."""
 
@@ -2984,7 +3162,7 @@ class YoutubeThumbnail(QtWidgets.QFrame):
         self.image.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
         self.image.setScaledContents(False)
 
-        self.play = QtWidgets.QPushButton("▶", self)
+        self.play = PlayOverlayButton(self)
         self.play.setObjectName("youtubePlayOverlay")
         self.play.setFixedSize(76, 54)
         self.play.clicked.connect(self.open_video)
@@ -3016,6 +3194,29 @@ class YoutubeThumbnail(QtWidgets.QFrame):
             if match:
                 return match.group(1)
         return ""
+
+    def _rounded_video_pixmap(self, pixmap):
+        if pixmap is None or pixmap.isNull():
+            return pixmap
+        size = pixmap.size()
+        result = QtGui.QPixmap(size)
+        result.fill(QtCore.Qt.GlobalColor.transparent)
+        painter = QtGui.QPainter(result)
+        painter.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing, True)
+        painter.setRenderHint(QtGui.QPainter.RenderHint.SmoothPixmapTransform, True)
+        rect = QtCore.QRectF(0.75, 0.75, size.width() - 1.5, size.height() - 1.5)
+        path = QtGui.QPainterPath()
+        path.addRoundedRect(rect, 9.0, 9.0)
+        painter.setClipPath(path)
+        painter.drawPixmap(0, 0, pixmap)
+        painter.setClipping(False)
+        pen = QtGui.QPen(QtGui.QColor(170, 160, 145, 155))
+        pen.setWidthF(1.25)
+        painter.setPen(pen)
+        painter.setBrush(QtCore.Qt.BrushStyle.NoBrush)
+        painter.drawRoundedRect(rect, 9.0, 9.0)
+        painter.end()
+        return result
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
@@ -3059,13 +3260,87 @@ class YoutubeThumbnail(QtWidgets.QFrame):
                     )
                     x = max(0, (scaled.width() - self.width()) // 2)
                     y = max(0, (scaled.height() - self.height()) // 2)
-                    self.image.setPixmap(
-                        scaled.copy(x, y, self.width(), self.height())
-                    )
+                    cropped = scaled.copy(x, y, self.width(), self.height())
+                    self.image.setPixmap(self._rounded_video_pixmap(cropped))
                     return
         finally:
             reply.deleteLater()
         self._load_next()
+
+
+class TelegramVideoThumbnail(QtWidgets.QFrame):
+    """Telegram video poster; Play opens the original Telegram post."""
+    def __init__(self, poster_url, post_url, parent=None):
+        super().__init__(parent)
+        self.setObjectName("telegramVideoThumbnail")
+        self.poster_url = str(poster_url or "").strip()
+        self.post_url = str(post_url or "").strip()
+        self.setFixedSize(800, 450)
+        self.setCursor(QtCore.Qt.CursorShape.PointingHandCursor)
+
+        self.image = QtWidgets.QLabel(self)
+        self.image.setObjectName("telegramVideoThumbnailImage")
+        self.image.setGeometry(self.rect())
+        self.image.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
+
+        self.play = PlayOverlayButton(self)
+        self.play.setObjectName("telegramPlayOverlay")
+        self.play.setFixedSize(76, 54)
+        self.play.clicked.connect(self.open_post)
+
+        self._manager = QtNetwork.QNetworkAccessManager(self)
+        if self.poster_url:
+            request = QtNetwork.QNetworkRequest(QtCore.QUrl(self.poster_url))
+            request.setRawHeader(b"User-Agent", b"Mozilla/5.0")
+            reply = self._manager.get(request)
+            reply.finished.connect(lambda r=reply: self._poster_ready(r))
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self.image.setGeometry(self.rect())
+        self.play.move((self.width()-self.play.width())//2,
+                       (self.height()-self.play.height())//2)
+        self.play.raise_()
+
+    def mouseReleaseEvent(self, event):
+        if event.button() == QtCore.Qt.MouseButton.LeftButton:
+            self.open_post()
+            event.accept()
+            return
+        super().mouseReleaseEvent(event)
+
+    def open_post(self):
+        if self.post_url:
+            QtGui.QDesktopServices.openUrl(QtCore.QUrl(self.post_url))
+
+    def _poster_ready(self, reply):
+        try:
+            if reply.error() != QtNetwork.QNetworkReply.NetworkError.NoError:
+                return
+            pix = QtGui.QPixmap()
+            if not pix.loadFromData(bytes(reply.readAll())):
+                return
+            target = self.size()
+            scaled = pix.scaled(target, QtCore.Qt.AspectRatioMode.KeepAspectRatioByExpanding,
+                                QtCore.Qt.TransformationMode.SmoothTransformation)
+            x=max(0,(scaled.width()-target.width())//2)
+            y=max(0,(scaled.height()-target.height())//2)
+            cropped=scaled.copy(x,y,target.width(),target.height())
+
+            result=QtGui.QPixmap(target)
+            result.fill(QtCore.Qt.GlobalColor.transparent)
+            p=QtGui.QPainter(result)
+            p.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing, True)
+            p.setRenderHint(QtGui.QPainter.RenderHint.SmoothPixmapTransform, True)
+            rect=QtCore.QRectF(.75,.75,target.width()-1.5,target.height()-1.5)
+            path=QtGui.QPainterPath(); path.addRoundedRect(rect,9,9)
+            p.setClipPath(path); p.drawPixmap(0,0,cropped); p.setClipping(False)
+            pen=QtGui.QPen(QtGui.QColor(170,160,145,155)); pen.setWidthF(1.25)
+            p.setPen(pen); p.setBrush(QtCore.Qt.BrushStyle.NoBrush)
+            p.drawRoundedRect(rect,9,9); p.end()
+            self.image.setPixmap(result)
+        finally:
+            reply.deleteLater()
 
 
 class ChangelogVideoContainer(QtWidgets.QFrame):
@@ -3133,6 +3408,8 @@ class ChangelogCard(QtWidgets.QFrame):
         lay.setSpacing(9)
 
         source_url = str(release.get("telegram", release.get("text_source", ""))).strip()
+        self.telegram_url = source_url
+        self.telegram_video_reupload = ""
         tg = _telegram_public_post_data(source_url) if source_url else {}
 
         self.headerWidget = QtWidgets.QWidget()
@@ -3319,18 +3596,37 @@ class ChangelogCard(QtWidgets.QFrame):
 
         video = str(release.get("video", "") or tg.get("video", "")).strip()
 
-        if video and TELEGRAM_WEBENGINE_AVAILABLE:
+        if video:
             player = ChangelogVideoContainer(video, self)
             self.dynamicMediaLayout.addWidget(player)
-            self.dynamicMediaHost.show()
+            self.dynamicMediaHost.setVisible(launcher_settings.get("show_changelog_media", False))
+        elif (
+            tg.get("has_video")
+            and tg.get("video_poster")
+            and source_url
+        ):
+            target = tg.get("video_reupload") or source_url
+            if YoutubeThumbnail._video_id(target):
+                media = YoutubeThumbnail(target, self)
+            else:
+                media = TelegramVideoThumbnail(tg["video_poster"], target, self)
+            self.dynamicMediaLayout.addWidget(media)
+            self.dynamicMediaHost.setVisible(launcher_settings.get("show_changelog_media", False))
         elif resolved:
             media = ChangelogMediaCarousel(resolved, self)
             self.dynamicMediaLayout.addWidget(media)
-            self.dynamicMediaHost.show()
-        elif tg.get("video_poster"):
-            media = ChangelogMediaCarousel([tg["video_poster"]], self)
+            self.dynamicMediaHost.setVisible(launcher_settings.get("show_changelog_media", False))
+        elif (
+            tg.get("video_poster")
+            and source_url
+        ):
+            target = tg.get("video_reupload") or source_url
+            if YoutubeThumbnail._video_id(target):
+                media = YoutubeThumbnail(target, self)
+            else:
+                media = TelegramVideoThumbnail(tg["video_poster"], target, self)
             self.dynamicMediaLayout.addWidget(media)
-            self.dynamicMediaHost.show()
+            self.dynamicMediaHost.setVisible(launcher_settings.get("show_changelog_media", False))
 
         # Native action buttons ---------------------------------------------
         source_link = str(release.get("link", "")).strip() or source_url
@@ -3387,16 +3683,53 @@ class ChangelogCard(QtWidgets.QFrame):
 
         video = str(data.get("video", "") or "").strip()
         poster = str(data.get("poster", "") or "").strip()
+        reupload = str(data.get("reupload", "") or "").strip()
+        if reupload:
+            self.telegram_video_reupload = reupload
 
-        if video and TELEGRAM_WEBENGINE_AVAILABLE:
+        if self.dynamicMediaLayout.count():
+            current = self.dynamicMediaLayout.itemAt(0).widget()
+            if (
+                reupload
+                and isinstance(current, TelegramVideoThumbnail)
+                and YoutubeThumbnail._video_id(reupload)
+            ):
+                self.dynamicMediaLayout.takeAt(0)
+                current.deleteLater()
+                self.dynamicMediaLayout.addWidget(YoutubeThumbnail(reupload, self))
+            self.dynamicMediaHost.setVisible(
+                launcher_settings.get("show_changelog_media", False)
+            )
+            return
+
+        if (
+            launcher_settings.get("show_changelog_media", False)
+            and video == "__telegram_post__"
+            and poster
+            and self.telegram_url
+        ):
+            target = self.telegram_video_reupload or self.telegram_url
+            # If a YouTube reupload was found in Sources, use YouTube's
+            # max-resolution thumbnail instead of Telegram's reduced poster.
+            yt_id = YoutubeThumbnail._video_id(target)
+            if yt_id:
+                self.dynamicMediaLayout.addWidget(YoutubeThumbnail(target, self))
+            else:
+                self.dynamicMediaLayout.addWidget(
+                    TelegramVideoThumbnail(poster, target, self)
+                )
+            self.dynamicMediaHost.setVisible(launcher_settings.get("show_changelog_media", False))
+        elif video and launcher_settings.get("show_changelog_media", False):
             self.dynamicMediaLayout.addWidget(ChangelogVideoContainer(video, self))
-            self.dynamicMediaHost.show()
-        elif images:
+            self.dynamicMediaHost.setVisible(launcher_settings.get("show_changelog_media", False))
+        elif images and launcher_settings.get("show_changelog_media", False):
             self.dynamicMediaLayout.addWidget(ChangelogMediaCarousel(images, self))
-            self.dynamicMediaHost.show()
-        elif poster:
-            self.dynamicMediaLayout.addWidget(ChangelogMediaCarousel([poster], self))
-            self.dynamicMediaHost.show()
+            self.dynamicMediaHost.setVisible(launcher_settings.get("show_changelog_media", False))
+        elif poster and self.telegram_url:
+            self.dynamicMediaLayout.addWidget(
+                TelegramVideoThumbnail(poster, self.telegram_url, self)
+            )
+            self.dynamicMediaHost.setVisible(launcher_settings.get("show_changelog_media", False))
 
     def eventFilter(self, obj, event):
         if (
@@ -3420,10 +3753,65 @@ class ChangelogCard(QtWidgets.QFrame):
         else:
             self.toggleButton.setText("▲" if self._expanded else "▼")
 
+    def apply_media_preview_preference(self, enabled):
+        """Apply media visibility without destroying/rebuilding Telegram WebEngine cards."""
+        enabled = bool(enabled)
+        self.dynamicMediaHost.setVisible(enabled and self.dynamicMediaLayout.count() > 0)
+        if enabled and self.telegramView is not None:
+            QtCore.QTimer.singleShot(0, self.telegramView.emit_media_now)
+            QtCore.QTimer.singleShot(180, self.telegramView.emit_media_now)
+
     def _toggle(self):
         self._expanded = not self._expanded
         self.bodyWidget.setVisible(self._expanded)
         self._update_toggle_icon()
+
+        if self._expanded:
+            # Cards #4+ start hidden. Telegram/WebEngine may have measured itself
+            # while hidden, leaving the stale viewport-sized gap above its media.
+            # Re-measure only after the body is actually visible; no network reload.
+            if self.telegramView is not None:
+                self.telegramView.refresh_after_expand()
+
+            # Media can also have been created while its parent was hidden.
+            # Force Qt to discard those stale size hints immediately.
+            self.dynamicMediaHost.updateGeometry()
+            if self.dynamicMediaHost.layout() is not None:
+                self.dynamicMediaHost.layout().invalidate()
+                self.dynamicMediaHost.layout().activate()
+
+            self.bodyWidget.updateGeometry()
+            if self.bodyWidget.layout() is not None:
+                self.bodyWidget.layout().invalidate()
+                self.bodyWidget.layout().activate()
+
+            # One more parent-card pass after the show event is processed.
+            QtCore.QTimer.singleShot(0, self._refresh_expanded_geometry)
+            QtCore.QTimer.singleShot(180, self._refresh_expanded_geometry)
+
+    def _refresh_expanded_geometry(self):
+        if not self._expanded:
+            return
+
+        for widget in (self.telegramView, self.dynamicMediaHost, self.bodyWidget, self):
+            if widget is None:
+                continue
+            widget.updateGeometry()
+            layout = widget.layout()
+            if layout is not None:
+                layout.invalidate()
+                layout.activate()
+
+        parent = self.parentWidget()
+        depth = 0
+        while parent is not None and depth < 6:
+            parent.updateGeometry()
+            layout = parent.layout()
+            if layout is not None:
+                layout.invalidate()
+                layout.activate()
+            parent = parent.parentWidget()
+            depth += 1
 
 
 
@@ -3879,10 +4267,91 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
         self.startWindowsBox = QtWidgets.QCheckBox("Start with Windows")
         self.trayBox = QtWidgets.QCheckBox("Minimize to Windows system tray")
         self.vulkanLayerBox = QtWidgets.QCheckBox("Enable ReShade for Vulkan")
+
+        changelog_label = QtWidgets.QLabel("[Changelogs]")
+        changelog_label.setObjectName("sectionTitle")
+        c.addSpacing(10)
+        c.addWidget(changelog_label)
+        self.changelogMediaBox = QtWidgets.QCheckBox("Show screenshots in changelog")
+
+        cleanup_label = QtWidgets.QLabel("TEMPORARY FILE CLEANUP")
+        cleanup_label.setObjectName("sectionTitle")
+        c.addSpacing(10)
+        c.addWidget(cleanup_label)
+
+        def make_cleanup_row(label_text, combo_name, spin_name):
+            row = QtWidgets.QHBoxLayout()
+            row.setSpacing(8)
+
+            checkbox = QtWidgets.QCheckBox(label_text)
+            checkbox.setMinimumWidth(170)
+
+            combo = QtWidgets.QComboBox()
+            combo.setObjectName(combo_name)
+            combo.addItem("1 day", 1)
+            combo.addItem("3 days", 3)
+            combo.addItem("7 days", 7)
+            combo.addItem("30 days", 30)
+            combo.addItem("Custom", -1)
+            combo.setFixedWidth(125)
+            combo.setEnabled(False)
+
+            custom = QtWidgets.QSpinBox()
+            custom.setObjectName(spin_name)
+            custom.setRange(1, 3650)
+            custom.setSuffix(" days")
+            custom.setValue(14)
+            custom.setFixedWidth(110)
+            custom.setVisible(False)
+            custom.setEnabled(False)
+
+            def refresh():
+                enabled = checkbox.isChecked()
+                combo.setEnabled(enabled)
+                custom.setEnabled(enabled)
+                custom.setVisible(enabled and combo.currentData() == -1)
+
+            checkbox.toggled.connect(refresh)
+            combo.currentIndexChanged.connect(refresh)
+
+            row.addWidget(checkbox)
+            row.addWidget(combo)
+            row.addWidget(custom)
+            row.addStretch(1)
+            c.addLayout(row)
+            return checkbox, combo, custom
+
+        (
+            self.cleanupScreenshotsBox,
+            self.cleanupScreenshotsCombo,
+            self.cleanupScreenshotsCustom,
+        ) = make_cleanup_row(
+            "Clean screenshots",
+            "cleanupScreenshotsCombo",
+            "cleanupScreenshotsCustom",
+        )
+
+        (
+            self.cleanupDemosBox,
+            self.cleanupDemosCombo,
+            self.cleanupDemosCustom,
+        ) = make_cleanup_row(
+            "Clean demos",
+            "cleanupDemosCombo",
+            "cleanupDemosCustom",
+        )
+
+        cleanup_hint = QtWidgets.QLabel(
+            "Screenshots: OSP screenshots + Q3Elite screenshots.  Demos: OSP demos."
+        )
+        cleanup_hint.setObjectName("settingsHint")
+        cleanup_hint.setWordWrap(True)
+        c.addWidget(cleanup_hint)
+
         for box in (
             self.autoQ3Box, self.autoLauncherBox, self.autoOspBox,
             self.startWindowsBox, self.trayBox,
-            self.vulkanLayerBox,
+            self.vulkanLayerBox, self.changelogMediaBox,
         ):
             c.addWidget(box)
         lay.addWidget(card)
@@ -3986,6 +4455,21 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
         root.addWidget(scroll, 1)
         return page
 
+    def rebuild_changelog_page(self):
+        """Rebuild changelog cards after preview preferences change."""
+        old_page = self.changelogPage
+        old_index = self.pages.indexOf(old_page)
+        was_current = self.pages.currentWidget() is old_page
+
+        new_page = self._build_changelog()
+        self.pages.insertWidget(old_index, new_page)
+        self.pages.removeWidget(old_page)
+        old_page.deleteLater()
+        self.changelogPage = new_page
+
+        if was_current:
+            self.pages.setCurrentWidget(new_page)
+
     def show_page(self, page):
         mapping = {
             "home": (self.homePage, self.homeNav),
@@ -4048,6 +4532,42 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
         self.startWindowsBox.setChecked(launcher_settings.get("start_with_windows", False))
         self.trayBox.setChecked(launcher_settings.get("minimize_to_tray", False))
         self.vulkanLayerBox.setChecked(reshade_layer_enabled())
+        self.changelogMediaBox.setChecked(
+            launcher_settings.get("show_changelog_media", False)
+        )
+        def load_cleanup_control(days, checkbox, combo, custom):
+            days = max(0, int(days or 0))
+            checkbox.setChecked(days > 0)
+            if days <= 0:
+                combo.setCurrentIndex(combo.findData(7))
+                custom.setVisible(False)
+                combo.setEnabled(False)
+                custom.setEnabled(False)
+                return
+
+            index = combo.findData(days)
+            if index >= 0:
+                combo.setCurrentIndex(index)
+                custom.setVisible(False)
+            else:
+                combo.setCurrentIndex(combo.findData(-1))
+                custom.setValue(min(days, 3650))
+                custom.setVisible(True)
+            combo.setEnabled(True)
+            custom.setEnabled(True)
+
+        load_cleanup_control(
+            launcher_settings.get("cleanup_screenshots_days", 0),
+            self.cleanupScreenshotsBox,
+            self.cleanupScreenshotsCombo,
+            self.cleanupScreenshotsCustom,
+        )
+        load_cleanup_control(
+            launcher_settings.get("cleanup_demos_days", 0),
+            self.cleanupDemosBox,
+            self.cleanupDemosCombo,
+            self.cleanupDemosCustom,
+        )
 
     def open_cache_folder(self):
         CACHE_DIR.mkdir(parents=True, exist_ok=True)
@@ -4384,23 +4904,33 @@ def main():
             return 0
 
         # External stylesheet is now the single source of visual styling.
-        style_path = LAUNCHER_DIR / "ui" / "style.css"
+        style_path = LAUNCHER_DIR / "modules" / "style.css"
         if style_path.is_file():
             app.setStyleSheet(style_path.read_text(encoding="utf-8"))
         else:
             print(f"[warning] UI stylesheet not found: {style_path}")
 
-        # Keep existing font support for the backend terminal.
-        font_path = ASSETS_DIR / "fonts" / "FiraCode-Regular.ttf"
-        if not font_path.is_file():
-            font_path = LAUNCHER_DIR / "ui" / "FiraCode-Regular.ttf"
+        # Fonts live only in Launcher/assets/fonts/*.ttf.
+        fonts_dir = ASSETS_DIR / "fonts"
         family = "Arial"
-        if font_path.is_file():
+        preferred_font = fonts_dir / "FiraCode-Regular.ttf"
+        font_files = []
+        if fonts_dir.is_dir():
+            font_files = sorted(fonts_dir.glob("*.ttf"))
+
+        # Register every bundled TTF so style.css can reference any of them.
+        registered_families = {}
+        for font_path in font_files:
             font_id = QFontDatabase.addApplicationFont(str(font_path))
             if font_id != -1:
                 families = QFontDatabase.applicationFontFamilies(font_id)
                 if families:
-                    family = families[0]
+                    registered_families[font_path.name] = families[0]
+
+        if preferred_font.name in registered_families:
+            family = registered_families[preferred_font.name]
+        elif registered_families:
+            family = next(iter(registered_families.values()))
 
         window = ModernLauncherWindow()
 
