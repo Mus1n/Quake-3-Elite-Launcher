@@ -403,3 +403,32 @@ QPushButton#youtubePlayOverlay {
 QPushButton#youtubePlayOverlay:hover {
     background-color: rgba(245, 20, 45, 255);
 }
+
+
+/* v0.08.5 screenshot polish */
+QLabel#changelogImage {
+    border: none;
+    background: transparent;
+}
+QWidget#changelogMediaStage {
+    background: transparent;
+}
+
+
+/* v0.08.6 changelog polish */
+QFrame#changelogVideoContainer {
+    border: none;
+    border-radius: 9px;
+    background: #000000;
+}
+QFrame#youtubeThumbnail {
+    border: none;
+    border-radius: 9px;
+}
+QWidget#changelogHeader {
+    background: transparent;
+}
+QWidget#changelogHeader:hover {
+    background: rgba(255, 255, 255, 5);
+    border-radius: 5px;
+}

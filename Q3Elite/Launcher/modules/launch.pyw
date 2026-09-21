@@ -1240,6 +1240,31 @@ def _youtube_embed_url(url):
     return value
 
 
+
+def _telegram_hq_image(media_page):
+    try:
+        req = urllib.request.Request(
+            str(media_page),
+            headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/126 Safari/537.36"},
+        )
+        with urllib.request.urlopen(req, timeout=8) as response:
+            page = response.read().decode("utf-8", errors="replace")
+        for pattern in (
+            r"""<meta[^>]+property=["']og:image["'][^>]+content=["']([^"']+)""",
+            r"""<meta[^>]+content=["']([^"']+)["'][^>]+property=["']og:image["']""",
+        ):
+            m = re.search(pattern, page, flags=re.I | re.S)
+            if m:
+                u = _html.unescape(m.group(1)).replace("&amp;", "&")
+                if u.startswith("//"):
+                    u = "https:" + u
+                if u.startswith("http"):
+                    return u
+    except Exception as error:
+        print(f"[changelog] Telegram HQ image: {error}")
+    return ""
+
+
 def _telegram_public_post_data(url):
     """Best-effort extraction of text + media from a Telegram public post."""
     value = str(url or "").strip()
@@ -1300,6 +1325,7 @@ def _telegram_public_post_data(url):
         # Telegram screenshots / albums.
         # Parse ONLY photo_wrap anchors from the target message. This excludes
         # avatar images and animated custom-emoji WEBM assets.
+        photo_pages = []
         photos = []
         for tag in re.findall(r'<a\b[^>]*>', block, flags=re.I | re.S):
             class_match = re.search(
@@ -1310,6 +1336,14 @@ def _telegram_public_post_data(url):
             classes = class_match.group(2)
             if "tgme_widget_message_photo_wrap" not in classes:
                 continue
+
+            hm = re.search(r"""href\s*=\s*["']([^"']+)""", tag, flags=re.I | re.S)
+            if hm:
+                href = _html.unescape(hm.group(1)).replace("&amp;", "&")
+                if href.startswith("//"):
+                    href = "https:" + href
+                if href.startswith("http") and href not in photo_pages:
+                    photo_pages.append(href)
 
             style_match = re.search(
                 r'style\s*=\s*(["\'])(.*?)\1', tag, flags=re.I | re.S
@@ -1342,8 +1376,14 @@ def _telegram_public_post_data(url):
                 photos.append(media)
 
         if photos:
-            result["images"] = photos
-            result["image"] = photos[0]
+            hq_photos = []
+            for media_page in photo_pages:
+                hq = _telegram_hq_image(media_page)
+                if hq and hq not in hq_photos:
+                    hq_photos.append(hq)
+            final_photos = hq_photos if hq_photos else photos
+            result["images"] = final_photos
+            result["image"] = final_photos[0]
 
         # Public Telegram video markup usually exposes a poster and/or source.
         poster = ""
@@ -2580,13 +2620,26 @@ class TelegramTextView(QWebEngineView if QWebEngineView is not None else QtWidge
                 a.replaceWith(clean);
             });
 
-            return Math.ceil(Math.max(
-                document.body.scrollHeight,
-                text.getBoundingClientRect().height
-            ) + 6);
+            return Math.ceil(text.getBoundingClientRect().height + 6);
         })();
         """
         self.page().runJavaScript(js, self._apply_height)
+        # Animated/custom emoji and web fonts can settle after loadFinished.
+        # Re-measure the retained text shortly afterwards so first load has the
+        # same compact geometry as a manual Reload.
+        QtCore.QTimer.singleShot(180, self._remeasure_height)
+        QtCore.QTimer.singleShot(650, self._remeasure_height)
+
+    def _remeasure_height(self):
+        if QWebEngineView is None or not self.isVisible():
+            return
+        self.page().runJavaScript(
+            """(() => {
+                const text = document.querySelector('.tgme_widget_message_text');
+                return text ? Math.ceil(text.getBoundingClientRect().height + 6) : 0;
+            })();""",
+            self._apply_height,
+        )
 
     def _apply_height(self, height):
         try:
@@ -2599,6 +2652,14 @@ class TelegramTextView(QWebEngineView if QWebEngineView is not None else QtWidge
         # Give the full Telegram text to the OUTER changelog QScrollArea.
         # The embedded browser itself never becomes independently scrollable.
         self.setFixedHeight(max(40, min(height, 900)))
+        self.updateGeometry()
+        parent = self.parentWidget()
+        while parent is not None:
+            if parent.layout() is not None:
+                parent.layout().invalidate()
+                parent.layout().activate()
+            parent.updateGeometry()
+            parent = parent.parentWidget()
 
 
 
@@ -2636,12 +2697,6 @@ class ImageLightbox(QtWidgets.QWidget):
         if screen is not None:
             self.setGeometry(screen.geometry())
         self.showFullScreen()
-        self.player.setMinimumSize(1, 1)
-        self.player.setMaximumSize(16777215, 16777215)
-        self.player.setSizePolicy(
-            QtWidgets.QSizePolicy.Policy.Expanding,
-            QtWidgets.QSizePolicy.Policy.Expanding,
-        )
         self.raise_()
         self.activateWindow()
         self.setFocus(QtCore.Qt.FocusReason.ActiveWindowFocusReason)
@@ -2669,6 +2724,25 @@ class ImageLightbox(QtWidgets.QWidget):
                 QtCore.Qt.TransformationMode.SmoothTransformation,
             )
         )
+
+    def eventFilter(self, obj, event):
+        if (
+            self.isVisible()
+            and event.type() == QtCore.QEvent.Type.KeyPress
+            and event.key() == QtCore.Qt.Key.Key_Escape
+        ):
+            self.close()
+            return True
+        return False
+
+    def closeEvent(self, event):
+        app = QtWidgets.QApplication.instance()
+        if app is not None:
+            try:
+                app.removeEventFilter(self)
+            except Exception:
+                pass
+        super().closeEvent(event)
 
     def mousePressEvent(self, event):
         self.close()
@@ -2755,9 +2829,6 @@ class ChangelogImage(QtWidgets.QLabel):
             return
 
         target = self.size()
-
-        # Cover the 16:9 viewport and crop overflow. This guarantees that the
-        # rounded corners clip image pixels rather than an empty label area.
         scaled = self._pixmap_original.scaled(
             target,
             QtCore.Qt.AspectRatioMode.KeepAspectRatioByExpanding,
@@ -2766,13 +2837,37 @@ class ChangelogImage(QtWidgets.QLabel):
         x = max(0, (scaled.width() - target.width()) // 2)
         y = max(0, (scaled.height() - target.height()) // 2)
         cropped = scaled.copy(x, y, target.width(), target.height())
-        self.setPixmap(cropped)
-        self._apply_rounded_mask()
+
+        # Compose clipping + border into the pixmap itself. QWidget masks can
+        # clip the anti-aliased right/bottom border on Windows.
+        result = QtGui.QPixmap(target)
+        result.fill(QtCore.Qt.GlobalColor.transparent)
+
+        painter = QtGui.QPainter(result)
+        painter.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing, True)
+        painter.setRenderHint(QtGui.QPainter.RenderHint.SmoothPixmapTransform, True)
+
+        outer = QtCore.QRectF(0.75, 0.75, target.width() - 1.5, target.height() - 1.5)
+        clip = QtGui.QPainterPath()
+        clip.addRoundedRect(outer, 9.0, 9.0)
+        painter.setClipPath(clip)
+        painter.drawPixmap(0, 0, cropped)
+        painter.setClipping(False)
+
+        pen = QtGui.QPen(QtGui.QColor(170, 160, 145, 155))
+        pen.setWidthF(1.25)
+        painter.setPen(pen)
+        painter.setBrush(QtCore.Qt.BrushStyle.NoBrush)
+        painter.drawRoundedRect(outer, 9.0, 9.0)
+        painter.end()
+
+        self.clearMask()
+        self.setPixmap(result)
 
     def _apply_rounded_mask(self):
-        path = QtGui.QPainterPath()
-        path.addRoundedRect(QtCore.QRectF(self.rect()), 9.0, 9.0)
-        self.setMask(QtGui.QRegion(path.toFillPolygon().toPolygon()))
+        # Kept as a no-op for calls made before/while the remote image loads.
+        # The loaded image is clipped precisely in _render_pixmap().
+        self.clearMask()
 
     def mousePressEvent(self, event):
         if (
@@ -2793,20 +2888,9 @@ class ChangelogImage(QtWidgets.QLabel):
             return
         super().mousePressEvent(event)
 
-    def paintEvent(self, event):
-        super().paintEvent(event)
-        painter = QtGui.QPainter(self)
-        painter.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing, True)
-        pen = QtGui.QPen(QtGui.QColor(125, 118, 108, 120))
-        pen.setWidth(1)
-        painter.setPen(pen)
-        painter.setBrush(QtCore.Qt.BrushStyle.NoBrush)
-        rect = QtCore.QRectF(self.rect()).adjusted(0.5, 0.5, -0.5, -0.5)
-        painter.drawRoundedRect(rect, 9.0, 9.0)
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
-        self._apply_rounded_mask()
         self._render_pixmap()
 
 
@@ -3000,6 +3084,19 @@ class ChangelogVideoContainer(QtWidgets.QFrame):
             self.player = ChangelogVideoView(self.url, self)
         lay.addWidget(self.player)
 
+    def paintEvent(self, event):
+        super().paintEvent(event)
+        p = QtGui.QPainter(self)
+        p.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing, True)
+        r = QtCore.QRectF(0.75, 0.75, self.width() - 1.5, self.height() - 1.5)
+        pen = QtGui.QPen(QtGui.QColor(170, 160, 145, 155))
+        pen.setWidthF(1.25)
+        p.setPen(pen)
+        p.setBrush(QtCore.Qt.BrushStyle.NoBrush)
+        p.drawRoundedRect(r, 9.0, 9.0)
+        p.end()
+
+
 
 class ChangelogVideoView(QWebEngineView if QWebEngineView is not None else QtWidgets.QWidget):
     """Fallback only for direct MP4/WEBM URLs."""
@@ -3038,7 +3135,12 @@ class ChangelogCard(QtWidgets.QFrame):
         source_url = str(release.get("telegram", release.get("text_source", ""))).strip()
         tg = _telegram_public_post_data(source_url) if source_url else {}
 
-        header = QtWidgets.QHBoxLayout()
+        self.headerWidget = QtWidgets.QWidget()
+        self.headerWidget.setObjectName("changelogHeader")
+        self.headerWidget.setCursor(QtCore.Qt.CursorShape.PointingHandCursor)
+        header = QtWidgets.QHBoxLayout(self.headerWidget)
+        header.setContentsMargins(0, 0, 0, 0)
+
         title = QtWidgets.QLabel()
         title.setObjectName("changelogCardTitle")
         title.setTextFormat(QtCore.Qt.TextFormat.RichText)
@@ -3059,7 +3161,12 @@ class ChangelogCard(QtWidgets.QFrame):
         self.toggleButton.setObjectName("changelogToggle")
         self.toggleButton.setFixedSize(28, 28)
         header.addWidget(self.toggleButton)
-        lay.addLayout(header)
+        lay.addWidget(self.headerWidget)
+
+        self.headerWidget.installEventFilter(self)
+        title.installEventFilter(self)
+        if date:
+            date_label.installEventFilter(self)
 
         self.bodyWidget = QtWidgets.QWidget()
         self.bodyWidget.setObjectName("changelogCardBody")
@@ -3290,6 +3397,20 @@ class ChangelogCard(QtWidgets.QFrame):
         elif poster:
             self.dynamicMediaLayout.addWidget(ChangelogMediaCarousel([poster], self))
             self.dynamicMediaHost.show()
+
+    def eventFilter(self, obj, event):
+        if (
+            obj in (self.headerWidget,)
+            or obj.parentWidget() is self.headerWidget
+        ):
+            if (
+                obj is not self.toggleButton
+                and event.type() == QtCore.QEvent.Type.MouseButtonRelease
+                and event.button() == QtCore.Qt.MouseButton.LeftButton
+            ):
+                self._toggle()
+                return True
+        return super().eventFilter(obj, event)
 
     def _update_toggle_icon(self):
         if qta is not None:
