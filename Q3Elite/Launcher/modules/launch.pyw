@@ -3,6 +3,9 @@ import sys
 import shutil
 import json
 import re
+import socket
+import subprocess
+import time
 import urllib.parse
 import urllib.request
 import zipfile
@@ -35,6 +38,8 @@ except Exception:
 LAUNCHER_DIR = Path(__file__).resolve().parent.parent
 GAME_ROOT = LAUNCHER_DIR.parent.parent
 ASSETS_DIR = LAUNCHER_DIR / "assets"
+SERVERS_ASSETS_DIR = ASSETS_DIR / "servers"
+SERVERS_FILE = Path(os.environ.get("APPDATA", Path.home())) / "Quake 3 Elite" / "Launcher" / "servers.json"
 ICONS_DIR = ASSETS_DIR / "icons"
 IMAGES_DIR = ASSETS_DIR / "images"
 CACHE_DIR = Path(os.environ.get("APPDATA", Path.home())) / "Quake 3 Elite" / "Cache"
@@ -3815,6 +3820,169 @@ class ChangelogCard(QtWidgets.QFrame):
 
 
 
+
+class ServerRefreshWorker(QtCore.QThread):
+    """Safely query a list of id Tech 3 / Quake 3 servers off the GUI thread."""
+    result_ready = pyqtSignal(object)
+
+    def __init__(self, addresses, parent=None):
+        super().__init__(parent)
+        self.addresses = [str(x).strip() for x in addresses if str(x).strip()]
+
+    @staticmethod
+    def _split_address(address):
+        value = str(address or "").strip()
+        if "://" in value:
+            parsed = urllib.parse.urlparse(value)
+            value = parsed.netloc or parsed.path
+        value = value.strip().strip("/")
+
+        # [IPv6]:port is accepted syntactically, although the current Q3 query
+        # socket intentionally uses IPv4 because classic Q3 servers are IPv4.
+        if value.startswith("[") and "]" in value:
+            host, rest = value[1:].split("]", 1)
+            port_text = rest[1:] if rest.startswith(":") else "27960"
+        else:
+            host, sep, port_text = value.rpartition(":")
+            if not sep or not host or not port_text.isdigit():
+                host, port_text = value, "27960"
+
+        host = host.strip()
+        if not host:
+            raise ValueError("Missing server hostname")
+        port = int(port_text)
+        if not (1 <= port <= 65535):
+            raise ValueError("Port must be between 1 and 65535")
+        return host, port
+
+    @staticmethod
+    def _parse_info(line):
+        line = str(line or "").strip()
+        if line.startswith("\\"):
+            line = line[1:]
+        parts = line.split("\\") if line else []
+        info = {}
+        for index in range(0, len(parts) - 1, 2):
+            key = parts[index].strip()
+            if key:
+                info[key] = parts[index + 1]
+        return info
+
+    @staticmethod
+    def _decode_packet(packet):
+        if packet.startswith(b"\xff\xff\xff\xff"):
+            packet = packet[4:]
+        return packet.decode("latin-1", errors="replace").replace("\r", "")
+
+    @classmethod
+    def _parse_status(cls, packet):
+        text = cls._decode_packet(packet)
+        lines = text.split("\n")
+        header = lines.pop(0).strip().casefold() if lines else ""
+        if not header.startswith("statusresponse"):
+            raise ValueError("Unexpected getstatus response")
+        info = cls._parse_info(lines.pop(0) if lines else "")
+        players = []
+        for line in lines:
+            line = line.strip()
+            if not line:
+                continue
+            match = re.match(r'^(-?\d+)\s+(-?\d+)\s+"(.*)"$', line)
+            if match:
+                players.append({
+                    "score": int(match.group(1)),
+                    "ping": int(match.group(2)),
+                    "name": match.group(3),
+                })
+        return info, players
+
+    @classmethod
+    def _parse_info_response(cls, packet):
+        text = cls._decode_packet(packet)
+        lines = text.split("\n")
+        header = lines.pop(0).strip().casefold() if lines else ""
+        if not header.startswith("inforesponse"):
+            raise ValueError("Unexpected getinfo response")
+        return cls._parse_info(lines[0] if lines else "")
+
+    @staticmethod
+    def _udp_request(target, payload, timeout=0.85):
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        try:
+            sock.settimeout(timeout)
+            started = time.perf_counter()
+            sock.sendto(payload, target)
+            packet, source = sock.recvfrom(65535)
+            elapsed = max(1, round((time.perf_counter() - started) * 1000))
+            return packet, elapsed, source
+        finally:
+            sock.close()
+
+    @classmethod
+    def query_one(cls, address):
+        result = {
+            "address": address,
+            "online": False,
+            "info": {},
+            "players": [],
+            "ping": None,
+        }
+        try:
+            host, port = cls._split_address(address)
+            # Resolve hostnames exactly like a normal Q3 client. getaddrinfo is
+            # preferable to gethostbyname because it gives us a validated tuple.
+            resolved = socket.getaddrinfo(host, port, socket.AF_INET, socket.SOCK_DGRAM)
+            if not resolved:
+                raise OSError("Hostname could not be resolved")
+            target = resolved[0][4]
+
+            # q3serverlist exposes getInfo() and getStatus() separately. We use
+            # getstatus first because it returns both cvars and the player list.
+            # If a server/proxy blocks it, getinfo with a challenge is a useful
+            # fallback and still proves that the Q3 server is online.
+            try:
+                packet, ping, _ = cls._udp_request(
+                    target, b"\xff\xff\xff\xffgetstatus\n"
+                )
+                info, players = cls._parse_status(packet)
+                result.update({
+                    "online": True,
+                    "info": info,
+                    "players": players,
+                    "ping": ping,
+                    "query": "getstatus",
+                })
+                return result
+            except (socket.timeout, TimeoutError, ValueError, OSError) as status_error:
+                challenge = b"q3elite"
+                packet, ping, _ = cls._udp_request(
+                    target,
+                    b"\xff\xff\xff\xffgetinfo " + challenge + b"\n",
+                )
+                info = cls._parse_info_response(packet)
+                result.update({
+                    "online": True,
+                    "info": info,
+                    "players": [],
+                    "ping": ping,
+                    "query": "getinfo",
+                    "status_error": str(status_error),
+                })
+                return result
+        except Exception as error:
+            result["error"] = str(error) or type(error).__name__
+            return result
+
+    def run(self):
+        for address in self.addresses:
+            if self.isInterruptionRequested():
+                break
+            result = self.query_one(address)
+            if self.isInterruptionRequested():
+                break
+            self.result_ready.emit(result)
+
+
 class ModernLauncherWindow(QtWidgets.QMainWindow):
     """1368x768 frameless Q3Elite launcher. Backend stays in launch.pyw."""
 
@@ -3878,9 +4046,10 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
         self.homeNav = self._nav_button("HOME", "home", "fa5s.home")
         self.addonsNav = self._nav_button("INSTALL ADDONS", "addons", "fa5s.puzzle-piece")
         self.statisticsNav = self._nav_button("STATISTICS", "statistics", "fa5s.chart-bar")
+        self.serversNav = self._nav_button("SERVERS", "servers", "fa5s.server")
         self.settingsNav = self._nav_button("SETTINGS", "settings", "fa5s.cog")
         self.changelogNav = self._nav_button("CHANGELOG", "changelog", "fa5s.scroll")
-        for button in (self.homeNav, self.addonsNav, self.statisticsNav, self.settingsNav, self.changelogNav):
+        for button in (self.homeNav, self.addonsNav, self.statisticsNav, self.serversNav, self.settingsNav, self.changelogNav):
             side.addWidget(button)
 
         side.addStretch(1)
@@ -3924,14 +4093,18 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
         top.addWidget(self.closeButton)
         body_layout.addLayout(top)
 
+        self._server_refresh_worker = None
+        self._server_cards = {}
+
         self.pages = QtWidgets.QStackedWidget()
         self.pages.setObjectName("pages")
         self.homePage = self._build_home()
         self.addonsPage = self._build_addons()
         self.statisticsPage = self._build_statistics()
+        self.serversPage = self._build_servers()
         self.settingsPage = self._build_settings()
         self.changelogPage = self._build_changelog()
-        for page in (self.homePage, self.addonsPage, self.statisticsPage, self.settingsPage, self.changelogPage):
+        for page in (self.homePage, self.addonsPage, self.statisticsPage, self.serversPage, self.settingsPage, self.changelogPage):
             self.pages.addWidget(page)
         body_layout.addWidget(self.pages, 1)
         root.addWidget(body, 1)
@@ -4402,6 +4575,333 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
         lay.addWidget(apply, 0, QtCore.Qt.AlignmentFlag.AlignRight)
         return page
 
+
+    # ------------------------------------------------------------------
+    # SERVERS — native Quake 3 UDP monitor
+    # ------------------------------------------------------------------
+    def _default_servers(self):
+        return [
+            {"name": "***2026 FREE", "address": "meat.q3msk.net:7700", "custom": False},
+            {"name": "Q3MSK FREEZE", "address": "q3msk.net:27977", "custom": False},
+            {"name": "Q3MSK FREEZE (EU)", "address": "frz.q3msk.net:27960", "custom": False},
+            {"name": "Q3MSK 1v1", "address": "q3msk.net:27961", "custom": False},
+            {"name": "Q3MSK CTF (DE)", "address": "ctf.q3msk.net:27960", "custom": False},
+        ]
+
+    def _load_servers(self):
+        servers = self._default_servers()
+        try:
+            if SERVERS_FILE.is_file():
+                raw = json.loads(SERVERS_FILE.read_text(encoding="utf-8"))
+                if isinstance(raw, list):
+                    for item in raw:
+                        if isinstance(item, dict) and item.get("address"):
+                            address = str(item["address"]).strip()
+                            if not any(x["address"].casefold() == address.casefold() for x in servers):
+                                servers.append({
+                                    "name": str(item.get("name") or address).strip(),
+                                    "address": address,
+                                    "custom": True,
+                                })
+        except Exception as error:
+            print(f"[servers] Could not load custom servers: {error}")
+        return servers
+
+    def _save_custom_servers(self):
+        custom = [x for x in self._server_entries if x.get("custom")]
+        try:
+            SERVERS_FILE.parent.mkdir(parents=True, exist_ok=True)
+            SERVERS_FILE.write_text(json.dumps(custom, indent=2, ensure_ascii=False), encoding="utf-8")
+        except Exception as error:
+            print(f"[servers] Could not save custom servers: {error}")
+
+    def _build_servers(self):
+        page = QtWidgets.QWidget()
+        root = QtWidgets.QVBoxLayout(page)
+        root.setContentsMargins(4, 4, 4, 4)
+        root.setSpacing(12)
+
+        header = QtWidgets.QHBoxLayout()
+        title = QtWidgets.QLabel("SERVERS")
+        title.setObjectName("pageTitle")
+        header.addWidget(title)
+        header.addStretch(1)
+        self.serverRefreshButton = GlowButton("REFRESH")
+        self.serverRefreshButton.setObjectName("serverToolbarButton")
+        self.serverRefreshButton.clicked.connect(self.refresh_servers)
+        header.addWidget(self.serverRefreshButton)
+        add = GlowButton("+  ADD SERVER")
+        add.setObjectName("serverToolbarButton")
+        add.clicked.connect(self.add_server_dialog)
+        header.addWidget(add)
+        root.addLayout(header)
+
+        sub = QtWidgets.QLabel("LIVE QUAKE 3 SERVER MONITOR  •  UDP STATUS / PING")
+        sub.setObjectName("muted")
+        root.addWidget(sub)
+
+        scroll = QtWidgets.QScrollArea()
+        scroll.setObjectName("serversScroll")
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QtWidgets.QFrame.Shape.NoFrame)
+        content = QtWidgets.QWidget()
+        content.setObjectName("serversContent")
+        self.serverGrid = QtWidgets.QGridLayout(content)
+        self.serverGrid.setContentsMargins(0, 4, 8, 8)
+        self.serverGrid.setHorizontalSpacing(12)
+        self.serverGrid.setVerticalSpacing(12)
+        self.serverGrid.setColumnStretch(0, 1)
+        self.serverGrid.setColumnStretch(1, 1)
+        scroll.setWidget(content)
+        root.addWidget(scroll, 1)
+
+        self._server_entries = self._load_servers()
+        self._rebuild_server_cards()
+        return page
+
+    def _rebuild_server_cards(self):
+        while self.serverGrid.count():
+            item = self.serverGrid.takeAt(0)
+            widget = item.widget()
+            if widget is not None:
+                widget.deleteLater()
+        self._server_cards = {}
+        for index, entry in enumerate(self._server_entries):
+            card = self._make_server_card(entry)
+            self.serverGrid.addWidget(card, index // 2, index % 2)
+            self._server_cards[entry["address"]] = card
+        self.serverGrid.setRowStretch((len(self._server_entries) + 1) // 2, 1)
+
+    def _make_server_card(self, entry):
+        card = self._card("serverCard")
+        card.setMinimumHeight(220)
+        card._entry = entry
+        lay = QtWidgets.QVBoxLayout(card)
+        lay.setContentsMargins(15, 13, 15, 13)
+        lay.setSpacing(7)
+
+        top = QtWidgets.QHBoxLayout()
+        name = QtWidgets.QLabel(entry.get("name") or entry["address"])
+        name.setObjectName("serverName")
+        name.setWordWrap(True)
+        top.addWidget(name, 1)
+        status = QtWidgets.QLabel("●  CHECKING")
+        status.setObjectName("serverStatus")
+        top.addWidget(status)
+        lay.addLayout(top)
+
+        address = QtWidgets.QLabel(entry["address"])
+        address.setObjectName("serverAddress")
+        address.setTextInteractionFlags(QtCore.Qt.TextInteractionFlag.TextSelectableByMouse)
+        lay.addWidget(address)
+
+        map_frame = QtWidgets.QFrame()
+        map_frame.setObjectName("serverMapFrame")
+        map_frame.setFixedHeight(72)
+        map_l = QtWidgets.QHBoxLayout(map_frame)
+        map_l.setContentsMargins(10, 7, 10, 7)
+        map_pic = QtWidgets.QLabel("MAP")
+        map_pic.setObjectName("serverMapImage")
+        map_pic.setFixedSize(92, 56)
+        map_pic.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
+        map_l.addWidget(map_pic)
+        map_text = QtWidgets.QVBoxLayout()
+        map_name = QtWidgets.QLabel("Querying server...")
+        map_name.setObjectName("serverMapName")
+        map_text.addWidget(map_name)
+        players = QtWidgets.QLabel("Players: —")
+        players.setObjectName("serverPlayers")
+        map_text.addWidget(players)
+        map_l.addLayout(map_text, 1)
+        lay.addWidget(map_frame)
+
+        player_line = QtWidgets.QLabel("Waiting for status...")
+        player_line.setObjectName("serverPlayerList")
+        player_line.setWordWrap(True)
+        player_line.setFixedHeight(32)
+        lay.addWidget(player_line)
+
+        bottom = QtWidgets.QHBoxLayout()
+        ping = QtWidgets.QLabel("PING  —")
+        ping.setObjectName("serverPing")
+        bottom.addWidget(ping)
+        bottom.addStretch(1)
+        if entry.get("custom"):
+            remove = QtWidgets.QPushButton("×")
+            remove.setObjectName("serverRemoveButton")
+            remove.setToolTip("Remove custom server")
+            remove.setFixedSize(32, 32)
+            remove.clicked.connect(lambda checked=False, a=entry["address"]: self.remove_custom_server(a))
+            bottom.addWidget(remove)
+        connect = GlowButton("CONNECT")
+        connect.setObjectName("serverConnectButton")
+        connect.clicked.connect(lambda checked=False, a=entry["address"]: self.connect_to_server(a))
+        bottom.addWidget(connect)
+        lay.addLayout(bottom)
+
+        card._status = status
+        card._map_pic = map_pic
+        card._map_name = map_name
+        card._players = players
+        card._player_line = player_line
+        card._ping = ping
+        return card
+
+    def refresh_servers(self):
+        if not hasattr(self, "_server_entries"):
+            return
+        if self._server_refresh_worker is not None and self._server_refresh_worker.isRunning():
+            return
+
+        addresses = [entry["address"] for entry in self._server_entries]
+        self.serverRefreshButton.setEnabled(False)
+        for address in addresses:
+            card = self._server_cards.get(address)
+            if card is None:
+                continue
+            card._status.setText("●  CHECKING")
+            card._status.setProperty("state", "checking")
+            card._status.style().unpolish(card._status)
+            card._status.style().polish(card._status)
+            card._ping.setText("PING  —")
+
+        if not addresses:
+            self.serverRefreshButton.setEnabled(True)
+            return
+
+        # One retained QThread owns the complete refresh. The previous version
+        # created one QThread per card; that could leave a QThread being destroyed
+        # while its UDP query was still running and crash the whole launcher.
+        worker = ServerRefreshWorker(addresses, self)
+        self._server_refresh_worker = worker
+        worker.result_ready.connect(self._server_query_result)
+        worker.finished.connect(self._server_refresh_finished)
+        worker.start()
+
+    def _server_refresh_finished(self):
+        worker = self._server_refresh_worker
+        self._server_refresh_worker = None
+        self.serverRefreshButton.setEnabled(True)
+        if worker is not None:
+            worker.deleteLater()
+
+    def _server_query_result(self, data):
+        card = self._server_cards.get(data.get("address"))
+        if card is None:
+            return
+        if not data.get("online"):
+            card._status.setText("●  OFFLINE")
+            card._status.setProperty("state", "offline")
+            card._map_name.setText("No response")
+            card._players.setText("Players: —")
+            card._player_line.setText(data.get("error", "Server unavailable"))
+            card._ping.setText("PING  —")
+        else:
+            card._status.setText("●  ONLINE")
+            card._status.setProperty("state", "online")
+            info = data.get("info", {})
+            server_name = strip_q3_colors(info.get("sv_hostname", "")).strip()
+            if server_name:
+                # Preserve the user's custom label, but use live hostname for built-ins.
+                if not card._entry.get("custom"):
+                    card.layout().itemAt(0).layout().itemAt(0).widget().setText(server_name)
+            mapname = info.get("mapname", "unknown")
+            card._map_name.setText(str(mapname))
+            max_clients = info.get("sv_maxclients", info.get("sv_maxClients", "?"))
+            player_rows = data.get("players", [])
+            if data.get("query") == "getinfo":
+                live_count = info.get("clients", info.get("g_humanplayers", "?"))
+            else:
+                live_count = len(player_rows)
+            card._players.setText(f"Players: {live_count}/{max_clients}")
+            names = [strip_q3_colors(x.get("name", "")).strip() for x in data.get("players", [])]
+            names = [x for x in names if x]
+            card._player_line.setText("  •  ".join(names[:5]) if names else "Server is empty")
+            card._ping.setText(f"PING  {data.get('ping', '—')} ms")
+            self._set_server_map_image(card._map_pic, str(mapname))
+        card._status.style().unpolish(card._status); card._status.style().polish(card._status)
+
+    def _set_server_map_image(self, label, mapname):
+        for ext in (".png", ".jpg", ".jpeg", ".webp"):
+            path = SERVERS_ASSETS_DIR / (mapname + ext)
+            if path.is_file():
+                pix = QtGui.QPixmap(str(path))
+                if not pix.isNull():
+                    label.setPixmap(pix.scaled(label.size(), QtCore.Qt.AspectRatioMode.KeepAspectRatioByExpanding, QtCore.Qt.TransformationMode.SmoothTransformation))
+                    label.setText("")
+                    return
+        label.setPixmap(QtGui.QPixmap())
+        label.setText(mapname.upper())
+
+    def add_server_dialog(self):
+        dialog = QtWidgets.QDialog(self)
+        dialog.setObjectName("serverDialog")
+        dialog.setWindowTitle("Add Quake 3 server")
+        dialog.setFixedWidth(430)
+        lay = QtWidgets.QVBoxLayout(dialog)
+        title = QtWidgets.QLabel("ADD SERVER")
+        title.setObjectName("sectionTitle")
+        lay.addWidget(title)
+        name = QtWidgets.QLineEdit()
+        name.setPlaceholderText("Server name (optional)")
+        name.setObjectName("serverInput")
+        lay.addWidget(name)
+        address = QtWidgets.QLineEdit()
+        address.setPlaceholderText("IP / hostname:port   e.g. q3msk.net:27977")
+        address.setObjectName("serverInput")
+        lay.addWidget(address)
+        buttons = QtWidgets.QHBoxLayout()
+        buttons.addStretch(1)
+        cancel = GlowButton("CANCEL"); cancel.setObjectName("serverToolbarButton"); cancel.clicked.connect(dialog.reject)
+        save = GlowButton("ADD"); save.setObjectName("serverConnectButton"); save.clicked.connect(dialog.accept)
+        buttons.addWidget(cancel); buttons.addWidget(save); lay.addLayout(buttons)
+        address.returnPressed.connect(dialog.accept)
+        if dialog.exec() != QtWidgets.QDialog.DialogCode.Accepted:
+            return
+        value = address.text().strip()
+        if not value:
+            return
+        if "://" in value:
+            parsed = urllib.parse.urlparse(value)
+            value = (parsed.netloc or parsed.path).strip()
+        if ":" not in value:
+            value += ":27960"
+        host, sep, port_text = value.rpartition(":")
+        if not sep or not host or not port_text.isdigit() or not (1 <= int(port_text) <= 65535):
+            self.qerror("Enter a Quake 3 server as IP:port or hostname:port.\nExample: q3msk.net:27960")
+            return
+        if any(x["address"].casefold() == value.casefold() for x in self._server_entries):
+            self.qerror("This server is already in the list.")
+            return
+        self._server_entries.append({"name": name.text().strip() or value, "address": value, "custom": True})
+        self._save_custom_servers()
+        self._rebuild_server_cards()
+        QtCore.QTimer.singleShot(50, self.refresh_servers)
+
+    def remove_custom_server(self, address):
+        self._server_entries = [x for x in self._server_entries if not (x.get("custom") and x["address"] == address)]
+        self._save_custom_servers()
+        self._rebuild_server_cards()
+
+    def connect_to_server(self, address):
+        """Launch Q3Elite and pass +connect directly to the Vulkan engine."""
+        if not q3elite_is_installed():
+            self.qerror("Q3Elite must be installed before connecting to a server.")
+            return
+        try:
+            # Prefer the existing Cinematic batch if present because it already
+            # contains the launcher's correct fs_basepath/fs_homepath settings.
+            bat = GAME_ROOT / "Q3Elite" / "Engines" / "Q3Elite (Vulkan) - Cinematic.bat"
+            if bat.is_file():
+                subprocess.Popen(["cmd", "/c", "start", "", str(bat), "+connect", address], cwd=str(bat.parent))
+            elif VULKAN_EXE.is_file():
+                subprocess.Popen([str(VULKAN_EXE), "+connect", address], cwd=str(VULKAN_EXE.parent))
+            else:
+                raise FileNotFoundError("Vulkan engine was not found.")
+            self.statusDetail.setText(f"Connecting to {address}...")
+        except Exception as error:
+            self.qerror(f"Could not connect to server:\n{error}")
+
     # ------------------------------------------------------------------
     # STATISTICS — experimental UI / API adapter
     # ------------------------------------------------------------------
@@ -4830,18 +5330,21 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
             "home": (self.homePage, self.homeNav),
             "addons": (self.addonsPage, self.addonsNav),
             "statistics": (self.statisticsPage, self.statisticsNav),
+            "servers": (self.serversPage, self.serversNav),
             "settings": (self.settingsPage, self.settingsNav),
             "changelog": (self.changelogPage, self.changelogNav),
         }
         widget, active = mapping[page]
         self.pages.setCurrentWidget(widget)
-        for b in (self.homeNav, self.addonsNav, self.statisticsNav, self.settingsNav, self.changelogNav):
+        for b in (self.homeNav, self.addonsNav, self.statisticsNav, self.serversNav, self.settingsNav, self.changelogNav):
             b.setChecked(b is active)
         if page == "addons":
             refresh_component_gui()
+        elif page == "servers":
+            self.refresh_servers()
 
     def set_navigation_enabled(self, enabled):
-        for b in (self.homeNav, self.addonsNav, self.statisticsNav, self.settingsNav, self.changelogNav, self.refreshButton):
+        for b in (self.homeNav, self.addonsNav, self.statisticsNav, self.serversNav, self.settingsNav, self.changelogNav, self.refreshButton):
             b.setEnabled(enabled)
 
     def _load_component_state_initial(self):
@@ -4961,6 +5464,13 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
             self.restore_from_tray()
 
     def closeEvent(self, event):
+        # Never destroy a running server-monitor QThread. UDP reads use short
+        # timeouts, so interruption + a bounded wait is enough for clean exit.
+        server_worker = getattr(self, "_server_refresh_worker", None)
+        if server_worker is not None and server_worker.isRunning():
+            server_worker.requestInterruption()
+            server_worker.wait(2200)
+
         if (
             not self._allow_close
             and launcher_settings.get("minimize_to_tray", False)
