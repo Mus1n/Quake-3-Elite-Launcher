@@ -500,3 +500,164 @@ QLabel#youtubeThumbnailImage {
     border: none;
     border-radius: 9px;
 }
+
+
+/* v0.09.4 experimental Statistics page */
+QFrame#statisticsSearchCard,
+QFrame#statisticsProfileCard,
+QFrame#statisticsEmpty {
+    background-color: rgba(5, 5, 6, 150);
+    border: 1px solid rgba(160, 145, 130, 55);
+    border-radius: 10px;
+}
+
+QLineEdit#statisticsNickname {
+    min-height: 38px;
+    padding: 0px 12px;
+    color: #eee8df;
+    background-color: rgba(0, 0, 0, 175);
+    border: 1px solid rgba(160, 145, 130, 75);
+    border-radius: 8px;
+    selection-background-color: #7d100c;
+}
+QLineEdit#statisticsNickname:hover {
+    border-color: rgba(190, 120, 55, 120);
+}
+QLineEdit#statisticsNickname:focus {
+    border-color: rgba(205, 145, 65, 180);
+    background-color: rgba(8, 6, 6, 205);
+}
+
+QLabel#statisticsMessage {
+    color: rgba(205, 198, 190, 150);
+    font-size: 11px;
+}
+
+QScrollArea#statisticsScroll,
+QWidget#statisticsContent {
+    background: transparent;
+    border: none;
+}
+
+QFrame#statisticsProfileCard {
+    border-color: rgba(165, 55, 35, 95);
+    background-color: rgba(18, 5, 6, 155);
+}
+QLabel#statisticsPlayerName {
+    font-family: "MB Before the End", "Segoe UI";
+    color: #e9d7bb;
+    font-size: 25px;
+    font-weight: 700;
+    letter-spacing: 2px;
+}
+QLabel#statisticsMatchesValue {
+    color: #d79a28;
+    font-size: 22px;
+    font-weight: 700;
+}
+QLabel#statisticsGroupTitle {
+    color: #a99e92;
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 2px;
+    padding: 4px 2px 0px 2px;
+}
+
+QFrame#statisticsTile,
+QFrame#statisticsTileAccent {
+    min-height: 63px;
+    background-color: rgba(4, 4, 5, 145);
+    border: 1px solid rgba(145, 132, 120, 48);
+    border-radius: 8px;
+}
+QFrame#statisticsTile:hover,
+QFrame#statisticsTileAccent:hover {
+    background-color: rgba(45, 7, 7, 150);
+    border-color: rgba(165, 50, 30, 105);
+}
+QFrame#statisticsTileAccent {
+    border-color: rgba(180, 105, 40, 85);
+}
+QLabel#statisticsStatName {
+    color: rgba(190, 183, 174, 145);
+    font-size: 9px;
+    font-weight: 700;
+    letter-spacing: 1px;
+}
+QLabel#statisticsStatValue {
+    color: #eee8df;
+    font-size: 18px;
+    font-weight: 700;
+}
+QFrame#statisticsTileAccent QLabel#statisticsStatValue {
+    color: #d9a04a;
+}
+
+QLabel#statisticsEmptyIcon {
+    color: rgba(190, 120, 55, 120);
+    font-size: 30px;
+}
+QLabel#statisticsEmptyText {
+    color: rgba(205, 198, 190, 125);
+    font-size: 12px;
+}
+
+/* v0.09.5 Statistics — Overview / Weapon Accuracy tabs */
+QPushButton#statisticsTabButton {
+    min-height: 31px;
+    padding: 0px 15px;
+    color: rgba(190, 183, 174, 150);
+    background-color: rgba(4, 4, 5, 120);
+    border: 1px solid rgba(145, 132, 120, 45);
+    border-radius: 7px;
+    font-size: 9px;
+    font-weight: 700;
+    letter-spacing: 1px;
+}
+QPushButton#statisticsTabButton:hover {
+    color: #eee8df;
+    background-color: rgba(35, 7, 7, 145);
+    border-color: rgba(170, 65, 38, 100);
+}
+QPushButton#statisticsTabButton:checked {
+    color: #e6b35f;
+    background-color: rgba(75, 12, 8, 175);
+    border-color: rgba(195, 85, 42, 145);
+}
+QStackedWidget#statisticsTabs,
+QWidget#statisticsTabPage {
+    background: transparent;
+    border: none;
+}
+
+QTableWidget#statisticsWeaponTable {
+    color: #ddd6cd;
+    background-color: rgba(4, 4, 5, 145);
+    alternate-background-color: rgba(18, 8, 8, 125);
+    border: 1px solid rgba(145, 132, 120, 55);
+    border-radius: 8px;
+    outline: none;
+    font-size: 11px;
+}
+QTableWidget#statisticsWeaponTable::item {
+    padding: 0px 12px;
+    border-bottom: 1px solid rgba(145, 132, 120, 28);
+}
+QTableWidget#statisticsWeaponTable::item:hover {
+    background-color: rgba(55, 8, 8, 135);
+}
+QTableWidget#statisticsWeaponTable QHeaderView::section {
+    min-height: 34px;
+    padding: 0px 12px;
+    color: rgba(205, 190, 172, 175);
+    background-color: rgba(28, 7, 7, 210);
+    border: none;
+    border-bottom: 1px solid rgba(175, 75, 38, 95);
+    font-size: 9px;
+    font-weight: 700;
+    letter-spacing: 1px;
+}
+QTableWidget#statisticsWeaponTable QTableCornerButton::section {
+    background-color: rgba(28, 7, 7, 210);
+    border: none;
+}

@@ -3877,9 +3877,10 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
 
         self.homeNav = self._nav_button("HOME", "home", "fa5s.home")
         self.addonsNav = self._nav_button("INSTALL ADDONS", "addons", "fa5s.puzzle-piece")
+        self.statisticsNav = self._nav_button("STATISTICS", "statistics", "fa5s.chart-bar")
         self.settingsNav = self._nav_button("SETTINGS", "settings", "fa5s.cog")
         self.changelogNav = self._nav_button("CHANGELOG", "changelog", "fa5s.scroll")
-        for button in (self.homeNav, self.addonsNav, self.settingsNav, self.changelogNav):
+        for button in (self.homeNav, self.addonsNav, self.statisticsNav, self.settingsNav, self.changelogNav):
             side.addWidget(button)
 
         side.addStretch(1)
@@ -3927,9 +3928,10 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
         self.pages.setObjectName("pages")
         self.homePage = self._build_home()
         self.addonsPage = self._build_addons()
+        self.statisticsPage = self._build_statistics()
         self.settingsPage = self._build_settings()
         self.changelogPage = self._build_changelog()
-        for page in (self.homePage, self.addonsPage, self.settingsPage, self.changelogPage):
+        for page in (self.homePage, self.addonsPage, self.statisticsPage, self.settingsPage, self.changelogPage):
             self.pages.addWidget(page)
         body_layout.addWidget(self.pages, 1)
         root.addWidget(body, 1)
@@ -4400,6 +4402,359 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
         lay.addWidget(apply, 0, QtCore.Qt.AlignmentFlag.AlignRight)
         return page
 
+    # ------------------------------------------------------------------
+    # STATISTICS — experimental UI / API adapter
+    # ------------------------------------------------------------------
+    def _build_statistics(self):
+        page = QtWidgets.QWidget()
+        root = QtWidgets.QVBoxLayout(page)
+        root.setContentsMargins(4, 4, 4, 4)
+        root.setSpacing(12)
+
+        header = QtWidgets.QHBoxLayout()
+        title = QtWidgets.QLabel("STATISTICS")
+        title.setObjectName("pageTitle")
+        header.addWidget(title)
+        header.addStretch(1)
+        hint = QtWidgets.QLabel("Q3MSK  •  PLAYER LOOKUP  •  EXPERIMENTAL")
+        hint.setObjectName("muted")
+        header.addWidget(hint)
+        root.addLayout(header)
+
+        search_card = QtWidgets.QFrame()
+        search_card.setObjectName("statisticsSearchCard")
+        search_l = QtWidgets.QVBoxLayout(search_card)
+        search_l.setContentsMargins(18, 15, 18, 15)
+        search_l.setSpacing(9)
+
+        search_title = QtWidgets.QLabel("FIND PLAYER")
+        search_title.setObjectName("sectionTitle")
+        search_l.addWidget(search_title)
+
+        search_row = QtWidgets.QHBoxLayout()
+        search_row.setSpacing(10)
+        self.statisticsNickname = QtWidgets.QLineEdit()
+        self.statisticsNickname.setObjectName("statisticsNickname")
+        self.statisticsNickname.setPlaceholderText("Enter nickname — e.g. Mus1n")
+        self.statisticsNickname.setClearButtonEnabled(True)
+        self.statisticsNickname.returnPressed.connect(self.lookup_statistics)
+        search_row.addWidget(self.statisticsNickname, 1)
+
+        self.statisticsSearchButton = GlowButton("SEARCH")
+        self.statisticsSearchButton.setObjectName("applyButton")
+        self.statisticsSearchButton.setFixedWidth(145)
+        self.statisticsSearchButton.clicked.connect(self.lookup_statistics)
+        search_row.addWidget(self.statisticsSearchButton)
+        search_l.addLayout(search_row)
+
+        self.statisticsMessage = QtWidgets.QLabel(
+            "Nickname search is ready for the upcoming statistics API. "
+            "Mus1n currently loads local preview data so the launcher UI can be tested."
+        )
+        self.statisticsMessage.setObjectName("statisticsMessage")
+        self.statisticsMessage.setWordWrap(True)
+        search_l.addWidget(self.statisticsMessage)
+        root.addWidget(search_card)
+
+        self.statisticsResults = QtWidgets.QScrollArea()
+        self.statisticsResults.setObjectName("statisticsScroll")
+        self.statisticsResults.setWidgetResizable(True)
+        self.statisticsResults.setFrameShape(QtWidgets.QFrame.Shape.NoFrame)
+        self.statisticsResults.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+
+        self.statisticsContent = QtWidgets.QWidget()
+        self.statisticsContent.setObjectName("statisticsContent")
+        self.statisticsLayout = QtWidgets.QVBoxLayout(self.statisticsContent)
+        self.statisticsLayout.setContentsMargins(0, 0, 8, 0)
+        self.statisticsLayout.setSpacing(11)
+        self.statisticsResults.setWidget(self.statisticsContent)
+        root.addWidget(self.statisticsResults, 1)
+
+        self._show_statistics_empty()
+        return page
+
+    @staticmethod
+    def _statistics_clean_nickname(value):
+        # Quake 3 color sequences are not part of the searchable nickname.
+        return re.sub(r"\^[0-9A-Za-z]", "", str(value or "")).strip()
+
+    @staticmethod
+    def _statistics_preview_payload(nickname):
+        """Temporary local payload. Replace only this adapter when the API is ready."""
+        clean = ModernLauncherWindow._statistics_clean_nickname(nickname)
+        if not clean.casefold().startswith("mus1n"):
+            return None
+        return {
+            "nickname": clean or "Mus1n",
+            "matches": 576,
+            "kills": 10994,
+            "deaths": 5624,
+            "kd": 1.955,
+            "thaws": 4252,
+            "unfreezes": 1946,
+            "suicides": 166,
+            "damage_given": 3311148,
+            "damage_received": 2230404,
+            "armor": 283730,
+            "health": 249380,
+            "yellow_armor": 2474,
+            "red_armor": 1412,
+            "mega": 1208,
+            # Experimental weapon preview. The real API will replace these rows.
+            # Keep the schema simple: hits / attempts / kills / deaths.
+            "weapons": [
+                {"weapon": "Gauntlet", "hits": 0, "attempts": 0, "kills": 44, "deaths": 17},
+                {"weapon": "Machinegun", "hits": 4821, "attempts": 14852, "kills": 423, "deaths": 212},
+                {"weapon": "Shotgun", "hits": 6842, "attempts": 16731, "kills": 1256, "deaths": 593},
+                {"weapon": "Grenade Launcher", "hits": 1158, "attempts": 5126, "kills": 304, "deaths": 132},
+                {"weapon": "Rocket Launcher", "hits": 12574, "attempts": 28942, "kills": 3558, "deaths": 1867},
+                {"weapon": "Lightning Gun", "hits": 52761, "attempts": 173984, "kills": 2491, "deaths": 1204},
+                {"weapon": "Railgun", "hits": 9318, "attempts": 21706, "kills": 2045, "deaths": 1098},
+                {"weapon": "Plasma Gun", "hits": 15933, "attempts": 61218, "kills": 647, "deaths": 328},
+                {"weapon": "BFG", "hits": 86, "attempts": 241, "kills": 72, "deaths": 31},
+                {"weapon": "Grappling Hook", "hits": 0, "attempts": 0, "kills": 0, "deaths": 0},
+            ],
+        }
+
+    def _clear_statistics_results(self):
+        while self.statisticsLayout.count():
+            item = self.statisticsLayout.takeAt(0)
+            widget = item.widget()
+            if widget is not None:
+                widget.deleteLater()
+
+    def _show_statistics_empty(self, text="Search for a player to display statistics."):
+        self._clear_statistics_results()
+        empty = QtWidgets.QFrame()
+        empty.setObjectName("statisticsEmpty")
+        lay = QtWidgets.QVBoxLayout(empty)
+        lay.setContentsMargins(22, 34, 22, 34)
+        lay.setSpacing(7)
+        icon = QtWidgets.QLabel("⌁")
+        icon.setObjectName("statisticsEmptyIcon")
+        icon.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
+        lay.addWidget(icon)
+        label = QtWidgets.QLabel(text)
+        label.setObjectName("statisticsEmptyText")
+        label.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
+        label.setWordWrap(True)
+        lay.addWidget(label)
+        self.statisticsLayout.addWidget(empty)
+        self.statisticsLayout.addStretch(1)
+
+    def lookup_statistics(self):
+        nickname = self.statisticsNickname.text().strip()
+        if not nickname:
+            self.statisticsMessage.setText("Enter a nickname first.")
+            self.statisticsNickname.setFocus()
+            return
+
+        self.statisticsSearchButton.setEnabled(False)
+        self.statisticsSearchButton.setText("SEARCHING...")
+        QtWidgets.QApplication.processEvents()
+        try:
+            payload = self._statistics_preview_payload(nickname)
+            if payload is None:
+                self.statisticsMessage.setText(
+                    "The live statistics API is not connected yet. "
+                    "For now, use Mus1n to test the finished statistics layout."
+                )
+                self._show_statistics_empty("No preview data for this nickname yet.")
+                return
+            self.statisticsMessage.setText(
+                "Preview data loaded. The UI is API-ready; only the data adapter will be replaced."
+            )
+            self._render_statistics(payload)
+        finally:
+            self.statisticsSearchButton.setText("SEARCH")
+            self.statisticsSearchButton.setEnabled(True)
+
+    def _stat_tile(self, label, value, accent=False):
+        tile = QtWidgets.QFrame()
+        tile.setObjectName("statisticsTileAccent" if accent else "statisticsTile")
+        lay = QtWidgets.QVBoxLayout(tile)
+        lay.setContentsMargins(14, 10, 14, 10)
+        lay.setSpacing(2)
+        name = QtWidgets.QLabel(label.upper())
+        name.setObjectName("statisticsStatName")
+        value_label = QtWidgets.QLabel(str(value))
+        value_label.setObjectName("statisticsStatValue")
+        lay.addWidget(name)
+        lay.addWidget(value_label)
+        return tile
+
+    def _statistics_tab_button(self, text):
+        button = QtWidgets.QPushButton(text)
+        button.setObjectName("statisticsTabButton")
+        button.setCheckable(True)
+        button.setCursor(QtCore.Qt.CursorShape.PointingHandCursor)
+        button.setMinimumWidth(130)
+        return button
+
+    def _render_statistics(self, data):
+        self._clear_statistics_results()
+
+        profile = QtWidgets.QFrame()
+        profile.setObjectName("statisticsProfileCard")
+        profile_l = QtWidgets.QHBoxLayout(profile)
+        profile_l.setContentsMargins(18, 14, 18, 14)
+        profile_l.setSpacing(14)
+
+        identity = QtWidgets.QVBoxLayout()
+        kicker = QtWidgets.QLabel("PLAYER")
+        kicker.setObjectName("sectionTitle")
+        identity.addWidget(kicker)
+        nick = QtWidgets.QLabel(str(data.get("nickname", "Unknown")))
+        nick.setObjectName("statisticsPlayerName")
+        identity.addWidget(nick)
+        profile_l.addLayout(identity, 1)
+
+        matches = QtWidgets.QVBoxLayout()
+        matches.setAlignment(QtCore.Qt.AlignmentFlag.AlignRight | QtCore.Qt.AlignmentFlag.AlignVCenter)
+        matches_label = QtWidgets.QLabel("MATCHES")
+        matches_label.setObjectName("statisticsStatName")
+        matches_value = QtWidgets.QLabel(f"{int(data.get('matches', 0)):,}")
+        matches_value.setObjectName("statisticsMatchesValue")
+        matches_label.setAlignment(QtCore.Qt.AlignmentFlag.AlignRight)
+        matches_value.setAlignment(QtCore.Qt.AlignmentFlag.AlignRight)
+        matches.addWidget(matches_label)
+        matches.addWidget(matches_value)
+        profile_l.addLayout(matches)
+        self.statisticsLayout.addWidget(profile)
+
+        # Two result tabs: general overview + weapon accuracy.
+        tabs = QtWidgets.QHBoxLayout()
+        tabs.setSpacing(6)
+        self.statisticsOverviewTab = self._statistics_tab_button("OVERVIEW")
+        self.statisticsAccuracyTab = self._statistics_tab_button("WEAPON ACCURACY")
+        self.statisticsOverviewTab.setChecked(True)
+        tabs.addWidget(self.statisticsOverviewTab)
+        tabs.addWidget(self.statisticsAccuracyTab)
+        tabs.addStretch(1)
+        self.statisticsLayout.addLayout(tabs)
+
+        self.statisticsTabs = QtWidgets.QStackedWidget()
+        self.statisticsTabs.setObjectName("statisticsTabs")
+        self.statisticsTabs.addWidget(self._build_statistics_overview(data))
+        self.statisticsTabs.addWidget(self._build_statistics_accuracy(data))
+        self.statisticsLayout.addWidget(self.statisticsTabs)
+
+        def select_tab(index):
+            self.statisticsTabs.setCurrentIndex(index)
+            self.statisticsOverviewTab.setChecked(index == 0)
+            self.statisticsAccuracyTab.setChecked(index == 1)
+
+        self.statisticsOverviewTab.clicked.connect(lambda: select_tab(0))
+        self.statisticsAccuracyTab.clicked.connect(lambda: select_tab(1))
+        self.statisticsLayout.addStretch(1)
+
+    def _build_statistics_overview(self, data):
+        page = QtWidgets.QWidget()
+        page.setObjectName("statisticsTabPage")
+        lay = QtWidgets.QVBoxLayout(page)
+        lay.setContentsMargins(0, 2, 0, 0)
+        lay.setSpacing(10)
+
+        combat_title = QtWidgets.QLabel("COMBAT")
+        combat_title.setObjectName("statisticsGroupTitle")
+        lay.addWidget(combat_title)
+        combat = QtWidgets.QGridLayout()
+        combat.setHorizontalSpacing(10)
+        combat.setVerticalSpacing(10)
+        combat_values = [
+            ("Kills", f"{int(data.get('kills', 0)):,}", True),
+            ("Deaths", f"{int(data.get('deaths', 0)):,}", False),
+            ("K / D", f"{float(data.get('kd', 0.0)):.3f}", True),
+            ("Thaws", f"{int(data.get('thaws', 0)):,}", False),
+            ("Unfreezes", f"{int(data.get('unfreezes', 0)):,}", False),
+            ("Suicides", f"{int(data.get('suicides', 0)):,}", False),
+        ]
+        for i, (label, value, accent) in enumerate(combat_values):
+            combat.addWidget(self._stat_tile(label, value, accent), i // 3, i % 3)
+        lay.addLayout(combat)
+
+        performance_title = QtWidgets.QLabel("DAMAGE & PICKUPS")
+        performance_title.setObjectName("statisticsGroupTitle")
+        lay.addWidget(performance_title)
+        performance = QtWidgets.QGridLayout()
+        performance.setHorizontalSpacing(10)
+        performance.setVerticalSpacing(10)
+        performance_values = [
+            ("Damage given", f"{int(data.get('damage_given', 0)):,}"),
+            ("Damage received", f"{int(data.get('damage_received', 0)):,}"),
+            ("Armor taken", f"{int(data.get('armor', 0)):,}"),
+            ("Health taken", f"{int(data.get('health', 0)):,}"),
+            ("Yellow armor", f"{int(data.get('yellow_armor', 0)):,}"),
+            ("Red armor", f"{int(data.get('red_armor', 0)):,}"),
+            ("Mega health", f"{int(data.get('mega', 0)):,}"),
+        ]
+        for i, (label, value) in enumerate(performance_values):
+            performance.addWidget(self._stat_tile(label, value), i // 4, i % 4)
+        lay.addLayout(performance)
+        lay.addStretch(1)
+        return page
+
+    def _build_statistics_accuracy(self, data):
+        page = QtWidgets.QWidget()
+        page.setObjectName("statisticsTabPage")
+        lay = QtWidgets.QVBoxLayout(page)
+        lay.setContentsMargins(0, 2, 0, 0)
+        lay.setSpacing(8)
+
+        title = QtWidgets.QLabel("WEAPON ACCURACY")
+        title.setObjectName("statisticsGroupTitle")
+        lay.addWidget(title)
+
+        table = QtWidgets.QTableWidget()
+        table.setObjectName("statisticsWeaponTable")
+        table.setColumnCount(6)
+        table.setHorizontalHeaderLabels(["WEAPON", "HITS", "ATTEMPTS", "ACCURACY", "KILLS", "DEATHS"])
+        table.setEditTriggers(QtWidgets.QAbstractItemView.EditTrigger.NoEditTriggers)
+        table.setSelectionMode(QtWidgets.QAbstractItemView.SelectionMode.NoSelection)
+        table.setFocusPolicy(QtCore.Qt.FocusPolicy.NoFocus)
+        table.setShowGrid(False)
+        table.verticalHeader().setVisible(False)
+        table.horizontalHeader().setHighlightSections(False)
+        table.horizontalHeader().setSectionResizeMode(0, QtWidgets.QHeaderView.ResizeMode.Stretch)
+        for col in range(1, 6):
+            table.horizontalHeader().setSectionResizeMode(col, QtWidgets.QHeaderView.ResizeMode.ResizeToContents)
+
+        weapons = data.get("weapons", []) or []
+        table.setRowCount(len(weapons))
+        for row, weapon in enumerate(weapons):
+            hits = int(weapon.get("hits", 0) or 0)
+            attempts = int(weapon.get("attempts", weapon.get("atts", 0)) or 0)
+            kills = int(weapon.get("kills", 0) or 0)
+            deaths = int(weapon.get("deaths", 0) or 0)
+            accuracy = (hits / attempts * 100.0) if attempts > 0 else None
+            values = [
+                str(weapon.get("weapon", weapon.get("name", "Unknown"))),
+                f"{hits:,}",
+                f"{attempts:,}",
+                f"{accuracy:.1f}%" if accuracy is not None else "—",
+                f"{kills:,}",
+                f"{deaths:,}",
+            ]
+            for col, value in enumerate(values):
+                item = QtWidgets.QTableWidgetItem(value)
+                if col > 0:
+                    item.setTextAlignment(int(QtCore.Qt.AlignmentFlag.AlignRight | QtCore.Qt.AlignmentFlag.AlignVCenter))
+                table.setItem(row, col, item)
+            table.setRowHeight(row, 36)
+
+        # Keep the table itself non-scrolling; the Statistics page owns scrolling.
+        table.setVerticalScrollBarPolicy(QtCore.Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        table.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        table.setFixedHeight(36 + max(1, len(weapons)) * 36 + 4)
+        lay.addWidget(table)
+
+        note = QtWidgets.QLabel("Accuracy = hits / attempts. Weapon values are preview data until the statistics API is connected.")
+        note.setObjectName("statisticsMessage")
+        note.setWordWrap(True)
+        lay.addWidget(note)
+        lay.addStretch(1)
+        return page
+
     def _build_changelog(self):
         page = QtWidgets.QWidget()
         root = QtWidgets.QVBoxLayout(page)
@@ -4474,18 +4829,19 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
         mapping = {
             "home": (self.homePage, self.homeNav),
             "addons": (self.addonsPage, self.addonsNav),
+            "statistics": (self.statisticsPage, self.statisticsNav),
             "settings": (self.settingsPage, self.settingsNav),
             "changelog": (self.changelogPage, self.changelogNav),
         }
         widget, active = mapping[page]
         self.pages.setCurrentWidget(widget)
-        for b in (self.homeNav, self.addonsNav, self.settingsNav, self.changelogNav):
+        for b in (self.homeNav, self.addonsNav, self.statisticsNav, self.settingsNav, self.changelogNav):
             b.setChecked(b is active)
         if page == "addons":
             refresh_component_gui()
 
     def set_navigation_enabled(self, enabled):
-        for b in (self.homeNav, self.addonsNav, self.settingsNav, self.changelogNav, self.refreshButton):
+        for b in (self.homeNav, self.addonsNav, self.statisticsNav, self.settingsNav, self.changelogNav, self.refreshButton):
             b.setEnabled(enabled)
 
     def _load_component_state_initial(self):
