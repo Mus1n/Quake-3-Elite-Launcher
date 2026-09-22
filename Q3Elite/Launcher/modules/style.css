@@ -662,31 +662,134 @@ QTableWidget#statisticsWeaponTable QTableCornerButton::section {
     border: none;
 }
 
-/* v0.10.0 Servers — native Quake 3 monitor */
-QScrollArea#serversScroll, QWidget#serversContent { background: transparent; border: none; }
-QFrame#serverCard {
-    background-color: rgba(8, 8, 10, 178);
-    border: 1px solid rgba(145, 132, 120, 52);
-    border-radius: 10px;
+
+/* ==========================================================================
+   SERVERS
+   ========================================================================== */
+
+QScrollArea#serversScroll,
+QWidget#serversContent {
+    background: transparent;
+    border: none;
 }
-QFrame#serverCard:hover { border-color: rgba(178, 68, 42, 100); background-color: rgba(13, 8, 9, 195); }
-QLabel#serverName { color: #eee8df; font-size: 15px; font-weight: 700; }
-QLabel#serverAddress { color: rgba(202, 190, 178, 145); font-size: 10px; }
-QLabel#serverStatus { color: #c6a35c; font-size: 9px; font-weight: 700; letter-spacing: 1px; }
-QLabel#serverStatus[state="online"] { color: #62d47d; }
-QLabel#serverStatus[state="offline"] { color: #a85c58; }
-QFrame#serverMapFrame { background-color: rgba(2,2,3,150); border: 1px solid rgba(145,132,120,38); border-radius: 7px; }
-QLabel#serverMapImage { background-color: rgba(25,7,7,145); border: 1px solid rgba(165,68,38,70); border-radius: 5px; color: rgba(220,195,175,125); font-size: 9px; font-weight: 700; }
-QLabel#serverMapName { color: #d9a04a; font-size: 12px; font-weight: 700; }
-QLabel#serverPlayers { color: rgba(220,214,205,170); font-size: 10px; }
-QLabel#serverPlayerList { color: rgba(210,204,196,150); font-size: 9px; }
-QLabel#serverPing { color: rgba(205,190,172,165); font-size: 10px; font-weight: 700; }
-QPushButton#serverToolbarButton { min-height: 32px; padding: 0 14px; color: #d4cdc4; background-color: rgba(15,10,10,155); border: 1px solid rgba(145,132,120,55); border-radius: 7px; font-size: 9px; font-weight: 700; letter-spacing: 1px; }
-QPushButton#serverToolbarButton:hover { border-color: rgba(190,75,42,125); background-color: rgba(55,8,8,150); }
-QPushButton#serverConnectButton { min-width: 92px; min-height: 32px; padding: 0 14px; color: #f1e8dd; background-color: rgba(112,16,11,205); border: 1px solid rgba(205,75,42,155); border-radius: 7px; font-size: 9px; font-weight: 800; letter-spacing: 1px; }
-QPushButton#serverConnectButton:hover { background-color: rgba(155,23,15,225); border-color: rgba(235,105,62,195); }
-QPushButton#serverRemoveButton { color: #aa8d82; background: transparent; border: 1px solid rgba(145,132,120,40); border-radius: 6px; font-size: 17px; }
-QPushButton#serverRemoveButton:hover { color: #f0c0ae; border-color: rgba(195,70,45,120); background-color: rgba(75,10,8,120); }
-QDialog#serverDialog { background-color: #0c090a; }
-QLineEdit#serverInput { min-height: 35px; padding: 0 11px; color: #eee8df; background-color: rgba(2,2,3,190); border: 1px solid rgba(145,132,120,65); border-radius: 7px; selection-background-color: #7c1710; }
-QLineEdit#serverInput:focus { border-color: rgba(205,80,45,155); }
+
+QFrame#serverCard {
+    background: rgba(8, 9, 11, 205);
+    border: 1px solid rgba(170, 160, 145, 90);
+    border-radius: 13px;
+}
+
+QLabel#serverName {
+    color: #f0f0f0;
+    font-size: 15px;
+    font-weight: 700;
+}
+
+QLabel#serverAddress,
+QLabel#serverMap,
+QLabel#serverPing,
+QLabel#serverPlayers {
+    color: #aaa59e;
+    font-size: 11px;
+    font-weight: 600;
+}
+
+QLabel#serverState {
+    color: #8b3434;
+    font-size: 10px;
+    font-weight: 800;
+}
+
+QLabel#serverState[online="true"] {
+    color: #51d879;
+}
+
+QLabel#serverLevelshot {
+    background: rgba(0, 0, 0, 135);
+    border: 1px solid rgba(170, 160, 145, 75);
+    border-radius: 9px;
+    color: #77736e;
+    font-size: 11px;
+    font-weight: 700;
+}
+
+QLabel#serverPlayerList {
+    background: rgba(255, 255, 255, 9);
+    border: 1px solid rgba(255, 255, 255, 18);
+    border-radius: 7px;
+    color: #d1cfcb;
+    padding: 7px 9px;
+    font-size: 11px;
+}
+
+QPushButton#serverToolbarButton,
+QPushButton#serverSmallButton,
+QPushButton#serverConnectButton {
+    min-height: 30px;
+    padding: 0 12px;
+    border-radius: 6px;
+}
+
+QPushButton#serverSmallButton {
+    min-width: 54px;
+}
+
+QPushButton#serverConnectButton {
+    min-width: 105px;
+    color: #f0f0f0;
+    border: 1px solid rgba(170, 30, 35, 180);
+    background: rgba(118, 9, 14, 175);
+}
+
+QPushButton#serverConnectButton:hover {
+    background: rgba(157, 12, 18, 210);
+}
+
+QPushButton#serverOrderButton {
+    min-width: 28px;
+    max-width: 28px;
+    min-height: 30px;
+    padding: 0;
+    border-radius: 6px;
+}
+QLabel#serverEmpty {
+    color: #8f8b85;
+    font-size: 13px;
+    min-width: 1040px;
+    min-height: 300px;
+}
+
+QFrame#serverCard {
+    min-height: 500px;
+}
+QPushButton#serverEditButton,
+QPushButton#serverRemoveButton {
+    min-height: 30px;
+    padding: 0 10px;
+    border-radius: 6px;
+}
+QPushButton#serverRemoveButton {
+    color: #e4b7b7;
+    border: 1px solid rgba(170, 30, 35, 150);
+}
+
+QTreeWidget#serverPlayerList { background: rgba(255,255,255,9); border: 1px solid rgba(255,255,255,22); border-radius: 7px; color: #d7d4cf; outline: none; padding: 2px 4px; font-size: 11px; }
+QTreeWidget#serverPlayerList::item { min-height: 23px; padding: 0 5px; border: none; }
+QTreeWidget#serverPlayerList QHeaderView::section { background: rgba(0,0,0,90); color: #8f8b84; border: none; border-bottom: 1px solid rgba(255,255,255,18); padding: 4px 5px; font-size: 9px; font-weight: 700; }
+QPushButton#serverCarouselButton { min-width: 42px; max-width: 42px; min-height: 30px; max-height: 30px; padding: 0; border-radius: 6px; font-size: 20px; font-weight: 700; }
+
+QTreeWidget#serverPlayerList QHeaderView::section:last {
+    text-align: right;
+}
+QTreeWidget#serverPlayerList {
+    padding-right: 6px;
+}
+
+/* v0.10.6: strict three-card carousel viewport */
+QScrollArea#serversScroll {
+    background: transparent;
+    border: none;
+}
+QScrollArea#serversScroll > QWidget > QWidget {
+    background: transparent;
+}
