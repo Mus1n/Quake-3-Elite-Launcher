@@ -793,3 +793,59 @@ QScrollArea#serversScroll {
 QScrollArea#serversScroll > QWidget > QWidget {
     background: transparent;
 }
+
+
+/* Local Screenshots / Demos */
+QListWidget#mediaList, QTreeWidget#demoList {
+    background: rgba(8, 9, 10, 190);
+    border: 1px solid rgba(255,255,255,24);
+    border-radius: 10px;
+    padding: 5px;
+    outline: 0;
+}
+QListWidget#mediaList::item {
+    min-height: 32px;
+    padding: 5px 9px;
+    border-radius: 6px;
+}
+QListWidget#mediaList::item:selected, QTreeWidget#demoList::item:selected {
+    background: rgba(164, 0, 0, 150);
+}
+QFrame#mediaPreviewFrame {
+    background: rgba(8, 9, 10, 145);
+    border: 1px solid rgba(255,255,255,22);
+    border-radius: 12px;
+}
+QLabel#screenshotPreview {
+    background: #050505;
+    border-radius: 8px;
+}
+QPushButton#mediaArrow {
+    min-height: 34px;
+    font-size: 24px;
+}
+QPushButton#demoPlayButton {
+    min-height: 38px;
+    font-weight: 700;
+}
+QTreeWidget#demoList QHeaderView::section {
+    background: rgba(18,18,20,230);
+    border: 0;
+    border-bottom: 1px solid rgba(255,255,255,28);
+    padding: 8px;
+    font-weight: 700;
+}
+
+QLineEdit#mediaSearch, QComboBox#mediaCombo {
+    min-height: 34px;
+    background: rgba(8,9,10,190);
+    border: 1px solid rgba(255,255,255,28);
+    border-radius: 7px;
+    padding: 0 10px;
+}
+QLineEdit#mediaSearch:focus, QComboBox#mediaCombo:focus {
+    border: 1px solid rgba(164,0,0,180);
+}
+QComboBox#mediaCombo {
+    min-width: 112px;
+}

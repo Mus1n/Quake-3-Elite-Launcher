@@ -4098,9 +4098,11 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
         self.addonsNav = self._nav_button("INSTALL ADDONS", "addons", "fa5s.puzzle-piece")
         self.statisticsNav = self._nav_button("STATISTICS", "statistics", "fa5s.chart-bar")
         self.serversNav = self._nav_button("SERVERS", "servers", "fa5s.server")
+        self.screenshotsNav = self._nav_button("SCREENSHOTS", "screenshots", "fa5s.image")
+        self.demosNav = self._nav_button("DEMOS", "demos", "fa5s.film")
         self.settingsNav = self._nav_button("SETTINGS", "settings", "fa5s.cog")
         self.changelogNav = self._nav_button("CHANGELOG", "changelog", "fa5s.scroll")
-        for button in (self.homeNav, self.addonsNav, self.statisticsNav, self.serversNav, self.settingsNav, self.changelogNav):
+        for button in (self.homeNav, self.addonsNav, self.statisticsNav, self.serversNav, self.screenshotsNav, self.demosNav, self.settingsNav, self.changelogNav):
             side.addWidget(button)
 
         side.addStretch(1)
@@ -4150,12 +4152,18 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
         self.addonsPage = self._build_addons()
         self.statisticsPage = self._build_statistics()
         self.serversPage = self._build_servers()
+        self.screenshotsPage = self._build_screenshots()
+        self.demosPage = self._build_demos()
         self.settingsPage = self._build_settings()
         self.changelogPage = self._build_changelog()
-        for page in (self.homePage, self.addonsPage, self.statisticsPage, self.serversPage, self.settingsPage, self.changelogPage):
+        for page in (self.homePage, self.addonsPage, self.statisticsPage, self.serversPage, self.screenshotsPage, self.demosPage, self.settingsPage, self.changelogPage):
             self.pages.addWidget(page)
         body_layout.addWidget(self.pages, 1)
         root.addWidget(body, 1)
+
+        self.mediaFindShortcut = QtGui.QShortcut(QtGui.QKeySequence("Ctrl+F"), self)
+        self.mediaFindShortcut.setContext(QtCore.Qt.ShortcutContext.WidgetWithChildrenShortcut)
+        self.mediaFindShortcut.activated.connect(self._focus_current_media_search)
 
         self.show_page("home")
         self._load_component_state_initial()
@@ -4984,6 +4992,365 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
         return page
 
     # ------------------------------------------------------------------
+    # SCREENSHOTS / DEMOS — local OSP media
+    # ------------------------------------------------------------------
+    def _osp_screenshots_dir(self):
+        return GAME_ROOT / "baseq3" / "mods" / "osp" / "screenshots"
+
+    def _osp_demos_dir(self):
+        return GAME_ROOT / "baseq3" / "mods" / "osp" / "demos"
+
+    def _media_category(self, name):
+        """Infer a useful gametype bucket from common Q3 screenshot/demo filenames."""
+        s = str(name or "").lower()
+        stem = Path(s).stem
+
+        # Screenshots made by common Q3 screenshot commands are often shotXXXX.*
+        if "shot" in stem:
+            return "Singleplayer"
+
+        # Token-aware checks avoid accidental matches inside map/player names.
+        tokens = [x for x in re.split(r"[^a-z0-9]+", stem) if x]
+        if "ctf" in tokens or any(x.startswith("ctf") and x[3:].isdigit() for x in tokens):
+            return "CTF"
+        if "tdm" in tokens or "team" in tokens:
+            return "TDM"
+        if "ffa" in tokens or "dm" in tokens:
+            return "FFA"
+        return "Others"
+
+    def _media_matches_filter(self, path, query, category):
+        if query and query.lower() not in path.name.lower():
+            return False
+        return category == "All" or self._media_category(path.name) == category
+
+    def _media_sort_files(self, files, mode):
+        reverse = mode.endswith("↓")
+        if mode.startswith("Name"):
+            return sorted(files, key=lambda p: p.name.lower(), reverse=reverse)
+        return sorted(files, key=lambda p: p.stat().st_mtime, reverse=reverse)
+
+    def _make_media_toolbar(self, search_attr, sort_attr, filter_attr, refresh_callback):
+        bar = QtWidgets.QHBoxLayout()
+        bar.setSpacing(8)
+
+        search = QtWidgets.QLineEdit()
+        search.setObjectName("mediaSearch")
+        search.setPlaceholderText("Ctrl+F  Search...")
+        search.setClearButtonEnabled(True)
+        setattr(self, search_attr, search)
+        bar.addWidget(search, 1)
+
+        sort = QtWidgets.QComboBox()
+        sort.setObjectName("mediaCombo")
+        sort.addItems(["Date ↓", "Date ↑", "Name ↑", "Name ↓"])
+        setattr(self, sort_attr, sort)
+        bar.addWidget(sort)
+
+        filt = QtWidgets.QComboBox()
+        filt.setObjectName("mediaCombo")
+        filt.addItems(["All", "FFA", "TDM", "CTF", "Singleplayer", "Others"])
+        setattr(self, filter_attr, filt)
+        bar.addWidget(filt)
+
+        search.textChanged.connect(refresh_callback)
+        sort.currentTextChanged.connect(refresh_callback)
+        filt.currentTextChanged.connect(refresh_callback)
+        return bar
+
+    def _focus_current_media_search(self):
+        page = self.pages.currentWidget()
+        if page is getattr(self, "screenshotsPage", None):
+            self.screenshotSearch.setFocus()
+            self.screenshotSearch.selectAll()
+            return True
+        if page is getattr(self, "demosPage", None):
+            self.demoSearch.setFocus()
+            self.demoSearch.selectAll()
+            return True
+        return False
+
+    def _build_screenshots(self):
+        page = QtWidgets.QWidget()
+        root = QtWidgets.QVBoxLayout(page)
+        root.setContentsMargins(4, 4, 4, 4)
+        root.setSpacing(10)
+
+        header = QtWidgets.QHBoxLayout()
+        title = QtWidgets.QLabel("SCREENSHOTS")
+        title.setObjectName("pageTitle")
+        header.addWidget(title)
+        header.addStretch(1)
+        self.screenshotCountLabel = QtWidgets.QLabel("")
+        self.screenshotCountLabel.setObjectName("muted")
+        header.addWidget(self.screenshotCountLabel)
+        refresh = GlowButton("↻  REFRESH")
+        refresh.setObjectName("serverToolbarButton")
+        refresh.clicked.connect(self.refresh_screenshots)
+        header.addWidget(refresh)
+        full = GlowButton("FULL SCREEN")
+        full.setObjectName("serverToolbarButton")
+        full.clicked.connect(self.open_screenshot_fullscreen)
+        header.addWidget(full)
+        root.addLayout(header)
+        root.addLayout(self._make_media_toolbar(
+            "screenshotSearch", "screenshotSort", "screenshotFilter", self.refresh_screenshots
+        ))
+
+        body = QtWidgets.QHBoxLayout()
+        body.setSpacing(12)
+
+        self.screenshotList = QtWidgets.QListWidget()
+        self.screenshotList.setObjectName("mediaList")
+        self.screenshotList.setFixedWidth(285)
+        self.screenshotList.setVerticalScrollMode(QtWidgets.QAbstractItemView.ScrollMode.ScrollPerPixel)
+        self.screenshotList.currentRowChanged.connect(self._show_selected_screenshot)
+        self.screenshotList.itemDoubleClicked.connect(lambda _item: self.open_screenshot_fullscreen())
+        previewFrame = QtWidgets.QFrame()
+        previewFrame.setObjectName("mediaPreviewFrame")
+        previewLay = QtWidgets.QVBoxLayout(previewFrame)
+        previewLay.setContentsMargins(10, 10, 10, 10)
+        self.screenshotPreview = QtWidgets.QLabel("No screenshots found.")
+        self.screenshotPreview.setObjectName("screenshotPreview")
+        self.screenshotPreview.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
+        self.screenshotPreview.setMinimumSize(400, 300)
+        previewLay.addWidget(self.screenshotPreview, 1)
+
+        controls = QtWidgets.QHBoxLayout()
+        prev = GlowButton("‹")
+        prev.setObjectName("mediaArrow")
+        prev.setFixedWidth(54)
+        prev.clicked.connect(lambda: self._step_screenshot(-1))
+        controls.addWidget(prev)
+        controls.addStretch(1)
+        self.screenshotNameLabel = QtWidgets.QLabel("")
+        self.screenshotNameLabel.setObjectName("muted")
+        self.screenshotNameLabel.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
+        controls.addWidget(self.screenshotNameLabel)
+        controls.addStretch(1)
+        nxt = GlowButton("›")
+        nxt.setObjectName("mediaArrow")
+        nxt.setFixedWidth(54)
+        nxt.clicked.connect(lambda: self._step_screenshot(1))
+        controls.addWidget(nxt)
+        previewLay.addLayout(controls)
+        body.addWidget(previewFrame, 1)
+        body.addWidget(self.screenshotList)
+        root.addLayout(body, 1)
+        return page
+
+    def refresh_screenshots(self):
+        folder = self._osp_screenshots_dir()
+        folder.mkdir(parents=True, exist_ok=True)
+        previous = self.screenshotList.currentItem().data(QtCore.Qt.ItemDataRole.UserRole) if self.screenshotList.currentItem() else None
+        files = []
+        for ext in ("*.jpg", "*.jpeg", "*.png", "*.bmp", "*.webp"):
+            files.extend(folder.glob(ext))
+        query = self.screenshotSearch.text().strip() if hasattr(self, "screenshotSearch") else ""
+        category = self.screenshotFilter.currentText() if hasattr(self, "screenshotFilter") else "All"
+        mode = self.screenshotSort.currentText() if hasattr(self, "screenshotSort") else "Date ↓"
+        files = [p for p in files if self._media_matches_filter(p, query, category)]
+        files = self._media_sort_files(files, mode)
+        self.screenshotList.clear()
+        restore_row = 0
+        for i, path in enumerate(files):
+            item = QtWidgets.QListWidgetItem(f"{path.name}   ·   {self._media_category(path.name)}")
+            item.setData(QtCore.Qt.ItemDataRole.UserRole, str(path))
+            item.setToolTip(str(path))
+            self.screenshotList.addItem(item)
+            if previous and str(path) == previous:
+                restore_row = i
+        self.screenshotCountLabel.setText(f"{len(files)} screenshot{'s' if len(files) != 1 else ''}")
+        if files:
+            self.screenshotList.setCurrentRow(min(restore_row, len(files) - 1))
+        else:
+            self.screenshotPreview.clear()
+            self.screenshotPreview.setText("No screenshots found.")
+            self.screenshotNameLabel.clear()
+
+    def _selected_screenshot_path(self):
+        item = self.screenshotList.currentItem()
+        if not item:
+            return None
+        path = Path(item.data(QtCore.Qt.ItemDataRole.UserRole))
+        return path if path.is_file() else None
+
+    def _show_selected_screenshot(self, _row=-1):
+        path = self._selected_screenshot_path()
+        if not path:
+            self.screenshotPreview.clear()
+            self.screenshotPreview.setText("No screenshot selected.")
+            self.screenshotNameLabel.clear()
+            return
+        pix = QtGui.QPixmap(str(path))
+        if pix.isNull():
+            self.screenshotPreview.setText("Could not load screenshot.")
+            return
+        self._currentScreenshotPixmap = pix
+        self.screenshotNameLabel.setText(path.name)
+        self._rescale_screenshot_preview()
+
+    def _rescale_screenshot_preview(self):
+        pix = getattr(self, "_currentScreenshotPixmap", None)
+        if pix is None or pix.isNull():
+            return
+        size = self.screenshotPreview.size()
+        self.screenshotPreview.setPixmap(
+            pix.scaled(size, QtCore.Qt.AspectRatioMode.KeepAspectRatio,
+                       QtCore.Qt.TransformationMode.SmoothTransformation)
+        )
+
+    def _step_screenshot(self, direction):
+        count = self.screenshotList.count()
+        if not count:
+            return
+        row = self.screenshotList.currentRow()
+        self.screenshotList.setCurrentRow((row + direction) % count)
+        self.screenshotList.scrollToItem(self.screenshotList.currentItem())
+
+    def open_screenshot_fullscreen(self):
+        path = self._selected_screenshot_path()
+        if not path:
+            return
+        class _ScreenshotDialog(QtWidgets.QDialog):
+            def keyPressEvent(self, event):
+                if event.key() in (QtCore.Qt.Key.Key_Escape, QtCore.Qt.Key.Key_F11):
+                    self.accept()
+                    return
+                super().keyPressEvent(event)
+            def mouseDoubleClickEvent(self, event):
+                self.accept()
+        dlg = _ScreenshotDialog(self)
+        dlg.setObjectName("screenshotFullscreen")
+        dlg.setWindowTitle(path.name)
+        dlg.setWindowFlags(QtCore.Qt.WindowType.FramelessWindowHint | QtCore.Qt.WindowType.Dialog)
+        lay = QtWidgets.QVBoxLayout(dlg)
+        lay.setContentsMargins(0, 0, 0, 0)
+        label = QtWidgets.QLabel()
+        label.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
+        label.setStyleSheet("background:#000;")
+        pix = QtGui.QPixmap(str(path))
+        screen = QtGui.QGuiApplication.screenAt(QtGui.QCursor.pos()) or QtGui.QGuiApplication.primaryScreen()
+        target = screen.geometry().size() if screen else QtCore.QSize(1920, 1080)
+        label.setPixmap(pix.scaled(target, QtCore.Qt.AspectRatioMode.KeepAspectRatio,
+                                   QtCore.Qt.TransformationMode.SmoothTransformation))
+        lay.addWidget(label)
+        dlg.showFullScreen()
+        dlg._screenshot_label = label
+        dlg._screenshot_path = path
+        dlg.exec()
+
+    def _build_demos(self):
+        page = QtWidgets.QWidget()
+        root = QtWidgets.QVBoxLayout(page)
+        root.setContentsMargins(4, 4, 4, 4)
+        root.setSpacing(10)
+
+        header = QtWidgets.QHBoxLayout()
+        title = QtWidgets.QLabel("DEMOS")
+        title.setObjectName("pageTitle")
+        header.addWidget(title)
+        header.addStretch(1)
+        self.demoCountLabel = QtWidgets.QLabel("")
+        self.demoCountLabel.setObjectName("muted")
+        header.addWidget(self.demoCountLabel)
+        refresh = GlowButton("↻  REFRESH")
+        refresh.setObjectName("serverToolbarButton")
+        refresh.clicked.connect(self.refresh_demos)
+        header.addWidget(refresh)
+        root.addLayout(header)
+        root.addLayout(self._make_media_toolbar(
+            "demoSearch", "demoSort", "demoFilter", self.refresh_demos
+        ))
+
+
+        self.demoList = QtWidgets.QTreeWidget()
+        self.demoList.setObjectName("demoList")
+        self.demoList.setHeaderLabels(["DEMO", "TYPE", "MODIFIED", "SIZE"])
+        self.demoList.setRootIsDecorated(False)
+        self.demoList.setAlternatingRowColors(False)
+        self.demoList.setSelectionMode(QtWidgets.QAbstractItemView.SelectionMode.SingleSelection)
+        self.demoList.setVerticalScrollMode(QtWidgets.QAbstractItemView.ScrollMode.ScrollPerPixel)
+        self.demoList.header().setSectionResizeMode(0, QtWidgets.QHeaderView.ResizeMode.Stretch)
+        self.demoList.header().setSectionResizeMode(1, QtWidgets.QHeaderView.ResizeMode.ResizeToContents)
+        self.demoList.header().setSectionResizeMode(2, QtWidgets.QHeaderView.ResizeMode.ResizeToContents)
+        self.demoList.header().setSectionResizeMode(3, QtWidgets.QHeaderView.ResizeMode.ResizeToContents)
+        self.demoList.headerItem().setTextAlignment(
+            3, int(QtCore.Qt.AlignmentFlag.AlignRight | QtCore.Qt.AlignmentFlag.AlignVCenter)
+        )
+        self.demoList.itemDoubleClicked.connect(lambda _item, _col: self.play_selected_demo())
+        root.addWidget(self.demoList, 1)
+
+        bottom = QtWidgets.QHBoxLayout()
+        self.demoStatusLabel = QtWidgets.QLabel("Double-click a demo or select it and press PLAY.")
+        self.demoStatusLabel.setObjectName("muted")
+        bottom.addWidget(self.demoStatusLabel)
+        bottom.addStretch(1)
+        play = GlowButton("▶  PLAY")
+        play.setObjectName("demoPlayButton")
+        play.setMinimumWidth(150)
+        play.clicked.connect(self.play_selected_demo)
+        bottom.addWidget(play)
+        root.addLayout(bottom)
+        return page
+
+    def refresh_demos(self):
+        import datetime
+        folder = self._osp_demos_dir()
+        folder.mkdir(parents=True, exist_ok=True)
+        previous = self.demoList.currentItem().data(0, QtCore.Qt.ItemDataRole.UserRole) if self.demoList.currentItem() else None
+        files = [p for p in folder.iterdir() if p.is_file() and p.suffix.lower().startswith(".dm_")]
+        query = self.demoSearch.text().strip() if hasattr(self, "demoSearch") else ""
+        category = self.demoFilter.currentText() if hasattr(self, "demoFilter") else "All"
+        mode = self.demoSort.currentText() if hasattr(self, "demoSort") else "Date ↓"
+        files = [p for p in files if self._media_matches_filter(p, query, category)]
+        files = self._media_sort_files(files, mode)
+        self.demoList.clear()
+        restore = None
+        for path in files:
+            st = path.stat()
+            modified = datetime.datetime.fromtimestamp(st.st_mtime).strftime("%Y-%m-%d  %H:%M")
+            size = st.st_size
+            size_text = f"{size / (1024*1024):.1f} MB" if size >= 1024*1024 else f"{size / 1024:.0f} KB"
+            item = QtWidgets.QTreeWidgetItem([path.name, self._media_category(path.name), modified, size_text])
+            item.setData(0, QtCore.Qt.ItemDataRole.UserRole, str(path))
+            item.setTextAlignment(3, int(QtCore.Qt.AlignmentFlag.AlignRight | QtCore.Qt.AlignmentFlag.AlignVCenter))
+            self.demoList.addTopLevelItem(item)
+            if previous and str(path) == previous:
+                restore = item
+        self.demoCountLabel.setText(f"{len(files)} demo{'s' if len(files) != 1 else ''}")
+        if restore:
+            self.demoList.setCurrentItem(restore)
+        elif self.demoList.topLevelItemCount():
+            self.demoList.setCurrentItem(self.demoList.topLevelItem(0))
+
+    def play_selected_demo(self):
+        item = self.demoList.currentItem()
+        if not item:
+            self.demoStatusLabel.setText("Select a demo first.")
+            return
+        path = Path(item.data(0, QtCore.Qt.ItemDataRole.UserRole))
+        if not path.is_file():
+            self.demoStatusLabel.setText("Demo file no longer exists.")
+            return
+        launcher_bat = GAME_ROOT / "Q3Elite" / "Engines" / "Q3Elite (Vulkan) - Cinematic.bat"
+        if not launcher_bat.is_file():
+            self.qerror(f"Q3Elite Vulkan launcher was not found:\n{launcher_bat}")
+            return
+        try:
+            import subprocess
+            # Quake resolves demos from osp/demos, so pass the demo filename.
+            subprocess.Popen(
+                [str(launcher_bat), "+demo", path.name],
+                cwd=str(launcher_bat.parent),
+                shell=True,
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+            )
+            self.demoStatusLabel.setText(f"Playing {path.name}")
+        except Exception as error:
+            self.qerror(f"Could not play demo:\n{error}")
+
+    # ------------------------------------------------------------------
     # SERVERS — native Quake 3 UDP monitor
     # ------------------------------------------------------------------
     def _build_servers(self):
@@ -5323,15 +5690,21 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
             "addons": (self.addonsPage, self.addonsNav),
             "statistics": (self.statisticsPage, self.statisticsNav),
             "servers": (self.serversPage, self.serversNav),
+            "screenshots": (self.screenshotsPage, self.screenshotsNav),
+            "demos": (self.demosPage, self.demosNav),
             "settings": (self.settingsPage, self.settingsNav),
             "changelog": (self.changelogPage, self.changelogNav),
         }
         widget, active = mapping[page]
         self.pages.setCurrentWidget(widget)
-        for b in (self.homeNav, self.addonsNav, self.statisticsNav, self.serversNav, self.settingsNav, self.changelogNav):
+        for b in (self.homeNav, self.addonsNav, self.statisticsNav, self.serversNav, self.screenshotsNav, self.demosNav, self.settingsNav, self.changelogNav):
             b.setChecked(b is active)
         if page == "addons":
             refresh_component_gui()
+        if page == "screenshots":
+            self.refresh_screenshots()
+        if page == "demos":
+            self.refresh_demos()
         if page == "servers":
             self.serverRefreshTimer.start()
             QtCore.QTimer.singleShot(0, self._resize_servers_content)
@@ -5340,7 +5713,7 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
             self.serverRefreshTimer.stop()
 
     def set_navigation_enabled(self, enabled):
-        for b in (self.homeNav, self.addonsNav, self.statisticsNav, self.serversNav, self.settingsNav, self.changelogNav, self.refreshButton):
+        for b in (self.homeNav, self.addonsNav, self.statisticsNav, self.serversNav, self.screenshotsNav, self.demosNav, self.settingsNav, self.changelogNav, self.refreshButton):
             b.setEnabled(enabled)
 
     def _load_component_state_initial(self):
