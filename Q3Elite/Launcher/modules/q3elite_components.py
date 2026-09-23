@@ -413,8 +413,10 @@ def _bulk_install_basic_core(files, control=None, progress_callback=None):
             progress_callback=progress_callback,
             expected_size=None,
             use_part_file=True,
-            timeout_value=300,
+            timeout_value=15,
             probe_remote_size=False,
+            dynamic_stream=True,
+            stall_timeout=900,
         )
         if not result:
             raise RuntimeError("Basic bulk ZIP download failed/cancelled.")
@@ -502,8 +504,10 @@ def _bulk_install_basic_maps(files, control=None, progress_callback=None):
             progress_callback=progress_callback,
             expected_size=None,
             use_part_file=True,
-            timeout_value=300,
+            timeout_value=15,
             probe_remote_size=False,
+            dynamic_stream=True,
+            stall_timeout=900,
         )
         if not result:
             raise RuntimeError("Basic QL maps bulk ZIP download failed/cancelled.")
@@ -766,8 +770,10 @@ def _bulk_install_maps(group, control=None, progress_callback=None):
             progress_callback=progress_callback,
             expected_size=None,
             use_part_file=True,
-            timeout_value=300,
+            timeout_value=15,
             probe_remote_size=False,
+            dynamic_stream=True,
+            stall_timeout=900,
         )
         if not result:
             raise RuntimeError("External Maps bulk ZIP download failed/cancelled.")

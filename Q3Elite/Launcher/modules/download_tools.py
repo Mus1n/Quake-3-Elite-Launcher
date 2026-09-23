@@ -10,6 +10,7 @@ import time
 import urllib.request
 import urllib.error
 import http.client
+import socket
 from math import floor
 from pathlib import Path
 
@@ -166,6 +167,8 @@ def downloader(
     use_part_file=True,
     timeout_value=10,
     probe_remote_size=True,
+    dynamic_stream=False,
+    stall_timeout=900,
 ):
     """
     Download a file with resume, pause/resume control and progress reporting.
@@ -180,6 +183,9 @@ def downloader(
         use_part_file       store incomplete data as <name>.part.
         probe_remote_size     use a separate HEAD request to discover size.
                               Disable for dynamically generated ZIP streams.
+        dynamic_stream         tolerate temporary read stalls without reconnecting.
+                              Intended for pCloud getpubzip streams.
+        stall_timeout          maximum cumulative no-data stall before giving up.
 
     Incomplete downloads use <name>.part by default for every launcher download
     (Q3Elite, official PAKs, OSP2-BE and updater files). The final filename is
@@ -283,6 +289,12 @@ def downloader(
                 timeout=timeout_value
             ) as response:
 
+                # pCloud getpubzip can temporarily stop producing bytes while
+                # continuing to generate the archive. Keep the SAME HTTP
+                # response alive across read timeouts; reconnecting is unsafe
+                # because a newly generated ZIP is not byte-identical.
+                stall_started = None
+
                 status = response.getcode()
 
                 # Server ignored Range. Restart instead of appending duplicate
@@ -326,8 +338,47 @@ def downloader(
 
                         try:
                             chunk = response.read(chunk_size)
+                            stall_started = None
+                        except (socket.timeout, TimeoutError) as error:
+                            if not dynamic_stream:
+                                raise
+
+                            now = time.monotonic()
+                            if stall_started is None:
+                                stall_started = now
+
+                            stalled_for = now - stall_started
+                            _call_progress(
+                                progress_callback,
+                                downloaded,
+                                total_length,
+                                0.0,
+                                file_name,
+                            )
+
+                            print(
+                                f"\rWaiting for pCloud ZIP stream... "
+                                f"{stalled_for:.0f}s "
+                                f"({downloaded / 1048576:.1f} MB received)   ",
+                                end="",
+                                flush=True,
+                            )
+
+                            if stalled_for >= stall_timeout:
+                                raise ConnectionError(
+                                    f"pCloud ZIP stream stalled for "
+                                    f"{stall_timeout} seconds."
+                                )
+
+                            # Stay on this exact HTTP response. Do NOT retry with
+                            # Range, because getpubzip may regenerate a different ZIP.
+                            continue
                         except http.client.IncompleteRead as error:
                             chunk = error.partial
+                            if not chunk:
+                                raise ConnectionError(
+                                    "pCloud closed the ZIP stream before EOF."
+                                )
 
                         if not chunk:
                             break
