@@ -165,6 +165,7 @@ def downloader(
     expected_size=None,
     use_part_file=True,
     timeout_value=10,
+    probe_remote_size=True,
 ):
     """
     Download a file with resume, pause/resume control and progress reporting.
@@ -177,6 +178,8 @@ def downloader(
         progress_callback   callback(downloaded, total, bytes_per_second, name)
         expected_size       trusted total size (pCloud metadata is ideal).
         use_part_file       store incomplete data as <name>.part.
+        probe_remote_size     use a separate HEAD request to discover size.
+                              Disable for dynamically generated ZIP streams.
 
     Incomplete downloads use <name>.part by default for every launcher download
     (Q3Elite, official PAKs, OSP2-BE and updater files). The final filename is
@@ -214,7 +217,7 @@ def downloader(
         except (TypeError, ValueError):
             total_length = None
 
-    if total_length is None or total_length <= 0:
+    if (total_length is None or total_length <= 0) and probe_remote_size:
         total_length = _remote_size(file_url, headers, timeout_value)
 
     # If an old final file already exists and we now use .part, accept it when

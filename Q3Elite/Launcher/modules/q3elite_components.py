@@ -356,6 +356,74 @@ def _extract_basic_zip(zip_path, group):
     return extracted
 
 
+
+class _CombinedBasicProgress:
+    """Present the CORE ZIP + Basic QL maps ZIP as one continuous Basic download."""
+
+    def __init__(self, callback, core_total, maps_total):
+        self.callback = callback
+        self.core_total = max(0, int(core_total or 0))
+        self.maps_total = max(0, int(maps_total or 0))
+        self.total = self.core_total + self.maps_total
+
+    def core(self, downloaded, _total, speed, _name):
+        if not self.callback:
+            return
+        done = min(max(0, int(downloaded or 0)), self.core_total)
+        self.callback(done, self.total or None, speed, "Q3Elite Basic")
+
+    def maps(self, downloaded, _total, speed, _name):
+        if not self.callback:
+            return
+        maps_done = min(max(0, int(downloaded or 0)), self.maps_total)
+        done = self.core_total + maps_done
+        self.callback(done, self.total or None, speed, "Q3Elite Basic")
+
+    def preparing_core(self):
+        if self.callback:
+            self.callback(0, self.total or None, 0.0, "Preparing Q3Elite Basic...")
+
+    def preparing_maps(self):
+        if self.callback:
+            self.callback(
+                self.core_total,
+                self.total or None,
+                0.0,
+                "Preparing Q3Elite Basic maps..."
+            )
+
+    def complete(self):
+        if self.callback and self.total:
+            self.callback(self.total, self.total, 0.0, "Q3Elite Basic")
+
+
+def _basic_bulk_sizes(files):
+    """Return logical byte totals used by the unified Basic progress bar."""
+    core_group = _basic_core_group(files)
+    maps_group = _basic_remote_maps_group(files)
+
+    core_sizes = _size_index(pcloud.CORE)
+    map_sizes = _size_index(pcloud.MAPS)
+
+    core_prefix = norm(pcloud.CORE) + "/"
+    maps_prefix = norm(pcloud.MAPS) + "/"
+
+    core_total = 0
+    for rel in core_group:
+        remote = norm(pcloud.remote_for(rel, is_map=False))
+        if remote.casefold().startswith(core_prefix.casefold()):
+            key = remote[len(core_prefix):].casefold()
+            core_total += int(core_sizes.get(key, 0))
+
+    maps_total = 0
+    for rel in maps_group:
+        remote = norm(pcloud.remote_for(rel, is_map=True))
+        if remote.casefold().startswith(maps_prefix.casefold()):
+            key = remote[len(maps_prefix):].casefold()
+            maps_total += int(map_sizes.get(key, 0))
+
+    return core_total, maps_total
+
 def _bulk_install_basic_core(files, control=None, progress_callback=None):
     """
     Fresh-install accelerator.
@@ -391,8 +459,6 @@ def _bulk_install_basic_core(files, control=None, progress_callback=None):
         print("[bulk] Cached Basic ZIP is invalid; removing it.")
         BASIC_ZIP.unlink()
 
-    if progress_callback:
-        progress_callback(0, None, 0.0, "Preparing Basic ZIP on pCloud...")
     url = pcloud.pubzip_url(pcloud.CORE, "Q3Elite_Basic.zip")
 
     print("\nFresh Basic install detected.")
@@ -414,6 +480,7 @@ def _bulk_install_basic_core(files, control=None, progress_callback=None):
             expected_size=None,
             use_part_file=True,
             timeout_value=20,
+            probe_remote_size=False,
         )
         if not result:
             raise RuntimeError("Basic bulk ZIP download failed/cancelled.")
@@ -488,9 +555,6 @@ def _bulk_install_basic_maps(files, control=None, progress_callback=None):
         BASIC_MAPS_ZIP.unlink()
 
     if not reuse:
-        if progress_callback:
-            progress_callback(0, None, 0.0, "Preparing Basic QL maps ZIP on pCloud...")
-
         url = pcloud.pubzip_url(f"{pcloud.MAPS}/QLmaps", BASIC_MAPS_ZIP.name)
         result = downloader(
             url,
@@ -502,6 +566,7 @@ def _bulk_install_basic_maps(files, control=None, progress_callback=None):
             expected_size=None,
             use_part_file=True,
             timeout_value=60,
+            probe_remote_size=False,
         )
         if not result:
             raise RuntimeError("Basic QL maps bulk ZIP download failed/cancelled.")
@@ -613,25 +678,49 @@ def install_basic(external_maps=False, music_playlist=False, autoexec_update=Fal
     basic_maps_extracted = 0
 
     if fresh_install:
+        # CORE and the 26 Basic QL maps are physically two pCloud ZIP streams,
+        # but the GUI presents them as one continuous "Q3Elite Basic" payload.
+        core_bulk_bytes, basic_maps_bytes = _basic_bulk_sizes(files)
+        combined_progress = _CombinedBasicProgress(
+            progress_callback, core_bulk_bytes, basic_maps_bytes
+        )
+
+        print(
+            f"[basic progress] Combined payload: "
+            f"{human(core_bulk_bytes)} core + {human(basic_maps_bytes)} maps "
+            f"= {human(core_bulk_bytes + basic_maps_bytes)}"
+        )
+
         try:
+            combined_progress.preparing_core()
             bulk_extracted = _bulk_install_basic_core(
-                files, control, progress_callback
+                files, control, combined_progress.core
             )
         except Exception as exc:
             print(f"[bulk] Bulk install unavailable: {exc}")
             print("[bulk] Falling back to individual SHA-256 repair...")
             if progress_callback:
-                progress_callback(0, None, 0.0, "Bulk ZIP unavailable — repairing files individually...")
+                progress_callback(
+                    0, None, 0.0,
+                    "Bulk ZIP unavailable — repairing files individually..."
+                )
 
         try:
+            combined_progress.preparing_maps()
             basic_maps_extracted = _bulk_install_basic_maps(
-                files, control, progress_callback
+                files, control, combined_progress.maps
             )
+            combined_progress.complete()
         except Exception as exc:
             print(f"[basic maps bulk] Bulk install unavailable: {exc}")
             print("[basic maps bulk] Falling back to individual SHA-256 repair...")
             if progress_callback:
-                progress_callback(0, None, 0.0, "Basic maps ZIP unavailable — repairing maps individually...")
+                progress_callback(
+                    core_bulk_bytes,
+                    core_bulk_bytes + basic_maps_bytes or None,
+                    0.0,
+                    "Basic maps ZIP unavailable — repairing maps individually..."
+                )
 
     # Always finish with the normal manifest-driven path. It skips every
     # correctly extracted file and downloads only anything missing/corrupt,
@@ -765,6 +854,7 @@ def _bulk_install_maps(group, control=None, progress_callback=None):
             expected_size=None,
             use_part_file=True,
             timeout_value=60,
+            probe_remote_size=False,
         )
         if not result:
             raise RuntimeError("External Maps bulk ZIP download failed/cancelled.")
