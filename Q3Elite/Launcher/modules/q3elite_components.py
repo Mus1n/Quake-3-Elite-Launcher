@@ -332,69 +332,48 @@ def _zip_member_to_managed(member_name, wanted_cf):
 
 
 def _extract_basic_zip(zip_path, group):
-    """Extract and SHA-256 verify Basic in a SINGLE pass.
-
-    Hash the decompressed bytes while they are already being written.  This
-    avoids the old second full-disk scan which could leave first install stuck
-    on "extracting and verifying" after extraction had actually completed.
-    """
+    """Selectively extract ONLY files owned by the Basic manifest."""
     wanted_cf = {norm(rel).casefold(): norm(rel) for rel in group}
-    verified = set()
+    extracted = set()
 
     with zipfile.ZipFile(zip_path, "r") as zf:
-        matched = []
-        seen = set()
         for info in zf.infolist():
             if info.is_dir():
                 continue
             rel = _zip_member_to_managed(info.filename, wanted_cf)
-            if rel and rel.casefold() not in seen:
-                matched.append((info, rel))
-                seen.add(rel.casefold())
-
-        if not matched:
-            sample = [i.filename for i in zf.infolist() if not i.is_dir()][:12]
-            raise RuntimeError(
-                "Q3Elite_Basic.zip contains no paths matching Manifest.json. "
-                "Archive sample: " + " | ".join(sample)
-            )
-
-        print(f"[bulk] Basic ZIP matched {len(matched)} / {len(group)} managed files.")
-
-        for info, rel in matched:
-            dest = ROOT / Path(rel)
-            if is_user_config(rel) and dest.is_file():
-                verified.add(rel.casefold())
+            if not rel:
                 continue
 
+            dest = ROOT / Path(rel)
+            if is_user_config(rel) and dest.is_file():
+                print(f"[preserved user config] {rel}")
+                extracted.add(rel.casefold())
+                continue
             dest.parent.mkdir(parents=True, exist_ok=True)
             tmp = dest.with_name(dest.name + ".bulk.tmp")
+
             h = hashlib.sha256()
             try:
                 with zf.open(info, "r") as srcf, tmp.open("wb") as dstf:
                     while True:
-                        block = srcf.read(16 * 1024 * 1024)
+                        block = srcf.read(4 * 1024 * 1024)
                         if not block:
                             break
                         dstf.write(block)
                         h.update(block)
 
-                if h.hexdigest().lower() != group[rel].lower():
+                expected = group[rel]
+                if h.hexdigest().lower() != expected.lower():
                     raise RuntimeError(f"SHA-256 verification failed in Basic ZIP: {rel}")
 
                 os.replace(tmp, dest)
-                verified.add(rel.casefold())
+                extracted.add(rel.casefold())
             finally:
                 tmp.unlink(missing_ok=True)
 
-    missing = [rel for rel in group if rel.casefold() not in verified]
-    if missing:
-        preview = ", ".join(missing[:8])
-        more = "" if len(missing) <= 8 else f" (+{len(missing)-8} more)"
-        raise RuntimeError(f"Basic ZIP did not contain required Basic files: {preview}{more}")
+    print(f"[bulk] Extracted and SHA-256 verified: {len(extracted)} / {len(group)}")
+    return extracted
 
-    print(f"[bulk] Extracted + SHA-256 verified in one pass: {len(verified)} / {len(group)}")
-    return verified
 
 def _bulk_install_basic_core(files, control=None, progress_callback=None):
     """
@@ -482,7 +461,7 @@ def _bulk_install_basic_core(files, control=None, progress_callback=None):
         )
 
     if progress_callback:
-        progress_callback(0, None, 0.0, "Installing Q3Elite Basic...")
+        progress_callback(0, None, 0.0, "Extracting and verifying Q3Elite Basic...")
     try:
         extracted = _extract_basic_zip(archive, group)
     except zipfile.BadZipFile as exc:
@@ -610,11 +589,15 @@ def install_basic(external_maps=False, music_playlist=False, autoexec_update=Fal
                   control=None, progress_callback=None):
     control = control or DownloadControl()
 
-    # Persist the requested component policy before touching payload files.
-    # If the launcher is closed during the first installation, the updater
-    # must still know that Maps/Music were OFF instead of treating the partial
-    # install as a legacy "full" installation.
-    pending_state = load_state()
+    # components.json is the installation transaction marker.  Do NOT use
+    # filesystem markers such as Q3Elite/Engines here: Q3Elite_Basic.zip creates
+    # those markers before the required Basic Maps stage starts.  That was the
+    # reason an interrupted first install was incorrectly treated as an existing
+    # installation on the next run.
+    previous_state = load_state()
+    first_install = not bool(previous_state.get("basic", False))
+
+    pending_state = dict(previous_state)
     pending_state["external_maps"] = bool(external_maps)
     pending_state["music_playlist"] = bool(music_playlist)
     pending_state["autoexec_update"] = bool(autoexec_update)
@@ -624,81 +607,70 @@ def install_basic(external_maps=False, music_playlist=False, autoexec_update=Fal
         progress_callback(0, None, 0.0, "Reading Q3Elite manifest...")
     version, manifest, files = remote_release()
     basic = selected_basic_files(files, autoexec_update)
+    basic_maps = selected_basic_map_files(files)
 
     print("="*72)
     print(" Q3Elite Basic installation — Step 18B")
     print("="*72)
     print(f"Basic files: {len(basic)}")
-    print(f"External Maps: {'YES' if external_maps else 'NO'}")
-    print(f"Music Playlist: {'YES' if music_playlist else 'NO'}")
-    print(f"Autoexec Update: {'YES' if autoexec_update else 'NO'}")
+    print(f"Required Basic maps: {len(basic_maps)}")
+    print(f"First-install transaction: {'YES' if first_install else 'NO'}")
 
-    # Bulk is used only when this is genuinely a fresh Basic install.
-    # Existing/mostly-complete installations keep the efficient per-file
-    # SHA repair path.
-    core_group = _basic_core_group(files)
-    missing_ratio = _basic_missing_ratio(core_group)
     bulk_extracted = 0
-
     basic_maps_extracted = 0
-    fresh_at_start = is_true_fresh_install()
-    if fresh_at_start:
-        # Stage 1: Basic core. Extraction and SHA happen in one pass.
-        # This call must return before the Basic Maps ZIP is even requested.
+
+    if first_install:
+        # STRICT SERIAL PIPELINE:
+        #   1. one Q3Elite_Basic.zip
+        #   2. one Q3Elite_Basic_Maps.zip containing exactly the 26 selected PK3s
+        # The second request is made only after the first archive has completely
+        # extracted and verified.  Missing Basic maps NEVER fall back to 26
+        # individual pCloud downloads.
         bulk_extracted = _bulk_install_basic_core(files, control, progress_callback)
+        if not bulk_extracted:
+            raise RuntimeError("Q3Elite_Basic.zip did not install any managed Basic files.")
 
-    # Stage 2: the 26 Singleplayer maps are REQUIRED Basic content, not an
-    # optional addon.  Do not gate them behind is_true_fresh_install(): after
-    # Basic core extraction the engine marker exists, and after a launcher
-    # restart is_true_fresh_install() is also False.  That old gate is exactly
-    # why Q3Elite_Basic_Maps.zip was skipped.
-    basic_map_group = selected_basic_map_files(files)
-    basic_maps_missing = any(
-        not (ROOT / Path(rel)).is_file() for rel in basic_map_group
-    )
-    if basic_maps_missing:
-        basic_maps_extracted = _bulk_install_basic_maps(
-            files, control, progress_callback
-        )
+        basic_maps_extracted = _bulk_install_basic_maps(files, control, progress_callback)
+        if basic_maps and basic_maps_extracted != len(basic_maps):
+            raise RuntimeError(
+                f"Q3Elite_Basic_Maps.zip installed {basic_maps_extracted}/{len(basic_maps)} required maps."
+            )
 
-    # Do NOT SHA-scan the entire Basic installation again after the bulk ZIPs.
-    # Both bulk installers already verified their own payload against Manifest.json.
-    # Re-running _install_group(basic) here caused a second full-game SHA pass and
-    # made first installation appear to hang after extraction.
-    #
-    # On a true fresh install, repair only Basic files that are not owned by either
-    # bulk archive (currently the base music tracks 1..5). Existing installations
-    # still use the normal full manifest repair path.
-    if bulk_extracted or basic_maps_extracted or fresh_at_start:
-        bulk_owned = set(_basic_core_group(files)) | set(selected_basic_map_files(files))
+        # Both bulk archives hash while extracting. Do not hash them all again.
+        bulk_owned = set(_basic_core_group(files)) | set(basic_maps)
         repair_group = {
             rel: digest for rel, digest in basic.items()
-            if rel not in bulk_owned
+            if rel not in bulk_owned and classify(rel) != "basic_map"
         }
         if progress_callback:
             progress_callback(0, None, 0.0, "Finalizing Q3Elite Basic...")
-        print(f"[basic] Bulk payload already SHA-verified; final repair files: {len(repair_group)}")
         downloaded = _install_group(repair_group, control, progress_callback)
     else:
-        downloaded = _install_group(basic, control, progress_callback)
+        # Normal installed-system repair/update path. Required Basic maps are
+        # deliberately excluded here; they are not optional External Maps and
+        # must never be converted into 26 individual first-install downloads.
+        normal_basic = {
+            rel: digest for rel, digest in basic.items()
+            if classify(rel) != "basic_map"
+        }
+        downloaded = _install_group(normal_basic, control, progress_callback)
 
-    # Optional addons are deliberately NOT part of the Basic repair group.
-    # The GUI installs them separately after Basic.
-
-    # Commit release metadata only after required payload is valid.
+    # Commit only after BOTH required bulk stages succeeded. Until this point
+    # state["basic"] stays False, so killing/restarting the launcher resumes the
+    # first-install transaction from its cached ZIPs instead of skipping Maps.
     atomic_json(LOCAL_MANIFEST, manifest)
     atomic_json(LOCAL_VERSION, version)
 
-    state=load_state()
-    state["basic"]=True
-    state["external_maps"]=bool(external_maps)
-    state["autoexec_update"]=bool(autoexec_update)
+    state = load_state()
+    state["basic"] = True
+    state["external_maps"] = bool(external_maps)
+    state["autoexec_update"] = bool(autoexec_update)
     save_state(state)
 
     if music_playlist:
         install_music(control, progress_callback)
 
-    print(f"\n[OK] Basic ready.")
+    print("\n[OK] Basic ready.")
     print(f"Basic ZIP extracted:      {bulk_extracted}")
     print(f"Basic Maps extracted:     {basic_maps_extracted}")
     print(f"Individual downloads:     {downloaded}")
