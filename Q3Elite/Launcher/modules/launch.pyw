@@ -4112,6 +4112,21 @@ class ServerCard(QtWidgets.QFrame):
         self._set_levelshot(mapname)
 
 
+class ScreenshotSearchFilter(QtCore.QObject):
+    def __init__(self, window):
+        super().__init__(window)
+        self.window = window
+
+    def eventFilter(self, obj, event):
+        if event.type() == QtCore.QEvent.Type.KeyPress:
+            if event.key() in (QtCore.Qt.Key.Key_Return, QtCore.Qt.Key.Key_Enter,
+                               QtCore.Qt.Key.Key_Escape):
+                self.window.screenshotList.setFocus()
+                event.accept()
+                return True
+        return False
+
+
 class ScreenshotWheelFilter(QtCore.QObject):
     def __init__(self, window):
         super().__init__(window)
@@ -4130,6 +4145,21 @@ class ScreenshotWheelFilter(QtCore.QObject):
                     if delta:
                         w._step_screenshot(1 if delta < 0 else -1)
                         return True
+        return False
+
+
+class FullscreenScreenshotWheelFilter(QtCore.QObject):
+    def __init__(self, dialog):
+        super().__init__(dialog)
+        self.dialog = dialog
+
+    def eventFilter(self, obj, event):
+        if event.type() == QtCore.QEvent.Type.Wheel and self.dialog.isVisible():
+            delta = event.angleDelta().y() or event.angleDelta().x()
+            if delta:
+                self.dialog.step(1 if delta < 0 else -1)
+                event.accept()
+                return True
         return False
 
 
@@ -5148,7 +5178,7 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
 
         sort = QtWidgets.QComboBox()
         sort.setObjectName("mediaCombo")
-        sort.addItems(["Date ↓", "Date ↑", "Name ↑", "Name ↓"])
+        sort.addItems(["Date ↓", "Date ↑", "Name ↓", "Name ↑"])
         setattr(self, sort_attr, sort)
         bar.addWidget(sort)
 
@@ -5231,6 +5261,12 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
         root.addLayout(self._make_media_toolbar(
             "screenshotSearch", "screenshotSort", "screenshotFilter", self.refresh_screenshots
         ))
+        self.screenshotSearchKeyFilter = ScreenshotSearchFilter(self)
+        self.screenshotSearch.installEventFilter(self.screenshotSearchKeyFilter)
+        for action in self.screenshotSearch.actions():
+            action.triggered.connect(
+                lambda checked=False: QtCore.QTimer.singleShot(0, self.screenshotList.setFocus)
+            )
 
         body = QtWidgets.QHBoxLayout()
         body.setSpacing(12)
@@ -5240,39 +5276,28 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
         self.screenshotList.setFixedWidth(285)
         self.screenshotList.setVerticalScrollMode(QtWidgets.QAbstractItemView.ScrollMode.ScrollPerPixel)
         self.screenshotList.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        self.screenshotList.currentRowChanged.connect(self._show_selected_screenshot)
+        self.screenshotList.currentItemChanged.connect(self._on_screenshot_current_item_changed)
+        self.screenshotList.itemClicked.connect(self._on_screenshot_item_clicked)
         self.screenshotList.itemDoubleClicked.connect(lambda _item: self.open_screenshot_fullscreen())
         previewFrame = QtWidgets.QFrame()
         previewFrame.setObjectName("mediaPreviewFrame")
         previewLay = QtWidgets.QVBoxLayout(previewFrame)
-        previewLay.setContentsMargins(10, 10, 10, 10)
+        previewLay.setContentsMargins(0, 0, 0, 0)
         self.screenshotPreview = QtWidgets.QLabel("No screenshots found.")
         self.screenshotPreview.setObjectName("screenshotPreview")
         self.screenshotPreview.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
         self.screenshotPreview.setMinimumSize(400, 300)
         previewLay.addWidget(self.screenshotPreview, 1)
 
-        controls = QtWidgets.QHBoxLayout()
-        prev = GlowButton("‹")
-        prev.setObjectName("mediaArrow")
-        prev.setFixedWidth(54)
-        prev.clicked.connect(lambda: self._step_screenshot(-1))
-        controls.addWidget(prev)
-        controls.addStretch(1)
-        self.screenshotNameLabel = QtWidgets.QLabel("")
-        self.screenshotNameLabel.setObjectName("muted")
-        self.screenshotNameLabel.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
-        controls.addWidget(self.screenshotNameLabel)
-        controls.addStretch(1)
-        nxt = GlowButton("›")
-        nxt.setObjectName("mediaArrow")
-        nxt.setFixedWidth(54)
-        nxt.clicked.connect(lambda: self._step_screenshot(1))
-        controls.addWidget(nxt)
-        previewLay.addLayout(controls)
+
         body.addWidget(previewFrame, 1)
         body.addWidget(self.screenshotList)
         root.addLayout(body, 1)
+
+        self.screenshotStatusLabel = QtWidgets.QLabel("")
+        self.screenshotStatusLabel.setObjectName("screenshotStatus")
+        self.screenshotStatusLabel.setMinimumHeight(24)
+        root.addWidget(self.screenshotStatusLabel)
 
         self.screenshotKeys = QtWidgets.QLabel(
             "KEY BINDS\n"
@@ -5292,12 +5317,16 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
         root.addWidget(self.screenshotKeys)
 
         def shortcut(seq, fn):
-            sc = QtGui.QShortcut(QtGui.QKeySequence(seq), page)
-            sc.setContext(QtCore.Qt.ShortcutContext.WidgetWithChildrenShortcut)
-            sc.activated.connect(fn)
+            sc = QtGui.QShortcut(QtGui.QKeySequence(seq), self)
+            sc.setContext(QtCore.Qt.ShortcutContext.WindowShortcut)
+            sc.activated.connect(
+                lambda fn=fn: fn() if self.pages.currentWidget() is self.screenshotsPage else None
+            )
         shortcut("F1", lambda: self.screenshotKeys.setVisible(not self.screenshotKeys.isVisible()))
         shortcut("Left", lambda: self._step_screenshot(-1))
         shortcut("Right", lambda: self._step_screenshot(1))
+        shortcut("Up", lambda: self._step_screenshot(-1))
+        shortcut("Down", lambda: self._step_screenshot(1))
         shortcut("F", self.open_screenshot_fullscreen)
         shortcut("Ctrl+C", self.copy_selected_screenshot)
         shortcut("O", lambda: self.open_media_location(self._selected_screenshot_path()))
@@ -5308,6 +5337,68 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
 
         self._sync_screenshot_source_buttons()
         return page
+
+    def _set_screenshot_status(self, text, error=False):
+        self.screenshotStatusLabel.setText(str(text or ""))
+        self.screenshotStatusLabel.setProperty("error", bool(error))
+        self.screenshotStatusLabel.style().unpolish(self.screenshotStatusLabel)
+        self.screenshotStatusLabel.style().polish(self.screenshotStatusLabel)
+
+    def _select_screenshot_row(self, row, show=True):
+        count = self.screenshotList.count()
+        if count <= 0:
+            self._currentScreenshotPath = None
+            self._currentScreenshotPixmap = None
+            return None
+        row = int(row) % count
+        item = self.screenshotList.item(row)
+        if item is None:
+            return None
+
+        # Keep Qt's native QListWidget current-item behavior. This fixes mouse
+        # selection and also gives F2/Delete/etc. a real currentItem().
+        self.screenshotList.setCurrentItem(
+            item, QtCore.QItemSelectionModel.SelectionFlag.ClearAndSelect
+        )
+        item.setSelected(True)
+        self.screenshotList.scrollToItem(item)
+
+        path = Path(item.data(QtCore.Qt.ItemDataRole.UserRole))
+        self._currentScreenshotPath = path if path.is_file() else None
+        if show:
+            self._display_screenshot_path(self._currentScreenshotPath)
+        return item
+
+    def _on_screenshot_current_item_changed(self, current, previous=None):
+        if current is None:
+            return
+        path = Path(current.data(QtCore.Qt.ItemDataRole.UserRole))
+        if path.is_file():
+            self._currentScreenshotPath = path
+            self._display_screenshot_path(path)
+
+    def _on_screenshot_item_clicked(self, item):
+        if item is None:
+            return
+        row = self.screenshotList.row(item)
+        self._select_screenshot_row(row, show=True)
+
+    def _display_screenshot_path(self, path):
+        if not path or not Path(path).is_file():
+            self._currentScreenshotPath = None
+            self._currentScreenshotPixmap = None
+            self.screenshotPreview.clear()
+            self.screenshotPreview.setText("No screenshot selected.")
+            return
+        path = Path(path)
+        pix = QtGui.QPixmap(str(path))
+        if pix.isNull():
+            self.screenshotPreview.clear()
+            self.screenshotPreview.setText("Could not load screenshot.")
+            return
+        self._currentScreenshotPath = path
+        self._currentScreenshotPixmap = pix
+        self._rescale_screenshot_preview()
 
     def set_screenshot_source(self, source):
         global launcher_settings
@@ -5353,13 +5444,7 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
             pix = QtGui.QPixmap(str(path))
             if not pix.isNull():
                 QtWidgets.QApplication.clipboard().setPixmap(pix)
-                QtWidgets.QToolTip.showText(
-                    QtGui.QCursor.pos(),
-                    "Screenshot copied to clipboard",
-                    self.screenshotList,
-                    QtCore.QRect(),
-                    1800
-                )
+                self._set_screenshot_status(f"Copied to clipboard: {path.name}")
 
     def delete_selected_screenshot(self):
         path = self._selected_screenshot_path()
@@ -5372,9 +5457,13 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
             self.qerror(f"Could not delete screenshot:\n{error}")
 
     def rename_selected_screenshot(self):
-        item = self.screenshotList.currentItem()
         path = self._selected_screenshot_path()
-        if not item or not path:
+        if not path:
+            self._set_screenshot_status("No screenshot selected.", True)
+            return
+        item = self.screenshotList.currentItem()
+        if item is None:
+            self._set_screenshot_status("Selected screenshot is not available.", True)
             return
 
         # Keep the extension outside the editable text. The commit is handled
@@ -5399,9 +5488,62 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
         if editor is None:
             QtCore.QTimer.singleShot(10, self._hook_screenshot_rename_editor)
             return
+        self._renameScreenshotEditor = editor
+        self._renameScreenshotCancelled = False
         editor.setText(Path(self._renameScreenshotPath).stem)
         editor.selectAll()
-        editor.editingFinished.connect(self._commit_screenshot_rename)
+        editor.installEventFilter(self)
+        app = QtWidgets.QApplication.instance()
+        if app is not None:
+            try:
+                app.focusChanged.disconnect(self._screenshot_rename_focus_changed)
+            except Exception:
+                pass
+            app.focusChanged.connect(self._screenshot_rename_focus_changed)
+        editor.editingFinished.connect(self._finish_screenshot_rename_editor)
+
+    def _screenshot_rename_focus_changed(self, old, now):
+        if not getattr(self, "_renameScreenshotActive", False):
+            return
+        editor = getattr(self, "_renameScreenshotEditor", None)
+        if editor is not None and old is editor and now is not editor:
+            QtCore.QTimer.singleShot(0, self._commit_screenshot_rename)
+
+    def _finish_screenshot_rename_editor(self):
+        if getattr(self, "_renameScreenshotCancelled", False):
+            self._cancel_screenshot_rename()
+        else:
+            self._commit_screenshot_rename()
+
+    def _cancel_screenshot_rename(self):
+        if not getattr(self, "_renameScreenshotActive", False):
+            return
+        self._renameScreenshotActive = False
+        self._renameScreenshotCancelled = True
+        path = getattr(self, "_renameScreenshotPath", None)
+        item = getattr(self, "_renameScreenshotItem", None)
+        editor = getattr(self, "_renameScreenshotEditor", None)
+        if editor is not None:
+            try:
+                editor.removeEventFilter(self)
+            except Exception:
+                pass
+        if item is not None and path:
+            self.screenshotList.blockSignals(True)
+            item.setText(Path(path).name)
+            item.setFlags(item.flags() & ~QtCore.Qt.ItemFlag.ItemIsEditable)
+            self.screenshotList.blockSignals(False)
+        app = QtWidgets.QApplication.instance()
+        if app is not None:
+            try:
+                app.focusChanged.disconnect(self._screenshot_rename_focus_changed)
+            except Exception:
+                pass
+        self._renameScreenshotPath = None
+        self._renameScreenshotItem = None
+        self._renameScreenshotEditor = None
+        self._set_screenshot_status("Rename cancelled.")
+        self.screenshotList.setFocus()
 
     def _commit_screenshot_rename(self):
         if not getattr(self, "_renameScreenshotActive", False):
@@ -5410,35 +5552,55 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
 
         path = getattr(self, "_renameScreenshotPath", None)
         item = getattr(self, "_renameScreenshotItem", None)
-        editor = self.screenshotList.findChild(QtWidgets.QLineEdit)
+        editor = getattr(self, "_renameScreenshotEditor", None)
         stem = editor.text().strip() if editor is not None else (item.text().strip() if item else "")
+        if editor is not None:
+            try:
+                editor.removeEventFilter(self)
+            except Exception:
+                pass
 
+        app = QtWidgets.QApplication.instance()
+        if app is not None:
+            try:
+                app.focusChanged.disconnect(self._screenshot_rename_focus_changed)
+            except Exception:
+                pass
         self._renameScreenshotPath = None
         self._renameScreenshotItem = None
+        self._renameScreenshotEditor = None
         if not path or not path.is_file():
             self.refresh_screenshots()
             return
 
-        # Strip any extension typed by the user and preserve the real original one.
         if stem.lower().endswith(path.suffix.lower()):
             stem = stem[:-len(path.suffix)]
-        stem = stem.strip().rstrip(".")
-        if not stem:
-            stem = path.stem
-
-        # Windows-invalid filename characters.
+        stem = stem.strip().rstrip(".") or path.stem
         stem = re.sub(r'[<>:"/\\\\|?*]', "_", stem)
         new_path = path.with_name(stem + path.suffix)
 
         try:
-            if new_path != path:
-                path.rename(new_path)
-        except Exception as error:
-            self.qerror(f"Could not rename screenshot:\\n{error}")
-        self.refresh_screenshots()
+            if new_path == path:
+                self.refresh_screenshots()
+                self._set_screenshot_status("Filename unchanged.")
+                return
+            if new_path.exists():
+                self.refresh_screenshots()
+                self._set_screenshot_status(f'Rename failed: "{new_path.name}" already exists.', True)
+                return
+            path.rename(new_path)
+            self._currentScreenshotPath = new_path
+            self.refresh_screenshots()
+            self._set_screenshot_status(f"Renamed to: {new_path.name}")
+        except PermissionError:
+            self.refresh_screenshots()
+            self._set_screenshot_status("Rename failed: screenshot is currently in use.", True)
+        except OSError as error:
+            self.refresh_screenshots()
+            self._set_screenshot_status(f"Rename failed: {error}", True)
 
     def _cycle_screenshot_sort(self):
-        modes = ["Date ↓", "Date ↑", "Name ↑", "Name ↓"]
+        modes = ["Date ↓", "Date ↑", "Name ↓", "Name ↑"]
         current = self.screenshotSort.currentText()
         self.screenshotSort.setCurrentText(modes[(modes.index(current) + 1) % len(modes)] if current in modes else modes[0])
 
@@ -5452,7 +5614,11 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
         reshade_folder = self._reshade_screenshots_dir()
         osp_folder.mkdir(parents=True, exist_ok=True)
         reshade_folder.mkdir(parents=True, exist_ok=True)
-        previous = self.screenshotList.currentItem().data(QtCore.Qt.ItemDataRole.UserRole) if self.screenshotList.currentItem() else None
+        current_path = getattr(self, "_currentScreenshotPath", None)
+        current_item = self.screenshotList.currentItem()
+        previous = str(current_path) if current_path else (
+            current_item.data(QtCore.Qt.ItemDataRole.UserRole) if current_item else None
+        )
         source = self._sync_screenshot_source_buttons()
         folders = [reshade_folder] if source == "reshade" else [osp_folder] if source == "osp" else [reshade_folder, osp_folder]
         files = []
@@ -5475,83 +5641,169 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
                 restore_row = i
         self.screenshotCountLabel.setText(f"{len(files)} screenshot{'s' if len(files) != 1 else ''}")
         if files:
-            self.screenshotList.setCurrentRow(min(restore_row, len(files) - 1))
+            row = min(restore_row, len(files) - 1)
+            QtCore.QTimer.singleShot(0, lambda r=row: self._select_screenshot_row(r, show=True))
         else:
+            self.screenshotList.clearSelection()
+            self.screenshotList.setCurrentItem(None)
+            self._currentScreenshotPath = None
+            self._currentScreenshotPixmap = None
             self.screenshotPreview.clear()
             self.screenshotPreview.setText("No screenshots found.")
-            self.screenshotNameLabel.clear()
 
     def _selected_screenshot_path(self):
         item = self.screenshotList.currentItem()
-        if not item:
-            return None
-        path = Path(item.data(QtCore.Qt.ItemDataRole.UserRole))
-        return path if path.is_file() else None
+        if item is not None:
+            path = Path(item.data(QtCore.Qt.ItemDataRole.UserRole))
+            if path.is_file():
+                self._currentScreenshotPath = path
+                return path
+        path = getattr(self, "_currentScreenshotPath", None)
+        return Path(path) if path and Path(path).is_file() else None
 
     def _show_selected_screenshot(self, _row=-1):
-        path = self._selected_screenshot_path()
-        if not path:
-            self.screenshotPreview.clear()
-            self.screenshotPreview.setText("No screenshot selected.")
-            self.screenshotNameLabel.clear()
-            return
-        pix = QtGui.QPixmap(str(path))
-        if pix.isNull():
-            self.screenshotPreview.setText("Could not load screenshot.")
-            return
-        self._currentScreenshotPixmap = pix
-        self.screenshotNameLabel.setText(path.name)
-        self._rescale_screenshot_preview()
+        self._display_screenshot_path(self._selected_screenshot_path())
 
     def _rescale_screenshot_preview(self):
         pix = getattr(self, "_currentScreenshotPixmap", None)
         if pix is None or pix.isNull():
             return
         size = self.screenshotPreview.size()
-        self.screenshotPreview.setPixmap(
-            pix.scaled(size, QtCore.Qt.AspectRatioMode.KeepAspectRatio,
-                       QtCore.Qt.TransformationMode.SmoothTransformation)
+        if size.width() <= 1 or size.height() <= 1:
+            return
+
+        # Fit the complete screenshot inside the preview bounds.
+        # No KeepAspectRatioByExpanding/cropping/zoom.
+        scaled = pix.scaled(
+            size,
+            QtCore.Qt.AspectRatioMode.KeepAspectRatio,
+            QtCore.Qt.TransformationMode.SmoothTransformation
         )
+
+        canvas = QtGui.QPixmap(size)
+        canvas.fill(QtCore.Qt.GlobalColor.transparent)
+        painter = QtGui.QPainter(canvas)
+        painter.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing, True)
+
+        clip = QtGui.QPainterPath()
+        clip.addRoundedRect(
+            QtCore.QRectF(0, 0, size.width(), size.height()),
+            12.0, 12.0
+        )
+        painter.setClipPath(clip)
+
+        x = (size.width() - scaled.width()) // 2
+        y = (size.height() - scaled.height()) // 2
+        painter.drawPixmap(x, y, scaled)
+        painter.end()
+        self.screenshotPreview.setPixmap(canvas)
 
     def _step_screenshot(self, direction):
         count = self.screenshotList.count()
         if not count:
             return
         row = self.screenshotList.currentRow()
-        self.screenshotList.setCurrentRow((row + direction) % count)
-        self.screenshotList.scrollToItem(self.screenshotList.currentItem())
+        if row < 0:
+            row = 0
+        self._select_screenshot_row((row + direction) % count, show=True)
 
     def open_screenshot_fullscreen(self):
         path = self._selected_screenshot_path()
         if not path:
             return
+        window = self
+
         class _ScreenshotDialog(QtWidgets.QDialog):
+            def __init__(self, parent):
+                super().__init__(parent)
+                self.setObjectName("screenshotFullscreen")
+                self.setWindowFlags(
+                    QtCore.Qt.WindowType.FramelessWindowHint |
+                    QtCore.Qt.WindowType.Dialog
+                )
+                lay = QtWidgets.QVBoxLayout(self)
+                lay.setContentsMargins(0, 0, 0, 0)
+                self.imageLabel = QtWidgets.QLabel()
+                self.imageLabel.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
+                self.imageLabel.setStyleSheet("background:#000;")
+                self.imageLabel.setMouseTracking(True)
+                self.imageLabel.installEventFilter(self)
+                self.installEventFilter(self)
+                lay.addWidget(self.imageLabel)
+                self.refresh_image()
+                self.wheelFilter = FullscreenScreenshotWheelFilter(self)
+                app = QtWidgets.QApplication.instance()
+                if app is not None:
+                    app.installEventFilter(self.wheelFilter)
+
+            def refresh_image(self):
+                path = window._selected_screenshot_path()
+                if not path:
+                    return
+                pix = QtGui.QPixmap(str(path))
+                if pix.isNull():
+                    return
+                self.setWindowTitle(path.name)
+                screen = QtGui.QGuiApplication.screenAt(QtGui.QCursor.pos()) or QtGui.QGuiApplication.primaryScreen()
+                target = screen.geometry().size() if screen else self.size()
+                self.imageLabel.setPixmap(
+                    pix.scaled(
+                        target,
+                        QtCore.Qt.AspectRatioMode.KeepAspectRatio,
+                        QtCore.Qt.TransformationMode.SmoothTransformation
+                    )
+                )
+
+            def step(self, direction):
+                window._step_screenshot(direction)
+                self.refresh_image()
+
+            def eventFilter(self, obj, event):
+                if event.type() == QtCore.QEvent.Type.Wheel:
+                    delta = event.angleDelta().y() or event.angleDelta().x()
+                    if delta:
+                        self.step(1 if delta < 0 else -1)
+                        event.accept()
+                        return True
+                return super().eventFilter(obj, event)
+
+            def wheelEvent(self, event):
+                delta = event.angleDelta().y() or event.angleDelta().x()
+                if delta:
+                    self.step(1 if delta < 0 else -1)
+                    event.accept()
+                    return
+                super().wheelEvent(event)
+
             def keyPressEvent(self, event):
-                if event.key() in (QtCore.Qt.Key.Key_Escape, QtCore.Qt.Key.Key_F11, QtCore.Qt.Key.Key_F):
+                key = event.key()
+                if key in (QtCore.Qt.Key.Key_Escape, QtCore.Qt.Key.Key_F11, QtCore.Qt.Key.Key_F):
                     self.accept()
                     return
+                if key in (QtCore.Qt.Key.Key_Right, QtCore.Qt.Key.Key_Down):
+                    self.step(1)
+                    return
+                if key in (QtCore.Qt.Key.Key_Left, QtCore.Qt.Key.Key_Up):
+                    self.step(-1)
+                    return
                 super().keyPressEvent(event)
+
+            def done(self, result):
+                app = QtWidgets.QApplication.instance()
+                if app is not None and hasattr(self, "wheelFilter"):
+                    try:
+                        app.removeEventFilter(self.wheelFilter)
+                    except Exception:
+                        pass
+                super().done(result)
+
             def mouseDoubleClickEvent(self, event):
                 self.accept()
+
         dlg = _ScreenshotDialog(self)
-        dlg.setObjectName("screenshotFullscreen")
-        dlg.setWindowTitle(path.name)
-        dlg.setWindowFlags(QtCore.Qt.WindowType.FramelessWindowHint | QtCore.Qt.WindowType.Dialog)
-        lay = QtWidgets.QVBoxLayout(dlg)
-        lay.setContentsMargins(0, 0, 0, 0)
-        label = QtWidgets.QLabel()
-        label.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
-        label.setStyleSheet("background:#000;")
-        pix = QtGui.QPixmap(str(path))
-        screen = QtGui.QGuiApplication.screenAt(QtGui.QCursor.pos()) or QtGui.QGuiApplication.primaryScreen()
-        target = screen.geometry().size() if screen else QtCore.QSize(1920, 1080)
-        label.setPixmap(pix.scaled(target, QtCore.Qt.AspectRatioMode.KeepAspectRatio,
-                                   QtCore.Qt.TransformationMode.SmoothTransformation))
-        lay.addWidget(label)
         dlg.showFullScreen()
-        dlg._screenshot_label = label
-        dlg._screenshot_path = path
         dlg.exec()
+
 
     def _build_demos(self):
         page = QtWidgets.QWidget()
@@ -6091,6 +6343,25 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
         if was_current:
             self.pages.setCurrentWidget(new_page)
 
+    def eventFilter(self, obj, event):
+        if (getattr(self, "_renameScreenshotActive", False)
+                and event.type() == QtCore.QEvent.Type.MouseButtonPress):
+            self._commit_screenshot_rename()
+            return False
+        if (getattr(self, "_renameScreenshotActive", False)
+                and obj is getattr(self, "_renameScreenshotEditor", None)
+                and event.type() == QtCore.QEvent.Type.KeyPress
+                and event.key() == QtCore.Qt.Key.Key_Escape):
+            self._renameScreenshotCancelled = True
+            self._cancel_screenshot_rename()
+            return True
+        return super().eventFilter(obj, event)
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        if hasattr(self, "screenshotPreview"):
+            QtCore.QTimer.singleShot(0, self._rescale_screenshot_preview)
+
     def show_page(self, page):
         mapping = {
             "home": (self.homePage, self.homeNav),
@@ -6110,6 +6381,7 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
             refresh_component_gui()
         if page == "screenshots":
             self.refresh_screenshots()
+            QtCore.QTimer.singleShot(0, self.screenshotList.setFocus)
         if page == "demos":
             self.refresh_demos()
         if page == "servers":
