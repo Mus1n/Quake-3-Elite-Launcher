@@ -410,9 +410,18 @@ def _bulk_install_basic_core(files, control=None, progress_callback=None):
         print("[bulk] Cached Basic ZIP is invalid; removing it.")
         BASIC_ZIP.unlink()
 
-    if progress_callback:
-        progress_callback(0, None, 0.0, "Preparing Basic ZIP on pCloud...")
-    url = pcloud.pubzip_url(pcloud.CORE, "Q3Elite_Basic.zip")
+    # Do NOT contact pCloud when a complete cached archive already exists.
+    # getpubzip is dynamically generated and may take a long time to prepare;
+    # resolving it here was the reason a restarted first install appeared stuck
+    # even though Q3Elite_Basic.zip was already present in the cache.
+    url = None
+    if reuse_complete_zip:
+        if progress_callback:
+            progress_callback(0, None, 0.0, "Using cached Q3Elite_Basic.zip...")
+    else:
+        if progress_callback:
+            progress_callback(0, None, 0.0, "Preparing Basic ZIP on pCloud...")
+        url = pcloud.pubzip_url(pcloud.CORE, BASIC_ZIP.name)
 
     print("\nFresh Basic install detected.")
     print("Using pCloud bulk ZIP instead of thousands of individual requests...")
@@ -451,6 +460,8 @@ def _bulk_install_basic_core(files, control=None, progress_callback=None):
             f"First response bytes: {preview_text!r}"
         )
 
+    if progress_callback:
+        progress_callback(0, None, 0.0, "Extracting and verifying Q3Elite Basic...")
     try:
         extracted = _extract_basic_zip(archive, group)
     except zipfile.BadZipFile as exc:
@@ -533,14 +544,21 @@ def _bulk_install_basic_maps(files, control=None, progress_callback=None):
     elif BASIC_MAPS_ZIP.exists():
         BASIC_MAPS_ZIP.unlink()
 
-    if progress_callback:
-        progress_callback(0, None, 0.0, "Preparing Basic Maps ZIP on pCloud...")
+    # Same cache rule as Basic: if the complete selected-map ZIP is already
+    # cached, never resolve the 26 pCloud fileids or create another getpubzip
+    # request. This also keeps the two dynamic ZIP stages strictly serial.
+    url = None
+    if reuse:
+        if progress_callback:
+            progress_callback(0, None, 0.0, "Using cached Q3Elite_Basic_Maps.zip...")
+    else:
+        if progress_callback:
+            progress_callback(0, None, 0.0, "Preparing Basic Maps ZIP on pCloud...")
+        # IMPORTANT: select only the 26 fileids. Never ZIP the whole Maps folder.
+        remotes = [pcloud.remote_for(rel, is_map=True) for rel in group]
+        url = pcloud.pubzip_files_url(remotes, BASIC_MAPS_ZIP.name)
 
-    # IMPORTANT: select only the 26 fileids. Never ZIP the whole Maps folder.
-    remotes = [pcloud.remote_for(rel, is_map=True) for rel in group]
-    url = pcloud.pubzip_files_url(remotes, BASIC_MAPS_ZIP.name)
-
-    print("\nDownloading required Singleplayer maps as Q3Elite_Basic_Maps.zip...")
+    print("\nInstalling required Singleplayer maps from Q3Elite_Basic_Maps.zip...")
     print("This request contains only the 26 hard-coded Basic map fileids.")
     print("Pause/Resume works in this launcher session; after launcher restart")
     print("the dynamic ZIP download starts from 0.")
@@ -560,6 +578,8 @@ def _bulk_install_basic_maps(files, control=None, progress_callback=None):
     if not zipfile.is_zipfile(archive):
         raise RuntimeError("pCloud getpubzip did not return a valid Basic Maps ZIP.")
 
+    if progress_callback:
+        progress_callback(0, None, 0.0, "Extracting and verifying Basic Singleplayer maps...")
     extracted = _extract_basic_maps_zip(archive, group)
     print(f"[basic maps cache] Kept: {BASIC_MAPS_ZIP}")
     return len(extracted)
