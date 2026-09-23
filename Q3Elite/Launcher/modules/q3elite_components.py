@@ -19,7 +19,7 @@ functions later. Components can be added/removed after installation.
 
 from __future__ import annotations
 
-import argparse, hashlib, json, os, shutil, zipfile
+import argparse, hashlib, json, os, shutil, zipfile, urllib.parse
 from pathlib import Path, PurePosixPath
 
 import pcloud_q3elite as pcloud
@@ -229,39 +229,96 @@ def human(n):
         n/=1024
 
 
-def _download_managed(rel, digest, control=None, progress_callback=None):
+def _download_managed(rel, digest, control=None, progress_callback=None,
+                      verify_index=None, verify_total=None):
     dest = ROOT / Path(rel)
+
     if is_user_config(rel) and dest.is_file():
         print(f"[preserved user config] {rel}")
         return False
-    if dest.is_file() and sha256_file(dest).lower() == digest.lower():
-        print(f"[current] {rel}")
-        return False
-    info = pcloud.resolve(pcloud.remote_for(rel, is_map=is_remote_map(rel)))
+
+    # SHA work can take time. Keep GUI text short and update it before hashing.
+    if verify_index is not None and progress_callback:
+        progress_callback(
+            verify_index - 1,
+            verify_total,
+            0.0,
+            f"Basic 3/3 - Verifying {verify_index}/{verify_total}",
+        )
+
+    if dest.is_file():
+        actual = sha256_file(dest).lower()
+        if actual == digest.lower():
+            print(f"[current] {rel}")
+            if verify_index is not None and progress_callback:
+                progress_callback(
+                    verify_index,
+                    verify_total,
+                    0.0,
+                    f"Basic 3/3 - Verifying {verify_index}/{verify_total}",
+                )
+            return False
+
+    # Missing/corrupt file: repair it individually.
+    info = pcloud.resolve(
+        pcloud.remote_for(rel, is_map=is_remote_map(rel))
+    )
     dest.parent.mkdir(parents=True, exist_ok=True)
-    print(f"[download] {rel} ({human(info['size'])})")
+    print(f"[repair] {rel} ({human(info['size'])})")
+
     result = downloader(
-        info["url"], str(dest.parent), dest.name,
-        skip=True, control=control, progress_callback=progress_callback,
-        expected_size=info["size"], use_part_file=True, timeout_value=30,
+        info["url"],
+        str(dest.parent),
+        dest.name,
+        skip=True,
+        control=control,
+        progress_callback=progress_callback,
+        expected_size=info["size"],
+        use_part_file=True,
+        timeout_value=30,
     )
     if not result:
         raise RuntimeError(f"Download failed/cancelled: {rel}")
+
     if sha256_file(dest).lower() != digest.lower():
         raise RuntimeError(f"SHA-256 verification failed: {rel}")
+
     print(f"[verified] {rel}")
     return True
 
 
-def _install_group(group, control=None, progress_callback=None):
-    downloaded=0
-    total=len(group)
-    for i,(rel,digest) in enumerate(group.items(),1):
-        print(f"\n--- [{i}/{total}] {rel} ---")
-        if _download_managed(rel,digest,control,progress_callback):
-            downloaded+=1
-    return downloaded
+def _install_group(group, control=None, progress_callback=None, basic_verify=False):
+    downloaded = 0
+    total = len(group)
 
+    for i, (rel, digest) in enumerate(group.items(), 1):
+        if control and control.cancelled:
+            raise RuntimeError("Installation cancelled.")
+
+        if control and not control.wait_if_paused():
+            raise RuntimeError("Installation cancelled.")
+
+        print(f"\n--- [{i}/{total}] {rel} ---")
+
+        if _download_managed(
+            rel,
+            digest,
+            control,
+            progress_callback,
+            verify_index=i if basic_verify else None,
+            verify_total=total if basic_verify else None,
+        ):
+            downloaded += 1
+
+    if basic_verify and progress_callback:
+        progress_callback(
+            total,
+            total,
+            0.0,
+            "Basic 3/3 - Verification complete",
+        )
+
+    return downloaded
 
 def is_true_fresh_install():
     """User-defined clean-install markers for the fast bulk path."""
@@ -312,49 +369,76 @@ def _zip_member_to_managed(member_name, wanted_cf):
     return None
 
 
-def _extract_basic_zip(zip_path, group):
-    """Selectively extract ONLY files owned by the Basic manifest."""
+def _extract_basic_zip(zip_path, group, progress_callback=None):
+    """
+    Extract Basic core files only.
+
+    Stage 1 is extraction ONLY. Do not SHA-256 here; the authoritative SHA
+    verification/repair happens once in Basic 3/3.
+    """
     wanted_cf = {norm(rel).casefold(): norm(rel) for rel in group}
     extracted = set()
 
     with zipfile.ZipFile(zip_path, "r") as zf:
+        members = []
         for info in zf.infolist():
             if info.is_dir():
                 continue
             rel = _zip_member_to_managed(info.filename, wanted_cf)
-            if not rel:
-                continue
+            if rel:
+                members.append((info, rel))
 
+        total_bytes = sum(int(info.file_size or 0) for info, _ in members)
+        done_bytes = 0
+        total_files = len(members)
+
+        for index, (info, rel) in enumerate(members, 1):
             dest = ROOT / Path(rel)
+
             if is_user_config(rel) and dest.is_file():
                 print(f"[preserved user config] {rel}")
                 extracted.add(rel.casefold())
+                done_bytes += int(info.file_size or 0)
                 continue
+
             dest.parent.mkdir(parents=True, exist_ok=True)
             tmp = dest.with_name(dest.name + ".bulk.tmp")
 
-            h = hashlib.sha256()
             try:
+                print(f"[Basic 1/3] Extracting [{index}/{total_files}] {rel}")
+
                 with zf.open(info, "r") as srcf, tmp.open("wb") as dstf:
                     while True:
                         block = srcf.read(4 * 1024 * 1024)
                         if not block:
                             break
                         dstf.write(block)
-                        h.update(block)
+                        done_bytes += len(block)
 
-                expected = group[rel]
-                if h.hexdigest().lower() != expected.lower():
-                    raise RuntimeError(f"SHA-256 verification failed in Basic ZIP: {rel}")
+                        if progress_callback:
+                            progress_callback(
+                                done_bytes,
+                                total_bytes if total_bytes else None,
+                                0.0,
+                                "Basic 1/3 - Extracting...",
+                            )
 
                 os.replace(tmp, dest)
                 extracted.add(rel.casefold())
+
             finally:
                 tmp.unlink(missing_ok=True)
 
-    print(f"[bulk] Extracted and SHA-256 verified: {len(extracted)} / {len(group)}")
-    return extracted
+    if progress_callback:
+        progress_callback(
+            done_bytes,
+            total_bytes if total_bytes else None,
+            0.0,
+            "Basic 1/3 - Extraction complete",
+        )
 
+    print(f"[Basic 1/3] Extracted: {len(extracted)} / {len(group)} files.")
+    return extracted
 
 def _bulk_install_basic_core(files, control=None, progress_callback=None):
     """
@@ -406,7 +490,7 @@ def _bulk_install_basic_core(files, control=None, progress_callback=None):
         progress_callback(0, None, 0.0, "Basic 1/3 - Extracting Q3Elite_Basic.zip")
 
     print("[Basic 1/3] Extracting Q3Elite_Basic.zip...")
-    extracted = _extract_basic_zip(archive, group)
+    extracted = _extract_basic_zip(archive, group, progress_callback)
     print(f"[Basic 1/3] Done: {len(extracted)} files.")
     return len(extracted)
 
@@ -417,6 +501,55 @@ def _basic_remote_maps_group(files):
         for rel, digest in selected_basic_files(files).items()
         if is_remote_map(rel)
     }
+
+
+def _basic_maps_zip_url(group):
+    """
+    Build a pCloud public ZIP containing ONLY the Basic QL maps present in
+    Manifest.json.  Do not ZIP the whole remote Maps/QLmaps folder.
+    """
+    entries = pcloud.list_folder(f"{pcloud.MAPS}/QLmaps", recursive=True)
+
+    # group keys are local paths such as baseq3/maps/QLmaps/Arenagate.pk3.
+    wanted_names = {
+        PurePosixPath(norm(rel)).name.casefold()
+        for rel in group
+    }
+
+    selected = [
+        entry for entry in entries
+        if str(entry.get("name", "")).casefold() in wanted_names
+    ]
+
+    found_names = {
+        str(entry.get("name", "")).casefold()
+        for entry in selected
+    }
+    missing = sorted(wanted_names - found_names)
+    if missing:
+        raise RuntimeError(
+            "Basic maps are missing on pCloud: " + ", ".join(missing)
+        )
+
+    fileids = [
+        str(entry["fileid"])
+        for entry in selected
+        if entry.get("fileid") is not None
+    ]
+
+    if len(fileids) != len(group):
+        raise RuntimeError(
+            f"Could not resolve all Basic map file IDs "
+            f"({len(fileids)}/{len(group)})."
+        )
+
+    params = urllib.parse.urlencode({
+        "code": pcloud.CODE,
+        "fileids": ",".join(fileids),
+        "forcedownload": 1,
+        "filename": BASIC_MAPS_ZIP.name,
+    })
+    return f"{pcloud.API}/getpubzip?{params}"
 
 
 def _bulk_install_basic_maps(files, control=None, progress_callback=None):
@@ -468,10 +601,7 @@ def _bulk_install_basic_maps(files, control=None, progress_callback=None):
 
         print("\n[Basic 2/3] Downloading Q3Elite_Basic_maps.zip...")
 
-        url = pcloud.pubzip_url(
-            f"{pcloud.MAPS}/QLmaps",
-            BASIC_MAPS_ZIP.name
-        )
+        url = _basic_maps_zip_url(group)
 
         # Intentionally the same simple downloader usage as addon/unziper:
         # no custom expected size, no custom dynamic-stream mode.
@@ -560,7 +690,6 @@ def _bulk_install_basic_maps(files, control=None, progress_callback=None):
             destination = ROOT / Path(target_rel)
             destination.parent.mkdir(parents=True, exist_ok=True)
 
-            print(f"[Basic map] {source.name} -> {target_rel}")
             shutil.copy2(source, destination)
             installed.add(target_rel.casefold())
 
@@ -632,7 +761,7 @@ def install_basic(external_maps=False, music_playlist=False, autoexec_update=Fal
 
     # This is the authoritative final pass. Correct files are skipped;
     # missing/corrupt files are downloaded individually and verified.
-    downloaded = _install_group(basic, control, progress_callback)
+    downloaded = _install_group(basic, control, progress_callback, basic_verify=True)
 
     if external_maps:
         downloaded += _install_group(selected_map_files(files), control, progress_callback)
