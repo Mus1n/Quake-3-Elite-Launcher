@@ -32,6 +32,7 @@ STATE_FILE = APPDATA / "Quake 3 Elite" / "Launcher" / "components.json"
 CACHE_DIR = APPDATA / "Quake 3 Elite" / "Launcher" / "cache"
 TEMP_DIR = APPDATA / "Quake 3 Elite" / "Temp"
 BASIC_ZIP = CACHE_DIR / "Q3Elite_Basic.zip"
+BASIC_MAPS_ZIP = CACHE_DIR / "Q3Elite_Basic_maps.zip"
 MAPS_ZIP = CACHE_DIR / "Q3Elite_Maps.zip"
 
 REMOTE_MANIFEST = "Q3Elite/Manifest.json"
@@ -449,6 +450,131 @@ def _bulk_install_basic_core(files, control=None, progress_callback=None):
         return len(extracted)
 
 
+
+def _basic_remote_maps_group(files):
+    """Basic files logically owned by Basic but physically hosted in pCloud /Maps/."""
+    return {
+        rel: digest
+        for rel, digest in selected_basic_files(files).items()
+        if is_remote_map(rel)
+    }
+
+
+def _bulk_install_basic_maps(files, control=None, progress_callback=None):
+    """Download pCloud .../Maps/QLmaps as a separate ZIP and extract only Basic manifest maps."""
+    group = _basic_remote_maps_group(files)
+    if not group:
+        return 0
+
+    CACHE_DIR.mkdir(parents=True, exist_ok=True)
+
+    stale_part = BASIC_MAPS_ZIP.with_name(BASIC_MAPS_ZIP.name + ".part")
+    if stale_part.exists():
+        stale_size = stale_part.stat().st_size
+        stale_part.unlink()
+        print(
+            f"[basic maps bulk] Previous dynamic ZIP partial found "
+            f"({human(stale_size)}). Restarting from 0."
+        )
+
+    reuse = BASIC_MAPS_ZIP.is_file() and zipfile.is_zipfile(BASIC_MAPS_ZIP)
+    if reuse:
+        print(
+            f"[basic maps bulk] Complete cached ZIP found "
+            f"({human(BASIC_MAPS_ZIP.stat().st_size)}). Reusing it."
+        )
+    elif BASIC_MAPS_ZIP.exists():
+        print("[basic maps bulk] Cached ZIP is invalid; removing it.")
+        BASIC_MAPS_ZIP.unlink()
+
+    if not reuse:
+        if progress_callback:
+            progress_callback(0, None, 0.0, "Preparing Basic QL maps ZIP on pCloud...")
+
+        url = pcloud.pubzip_url(f"{pcloud.MAPS}/QLmaps", BASIC_MAPS_ZIP.name)
+        result = downloader(
+            url,
+            str(CACHE_DIR),
+            BASIC_MAPS_ZIP.name,
+            skip=True,
+            control=control,
+            progress_callback=progress_callback,
+            expected_size=None,
+            use_part_file=True,
+            timeout_value=60,
+        )
+        if not result:
+            raise RuntimeError("Basic QL maps bulk ZIP download failed/cancelled.")
+
+    archive = BASIC_MAPS_ZIP
+    if not zipfile.is_zipfile(archive):
+        raise RuntimeError("pCloud getpubzip did not return a valid Basic QL maps ZIP.")
+
+    # folderid=.../Maps/QLmaps normally places *.pk3 directly at ZIP root.
+    wanted_cf = {norm(rel).casefold(): norm(rel) for rel in group}
+    extracted = set()
+
+    with zipfile.ZipFile(archive, "r") as zf:
+        for info in zf.infolist():
+            if info.is_dir():
+                continue
+
+            raw = norm(info.filename)
+            parts = PurePosixPath(raw).parts
+            candidates = []
+
+            # Normal QLmaps ZIP: Arenagate.pk3
+            if parts:
+                candidates.append(norm("baseq3/maps/QLmaps/" + str(PurePosixPath(*parts))))
+
+            # Also tolerate an archive containing QLmaps/... or Maps/QLmaps/...
+            for i, part in enumerate(parts):
+                if part.casefold() == "qlmaps":
+                    suffix = parts[i + 1:]
+                    if suffix:
+                        candidates.append(
+                            norm("baseq3/maps/QLmaps/" + str(PurePosixPath(*suffix)))
+                        )
+
+            rel = None
+            for candidate in candidates:
+                rel = wanted_cf.get(candidate.casefold())
+                if rel:
+                    break
+            if not rel:
+                continue
+
+            dest = ROOT / Path(rel)
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            tmp = dest.with_name(dest.name + ".basicmaps.tmp")
+            h = hashlib.sha256()
+
+            try:
+                with zf.open(info, "r") as srcf, tmp.open("wb") as dstf:
+                    while True:
+                        block = srcf.read(4 * 1024 * 1024)
+                        if not block:
+                            break
+                        dstf.write(block)
+                        h.update(block)
+
+                if h.hexdigest().lower() != group[rel].lower():
+                    raise RuntimeError(
+                        f"SHA-256 verification failed in Basic maps ZIP: {rel}"
+                    )
+
+                os.replace(tmp, dest)
+                extracted.add(rel.casefold())
+            finally:
+                tmp.unlink(missing_ok=True)
+
+    print(
+        f"[basic maps bulk] Extracted and SHA-256 verified: "
+        f"{len(extracted)} / {len(group)}"
+    )
+    print(f"[basic maps cache] Kept: {BASIC_MAPS_ZIP}")
+    return len(extracted)
+
 def install_basic(external_maps=False, music_playlist=False, autoexec_update=False,
                   control=None, progress_callback=None):
     control = control or DownloadControl()
@@ -483,7 +609,10 @@ def install_basic(external_maps=False, music_playlist=False, autoexec_update=Fal
     missing_ratio = _basic_missing_ratio(core_group)
     bulk_extracted = 0
 
-    if is_true_fresh_install():
+    fresh_install = is_true_fresh_install()
+    basic_maps_extracted = 0
+
+    if fresh_install:
         try:
             bulk_extracted = _bulk_install_basic_core(
                 files, control, progress_callback
@@ -493,6 +622,16 @@ def install_basic(external_maps=False, music_playlist=False, autoexec_update=Fal
             print("[bulk] Falling back to individual SHA-256 repair...")
             if progress_callback:
                 progress_callback(0, None, 0.0, "Bulk ZIP unavailable — repairing files individually...")
+
+        try:
+            basic_maps_extracted = _bulk_install_basic_maps(
+                files, control, progress_callback
+            )
+        except Exception as exc:
+            print(f"[basic maps bulk] Bulk install unavailable: {exc}")
+            print("[basic maps bulk] Falling back to individual SHA-256 repair...")
+            if progress_callback:
+                progress_callback(0, None, 0.0, "Basic maps ZIP unavailable — repairing maps individually...")
 
     # Always finish with the normal manifest-driven path. It skips every
     # correctly extracted file and downloads only anything missing/corrupt,
@@ -516,8 +655,9 @@ def install_basic(external_maps=False, music_playlist=False, autoexec_update=Fal
         install_music(control, progress_callback)
 
     print(f"\n[OK] Basic ready.")
-    print(f"Bulk extracted/verified: {bulk_extracted}")
-    print(f"Individual downloads:    {downloaded}")
+    print(f"Core bulk extracted:      {bulk_extracted}")
+    print(f"Basic maps bulk extracted:{basic_maps_extracted}")
+    print(f"Individual downloads:     {downloaded}")
     return load_state()
 
 
