@@ -42,6 +42,7 @@ LOCAL_VERSION = ROOT / "Q3Elite" / "Version.json"
 AUTOEXEC = "baseq3/mods/OSP/autoexec.cfg"
 USER_CONFIG = "baseq3/mods/OSP/UserConfig.cfg"
 MAP_PREFIX = "baseq3/maps/"
+BASIC_MAP_PREFIX = "baseq3/maps/QLmaps/"
 MUSIC_LOCAL_PREFIX = "baseq3/mods/osp/z-Music-Playlist-by-Mus1n.pk3dir/music/"
 BASE_MUSIC = {f"{MUSIC_LOCAL_PREFIX}{n}.ogg".casefold() for n in range(1, 6)}
 
@@ -117,13 +118,26 @@ def remote_release():
 def classify(rel):
     p = norm(rel)
     cf = p.casefold()
-    if cf.startswith(MAP_PREFIX):
+
+    # QLmaps files that are present in Manifest.json belong to Q3Elite Basic.
+    # .Q3Eliteignore controls exactly which QL maps enter the manifest.
+    if cf.startswith(BASIC_MAP_PREFIX.casefold()):
+        return "basic"
+
+    # All other managed baseq3/maps files are the optional External Maps component.
+    if cf.startswith(MAP_PREFIX.casefold()):
         return "maps"
+
     if cf == AUTOEXEC.casefold():
         return "autoexec"
     if cf in BASE_MUSIC:
         return "basic"
     return "basic"
+
+
+def is_remote_map(rel):
+    """True when the file is physically hosted under the separate pCloud Maps tree."""
+    return norm(rel).casefold().startswith(MAP_PREFIX.casefold())
 
 
 def _is_official_q3_pak(path):
@@ -172,8 +186,8 @@ def catalog():
     map_sizes = _size_index(pcloud.MAPS)
 
     def size_for(rel):
-        remote = pcloud.remote_for(rel, is_map=classify(rel) == "maps")
-        if classify(rel) == "maps":
+        remote = pcloud.remote_for(rel, is_map=is_remote_map(rel))
+        if is_remote_map(rel):
             prefix = norm(pcloud.MAPS) + "/"
             key = norm(remote)[len(prefix):].casefold()
             return map_sizes.get(key, 0)
@@ -222,7 +236,7 @@ def _download_managed(rel, digest, control=None, progress_callback=None):
     if dest.is_file() and sha256_file(dest).lower() == digest.lower():
         print(f"[current] {rel}")
         return False
-    info = pcloud.resolve(pcloud.remote_for(rel, is_map=classify(rel)=="maps"))
+    info = pcloud.resolve(pcloud.remote_for(rel, is_map=is_remote_map(rel)))
     dest.parent.mkdir(parents=True, exist_ok=True)
     print(f"[download] {rel} ({human(info['size'])})")
     result = downloader(
