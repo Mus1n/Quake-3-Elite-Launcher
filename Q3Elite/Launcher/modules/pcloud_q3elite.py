@@ -97,6 +97,40 @@ def pubzip_url(remote, filename="Q3Elite_Basic.zip"):
     return f"{API}/getpubzip?{params}"
 
 
+def pubzip_files_url(remotes, filename="Q3Elite_Basic_Maps.zip"):
+    """Return a streaming getpubzip URL containing only selected public-link files.
+
+    pCloud tree parameters accept comma-separated fileids. Because fileids are
+    placed at the virtual ZIP root, this is ideal for the required Basic maps:
+    the archive contains Arenagate.pk3, Spillway.pk3, ... directly at root.
+    """
+    fileids = []
+    seen = set()
+
+    for remote in remotes:
+        entry = find(remote)
+        if entry.get("isfolder"):
+            raise IsADirectoryError(remote)
+        fid = entry.get("fileid")
+        if fid is None:
+            raise RuntimeError(f"No pCloud fileid for: {remote}")
+        fid = str(fid)
+        if fid not in seen:
+            seen.add(fid)
+            fileids.append(fid)
+
+    if not fileids:
+        raise RuntimeError("No files selected for pCloud ZIP.")
+
+    params = urllib.parse.urlencode({
+        "code": CODE,
+        "fileids": ",".join(fileids),
+        "forcedownload": 1,
+        "filename": filename,
+    })
+    return f"{API}/getpubzip?{params}"
+
+
 def resolve(remote):
     e=find(remote)
     if e.get("isfolder"): raise IsADirectoryError(remote)

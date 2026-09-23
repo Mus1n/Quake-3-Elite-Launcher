@@ -115,7 +115,14 @@ def applies(path, profile):
 
     # Once Step 18B component state exists, it is authoritative.
     if prefs is not None:
-        if is_external_map(p) and not prefs.get("external_maps", False):
+        # The 26 QLmaps single-player PK3s live under baseq3/maps/, but they are
+        # required Basic content and must be updated even when External Maps is OFF.
+        try:
+            import q3elite_components
+            basic_map = q3elite_components.is_basic_map(p)
+        except Exception:
+            basic_map = False
+        if is_external_map(p) and not basic_map and not prefs.get("external_maps", False):
             return False
         if p.casefold() == "baseq3/mods/osp/autoexec.cfg".casefold() and not prefs.get("autoexec_update", False):
             return False

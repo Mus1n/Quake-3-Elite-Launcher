@@ -32,6 +32,7 @@ STATE_FILE = APPDATA / "Quake 3 Elite" / "Launcher" / "components.json"
 CACHE_DIR = APPDATA / "Quake 3 Elite" / "Launcher" / "cache"
 TEMP_DIR = APPDATA / "Quake 3 Elite" / "Temp"
 BASIC_ZIP = CACHE_DIR / "Q3Elite_Basic.zip"
+BASIC_MAPS_ZIP = CACHE_DIR / "Q3Elite_Basic_Maps.zip"
 MAPS_ZIP = CACHE_DIR / "Q3Elite_Maps.zip"
 
 REMOTE_MANIFEST = "Q3Elite/Manifest.json"
@@ -44,6 +45,22 @@ USER_CONFIG = "baseq3/mods/OSP/UserConfig.cfg"
 MAP_PREFIX = "baseq3/maps/"
 MUSIC_LOCAL_PREFIX = "baseq3/mods/osp/z-Music-Playlist-by-Mus1n.pk3dir/music/"
 BASE_MUSIC = {f"{MUSIC_LOCAL_PREFIX}{n}.ogg".casefold() for n in range(1, 6)}
+
+# Required single-player maps. These are part of Basic even though they are
+# physically hosted in the separate pCloud Maps tree.
+BASIC_MAP_NAMES = {
+    "Arenagate.pk3", "Spillway.pk3", "Hearth.pk3", "Powerstation.pk3",
+    "Eviscerated.pk3", "Forgotten.pk3", "Campgrounds.pk3",
+    "Provinggrounds.pk3", "Retribution.pk3", "Brimstoneabbey.pk3",
+    "Heroskeep.pk3", "Hellsgate.pk3", "Namelessplace.pk3",
+    "Chemicalreaction.pk3", "Dredwerkz.pk3", "Verticalvengeance.pk3",
+    "Lostworld.pk3", "Grimdungeons.pk3", "Demonkeep.pk3",
+    "Fatalinstinct.pk3", "Cobaltstation.pk3", "Longestyard.pk3",
+    "Spacechamber.pk3", "Terminalheights.pk3", "Theepicenter.pk3",
+    "Beyondreality.pk3",
+}
+BASIC_MAP_NAMES_CF = {name.casefold() for name in BASIC_MAP_NAMES}
+BASIC_MAP_PREFIX = "baseq3/maps/QLmaps/"
 
 
 def norm(v):
@@ -114,9 +131,20 @@ def remote_release():
     return version, manifest, files
 
 
+def is_basic_map(rel):
+    p = norm(rel)
+    cf = p.casefold()
+    if not cf.startswith(BASIC_MAP_PREFIX.casefold()):
+        return False
+    suffix = p[len(BASIC_MAP_PREFIX):]
+    return "/" not in suffix and suffix.casefold() in BASIC_MAP_NAMES_CF
+
+
 def classify(rel):
     p = norm(rel)
     cf = p.casefold()
+    if is_basic_map(p):
+        return "basic_map"
     if cf.startswith(MAP_PREFIX):
         return "maps"
     if cf == AUTOEXEC.casefold():
@@ -144,11 +172,23 @@ def selected_basic_files(files, autoexec_update=False):
     # pak_verifier.py. They must never be resolved from the Q3Elite pCloud tree.
     return {
         p: h for p, h in files.items()
-        if classify(p) != "maps" and not _is_official_q3_pak(p)
+        if classify(p) in ("basic", "basic_map", "autoexec") and not _is_official_q3_pak(p)
     }
 
 
+def selected_basic_map_files(files):
+    group = {p: h for p, h in files.items() if classify(p) == "basic_map"}
+    found = {Path(p).name.casefold() for p in group}
+    missing = sorted(BASIC_MAP_NAMES_CF - found)
+    if missing:
+        raise RuntimeError(
+            "Required Basic maps are missing from Manifest.json: " + ", ".join(missing)
+        )
+    return group
+
+
 def selected_map_files(files):
+    # Optional External Maps explicitly exclude the 26 required single-player maps.
     return {p:h for p,h in files.items() if classify(p) == "maps"}
 
 
@@ -172,8 +212,9 @@ def catalog():
     map_sizes = _size_index(pcloud.MAPS)
 
     def size_for(rel):
-        remote = pcloud.remote_for(rel, is_map=classify(rel) == "maps")
-        if classify(rel) == "maps":
+        kind = classify(rel)
+        remote = pcloud.remote_for(rel, is_map=kind in ("maps", "basic_map"))
+        if kind in ("maps", "basic_map"):
             prefix = norm(pcloud.MAPS) + "/"
             key = norm(remote)[len(prefix):].casefold()
             return map_sizes.get(key, 0)
@@ -222,7 +263,7 @@ def _download_managed(rel, digest, control=None, progress_callback=None):
     if dest.is_file() and sha256_file(dest).lower() == digest.lower():
         print(f"[current] {rel}")
         return False
-    info = pcloud.resolve(pcloud.remote_for(rel, is_map=classify(rel)=="maps"))
+    info = pcloud.resolve(pcloud.remote_for(rel, is_map=classify(rel) in ("maps", "basic_map")))
     dest.parent.mkdir(parents=True, exist_ok=True)
     print(f"[download] {rel} ({human(info['size'])})")
     result = downloader(
@@ -259,7 +300,7 @@ def _basic_core_group(files):
     """Basic files physically stored inside the remote CORE folder."""
     return {
         rel: digest for rel, digest in selected_basic_files(files).items()
-        if rel.casefold() not in BASE_MUSIC
+        if classify(rel) != "basic_map" and rel.casefold() not in BASE_MUSIC
     }
 
 
@@ -428,6 +469,102 @@ def _bulk_install_basic_core(files, control=None, progress_callback=None):
         return len(extracted)
 
 
+def _basic_map_zip_member(member_name, wanted_by_name):
+    """Selected pCloud fileids are emitted at ZIP root; match by filename."""
+    name = PurePosixPath(norm(member_name)).name.casefold()
+    return wanted_by_name.get(name)
+
+
+def _extract_basic_maps_zip(zip_path, group):
+    wanted_by_name = {Path(rel).name.casefold(): rel for rel in group}
+    extracted = set()
+
+    with zipfile.ZipFile(zip_path, "r") as zf:
+        for info in zf.infolist():
+            if info.is_dir():
+                continue
+            rel = _basic_map_zip_member(info.filename, wanted_by_name)
+            if not rel:
+                continue
+
+            dest = ROOT / Path(rel)
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            tmp = dest.with_name(dest.name + ".basicmaps.tmp")
+            h = hashlib.sha256()
+            try:
+                with zf.open(info, "r") as srcf, tmp.open("wb") as dstf:
+                    while True:
+                        block = srcf.read(4 * 1024 * 1024)
+                        if not block:
+                            break
+                        dstf.write(block)
+                        h.update(block)
+                if h.hexdigest().lower() != group[rel].lower():
+                    raise RuntimeError(f"SHA-256 verification failed in Basic Maps ZIP: {rel}")
+                os.replace(tmp, dest)
+                extracted.add(rel.casefold())
+            finally:
+                tmp.unlink(missing_ok=True)
+
+    if len(extracted) != len(group):
+        missing = [rel for rel in group if rel.casefold() not in extracted]
+        raise RuntimeError(
+            "Basic Maps ZIP did not contain every required map: " + ", ".join(missing)
+        )
+    print(f"[basic maps] Extracted and SHA-256 verified: {len(extracted)} / {len(group)}")
+    return extracted
+
+
+def _bulk_install_basic_maps(files, control=None, progress_callback=None):
+    group = selected_basic_map_files(files)
+    if not group:
+        return 0
+
+    CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    stale_part = BASIC_MAPS_ZIP.with_name(BASIC_MAPS_ZIP.name + ".part")
+    if stale_part.exists():
+        stale_size = stale_part.stat().st_size
+        stale_part.unlink()
+        print(f"[basic maps] Previous dynamic ZIP partial found ({human(stale_size)}). Restarting from 0.")
+
+    reuse = BASIC_MAPS_ZIP.is_file() and zipfile.is_zipfile(BASIC_MAPS_ZIP)
+    if reuse:
+        print(f"[basic maps] Complete cached ZIP found ({human(BASIC_MAPS_ZIP.stat().st_size)}). Reusing it.")
+    elif BASIC_MAPS_ZIP.exists():
+        BASIC_MAPS_ZIP.unlink()
+
+    if progress_callback:
+        progress_callback(0, None, 0.0, "Preparing Basic Maps ZIP on pCloud...")
+
+    # IMPORTANT: select only the 26 fileids. Never ZIP the whole Maps folder.
+    remotes = [pcloud.remote_for(rel, is_map=True) for rel in group]
+    url = pcloud.pubzip_files_url(remotes, BASIC_MAPS_ZIP.name)
+
+    print("\nDownloading required Singleplayer maps as Q3Elite_Basic_Maps.zip...")
+    print("This request contains only the 26 hard-coded Basic map fileids.")
+    print("Pause/Resume works in this launcher session; after launcher restart")
+    print("the dynamic ZIP download starts from 0.")
+
+    if reuse:
+        result = str(BASIC_MAPS_ZIP)
+    else:
+        result = downloader(
+            url, str(CACHE_DIR), BASIC_MAPS_ZIP.name, skip=True,
+            control=control, progress_callback=progress_callback,
+            expected_size=None, use_part_file=True, timeout_value=60,
+        )
+        if not result:
+            raise RuntimeError("Basic Maps ZIP download failed/cancelled.")
+
+    archive = Path(result)
+    if not zipfile.is_zipfile(archive):
+        raise RuntimeError("pCloud getpubzip did not return a valid Basic Maps ZIP.")
+
+    extracted = _extract_basic_maps_zip(archive, group)
+    print(f"[basic maps cache] Kept: {BASIC_MAPS_ZIP}")
+    return len(extracted)
+
+
 def install_basic(external_maps=False, music_playlist=False, autoexec_update=False,
                   control=None, progress_callback=None):
     control = control or DownloadControl()
@@ -462,24 +599,21 @@ def install_basic(external_maps=False, music_playlist=False, autoexec_update=Fal
     missing_ratio = _basic_missing_ratio(core_group)
     bulk_extracted = 0
 
+    basic_maps_extracted = 0
     if is_true_fresh_install():
-        try:
-            bulk_extracted = _bulk_install_basic_core(
-                files, control, progress_callback
-            )
-        except Exception as exc:
-            print(f"[bulk] Bulk install unavailable: {exc}")
-            print("[bulk] Falling back to individual SHA-256 repair...")
-            if progress_callback:
-                progress_callback(0, None, 0.0, "Bulk ZIP unavailable — repairing files individually...")
+        # Strictly serial first-install pipeline. The second dynamic pCloud ZIP
+        # is not even requested until Q3Elite_Basic.zip has finished extracting
+        # and SHA-verifying. This avoids concurrent dynamic ZIP streams.
+        bulk_extracted = _bulk_install_basic_core(files, control, progress_callback)
+        basic_maps_extracted = _bulk_install_basic_maps(files, control, progress_callback)
 
     # Always finish with the normal manifest-driven path. It skips every
     # correctly extracted file and downloads only anything missing/corrupt,
     # including base music 1..5 which lives outside the CORE folder.
     downloaded = _install_group(basic, control, progress_callback)
 
-    if external_maps:
-        downloaded += _install_group(selected_map_files(files), control, progress_callback)
+    # Optional addons are deliberately NOT part of the Basic repair group.
+    # The GUI installs them separately after Basic.
 
     # Commit release metadata only after required payload is valid.
     atomic_json(LOCAL_MANIFEST, manifest)
@@ -495,8 +629,9 @@ def install_basic(external_maps=False, music_playlist=False, autoexec_update=Fal
         install_music(control, progress_callback)
 
     print(f"\n[OK] Basic ready.")
-    print(f"Bulk extracted/verified: {bulk_extracted}")
-    print(f"Individual downloads:    {downloaded}")
+    print(f"Basic ZIP extracted:      {bulk_extracted}")
+    print(f"Basic Maps extracted:     {basic_maps_extracted}")
+    print(f"Individual downloads:     {downloaded}")
     return load_state()
 
 
