@@ -40,6 +40,7 @@ LOCAL_MANIFEST = ROOT / "Q3Elite" / "Manifest.json"
 LOCAL_VERSION = ROOT / "Q3Elite" / "Version.json"
 
 AUTOEXEC = "baseq3/mods/OSP/autoexec.cfg"
+USER_CONFIG = "baseq3/mods/OSP/UserConfig.cfg"
 MAP_PREFIX = "baseq3/maps/"
 MUSIC_LOCAL_PREFIX = "baseq3/mods/osp/z-Music-Playlist-by-Mus1n.pk3dir/music/"
 BASE_MUSIC = {f"{MUSIC_LOCAL_PREFIX}{n}.ogg".casefold() for n in range(1, 6)}
@@ -47,6 +48,10 @@ BASE_MUSIC = {f"{MUSIC_LOCAL_PREFIX}{n}.ogg".casefold() for n in range(1, 6)}
 
 def norm(v):
     return str(PurePosixPath(str(v).replace("\\", "/").lstrip("/")))
+
+
+def is_user_config(rel):
+    return norm(rel).casefold() == USER_CONFIG.casefold()
 
 
 def sha256_file(path, chunk=4 * 1024 * 1024):
@@ -211,6 +216,9 @@ def human(n):
 
 def _download_managed(rel, digest, control=None, progress_callback=None):
     dest = ROOT / Path(rel)
+    if is_user_config(rel) and dest.is_file():
+        print(f"[preserved user config] {rel}")
+        return False
     if dest.is_file() and sha256_file(dest).lower() == digest.lower():
         print(f"[current] {rel}")
         return False
@@ -296,6 +304,10 @@ def _extract_basic_zip(zip_path, group):
                 continue
 
             dest = ROOT / Path(rel)
+            if is_user_config(rel) and dest.is_file():
+                print(f"[preserved user config] {rel}")
+                extracted.add(rel.casefold())
+                continue
             dest.parent.mkdir(parents=True, exist_ok=True)
             tmp = dest.with_name(dest.name + ".bulk.tmp")
 
@@ -357,6 +369,8 @@ def _bulk_install_basic_core(files, control=None, progress_callback=None):
         print("[bulk] Cached Basic ZIP is invalid; removing it.")
         BASIC_ZIP.unlink()
 
+    if progress_callback:
+        progress_callback(0, None, 0.0, "Preparing Basic ZIP on pCloud...")
     url = pcloud.pubzip_url(pcloud.CORE, "Q3Elite_Basic.zip")
 
     print("\nFresh Basic install detected.")
@@ -377,7 +391,7 @@ def _bulk_install_basic_core(files, control=None, progress_callback=None):
             progress_callback=progress_callback,
             expected_size=None,
             use_part_file=True,
-            timeout_value=60,
+            timeout_value=20,
         )
         if not result:
             raise RuntimeError("Basic bulk ZIP download failed/cancelled.")
@@ -428,6 +442,8 @@ def install_basic(external_maps=False, music_playlist=False, autoexec_update=Fal
     pending_state["autoexec_update"] = bool(autoexec_update)
     save_state(pending_state)
 
+    if progress_callback:
+        progress_callback(0, None, 0.0, "Reading Q3Elite manifest...")
     version, manifest, files = remote_release()
     basic = selected_basic_files(files, autoexec_update)
 
@@ -454,16 +470,16 @@ def install_basic(external_maps=False, music_playlist=False, autoexec_update=Fal
         except Exception as exc:
             print(f"[bulk] Bulk install unavailable: {exc}")
             print("[bulk] Falling back to individual SHA-256 repair...")
+            if progress_callback:
+                progress_callback(0, None, 0.0, "Bulk ZIP unavailable — repairing files individually...")
 
     # Always finish with the normal manifest-driven path. It skips every
     # correctly extracted file and downloads only anything missing/corrupt,
     # including base music 1..5 which lives outside the CORE folder.
     downloaded = _install_group(basic, control, progress_callback)
 
-    # External Maps are an optional component with their own bulk pCloud ZIP.
-    # Never pass them through the Basic per-file installer here.
     if external_maps:
-        install_maps(control, progress_callback)
+        downloaded += _install_group(selected_map_files(files), control, progress_callback)
 
     # Commit release metadata only after required payload is valid.
     atomic_json(LOCAL_MANIFEST, manifest)

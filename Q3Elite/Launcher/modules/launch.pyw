@@ -2194,12 +2194,24 @@ def start_first_install():
     )
     window.firstInstallCard.setEnabled(False)
     download_control.reset()
+
+    # Do not show stale progress left by the launcher self-update while the
+    # Basic installer is resolving metadata / waiting for pCloud to prepare ZIP.
+    _download_progress["name"] = "Preparing Q3Elite Basic..."
+    _download_progress["downloaded"] = 0
+    _download_progress["total"] = None
+    _download_progress["speed"] = 0.0
+    window.progressBar.setRange(0, 0)
+    window.downloadInfo.setText("Preparing Q3Elite Basic...")
+
     install_state["base_done"] = False
     install_state["base_ok"] = False
     install_state["q3elite_done"] = False
     install_state["q3elite_ok"] = False
     install_state["post_update_started"] = False
     set_gui_checking("Installing...")
+    window.statusDetail.setText("Preparing Q3Elite Basic installation...")
+    window.downloadInfo.setText("Preparing Q3Elite Basic...")
     q3elite_download.start()
 
 
