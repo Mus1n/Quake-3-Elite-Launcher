@@ -1630,6 +1630,7 @@ DEFAULT_SETTINGS = {
     "cleanup_screenshots_days": 0,
     "cleanup_demos_days": 0,
     "pause_server_refresh_unfocused": False,
+    "screenshot_source": "reshade",
 }
 
 
@@ -1680,6 +1681,9 @@ def load_launcher_settings():
                                 data[key] = max(0, int(raw[key]))
                             except (TypeError, ValueError):
                                 data[key] = 0
+                        elif key == "screenshot_source":
+                            value = str(raw[key]).lower()
+                            data[key] = value if value in ("reshade", "osp", "both") else "reshade"
                         else:
                             data[key] = bool(raw[key])
 
@@ -2103,6 +2107,7 @@ def apply_settings():
         "cleanup_screenshots_days": cleanup_screenshots_days,
         "cleanup_demos_days": cleanup_demos_days,
         "pause_server_refresh_unfocused": window.pauseServerRefreshBox.isChecked(),
+        "screenshot_source": launcher_settings.get("screenshot_source", "reshade"),
     }
     try:
         set_start_with_windows(launcher_settings["start_with_windows"])
@@ -3848,6 +3853,67 @@ class ServerQueryWorker(QtCore.QThread):
         self.batchFinished.emit()
 
 
+def _q3_plain_ascii(text):
+    """Strip Quake ^ color escapes and hide non-ASCII/custom glyphs."""
+    text = re.sub(r"\^[0-9A-Za-z]", "", str(text or ""))
+    return "".join(ch for ch in text if 32 <= ord(ch) <= 126).strip()
+
+
+def _q3_segments(text):
+    """Return (plain ASCII text, color) segments for common Quake ^0..^7 colors."""
+    colors = {
+        "0": "#777777", "1": "#ff4040", "2": "#55ff55", "3": "#ffff55",
+        "4": "#6699ff", "5": "#55ffff", "6": "#ff66ff", "7": "#eeeeee",
+    }
+    s = str(text or "")
+    segments, buf, color = [], "", "#eeeeee"
+    i = 0
+    while i < len(s):
+        if i + 1 < len(s) and s[i] == "^":
+            code = s[i + 1]
+            if code in colors:
+                if buf:
+                    segments.append((buf, color))
+                    buf = ""
+                color = colors[code]
+                i += 2
+                continue
+            # Hide unsupported/custom Quake escape as well.
+            if code.isalnum():
+                i += 2
+                continue
+        ch = s[i]
+        if 32 <= ord(ch) <= 126:
+            buf += ch
+        i += 1
+    if buf:
+        segments.append((buf, color))
+    return segments
+
+
+class Q3NameDelegate(QtWidgets.QStyledItemDelegate):
+    def paint(self, painter, option, index):
+        if index.column() != 0:
+            return super().paint(painter, option, index)
+        painter.save()
+        opt = QtWidgets.QStyleOptionViewItem(option)
+        self.initStyleOption(opt, index)
+        raw = index.data(QtCore.Qt.ItemDataRole.UserRole)
+        if raw is None:
+            raw = index.data(QtCore.Qt.ItemDataRole.DisplayRole) or ""
+        # Draw selection/background/focus but not the default text.
+        opt.text = ""
+        style = opt.widget.style() if opt.widget else QtWidgets.QApplication.style()
+        style.drawControl(QtWidgets.QStyle.ControlElement.CE_ItemViewItem, opt, painter, opt.widget)
+        x = option.rect.left() + 7
+        baseline = option.rect.center().y() + painter.fontMetrics().ascent() // 2 - 1
+        for text_part, color in _q3_segments(raw):
+            painter.setPen(QtGui.QColor(color))
+            painter.drawText(x, baseline, text_part)
+            x += painter.fontMetrics().horizontalAdvance(text_part)
+        painter.restore()
+
+
 class ServerPlayerTable(QtWidgets.QTreeWidget):
     wheelRequested = QtCore.pyqtSignal(int)
 
@@ -3865,6 +3931,7 @@ class ServerCard(QtWidgets.QFrame):
     copyRequested = QtCore.pyqtSignal(str)
     removeRequested = QtCore.pyqtSignal(str)
     moveRequested = QtCore.pyqtSignal(str, int)
+    aliasRequested = QtCore.pyqtSignal(str)
     wheelRequested = QtCore.pyqtSignal(int)
 
     def __init__(self, server, levelshots_dir, parent=None):
@@ -3897,7 +3964,7 @@ class ServerCard(QtWidgets.QFrame):
         self.levelshot.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
         self.levelshot.setFixedSize(300, 169)
         self.levelshot.setScaledContents(False)
-        lay.addWidget(self.levelshot)
+        lay.addWidget(self.levelshot, 0, QtCore.Qt.AlignmentFlag.AlignHCenter)
 
         info = QtWidgets.QHBoxLayout()
         self.mapLabel = QtWidgets.QLabel("MAP  —")
@@ -3914,6 +3981,7 @@ class ServerCard(QtWidgets.QFrame):
 
         self.playerList = ServerPlayerTable()
         self.playerList.setObjectName("serverPlayerList")
+        self.playerList.setItemDelegate(Q3NameDelegate(self.playerList))
         self.playerList.setColumnCount(3)
         self.playerList.setHeaderLabels(["PLAYER", "SCORE", "PING"])
         self.playerList.setRootIsDecorated(False)
@@ -3943,6 +4011,10 @@ class ServerCard(QtWidgets.QFrame):
         right_btn.setObjectName("serverEditButton")
         right_btn.clicked.connect(lambda: self.moveRequested.emit(self.server.get("address", ""), 1))
         edit_l.addWidget(right_btn)
+        alias_btn = GlowButton("ALIAS")
+        alias_btn.setObjectName("serverEditButton")
+        alias_btn.clicked.connect(lambda: self.aliasRequested.emit(self.server.get("address", "")))
+        edit_l.addWidget(alias_btn)
         edit_l.addStretch(1)
         remove_btn = GlowButton("REMOVE")
         remove_btn.setObjectName("serverRemoveButton")
@@ -4014,8 +4086,12 @@ class ServerCard(QtWidgets.QFrame):
             self._set_levelshot("")
             return
 
-        hostname = str(result.get("hostname", "")).strip()
-        if hostname:
+        hostname = _q3_plain_ascii(result.get("hostname", ""))
+        alias = _q3_plain_ascii(self.server.get("name", ""))
+        # A user alias always wins. If no useful alias exists, show clean hostname.
+        if alias:
+            self.nameLabel.setText(alias)
+        elif hostname:
             self.nameLabel.setText(hostname)
         mapname = str(result.get("mapname", "")).strip()
         self.mapLabel.setText(f"MAP  {mapname or '—'}")
@@ -4025,13 +4101,36 @@ class ServerCard(QtWidgets.QFrame):
         self.playerList.clear()
         if players:
             for p in players:
-                item = QtWidgets.QTreeWidgetItem([str(p.get("name","")), str(p.get("score",0)), f'{p.get("ping",0)} ms'])
+                raw_name = str(p.get("name", ""))
+                item = QtWidgets.QTreeWidgetItem([_q3_plain_ascii(raw_name), str(p.get("score",0)), f'{p.get("ping",0)} ms'])
+                item.setData(0, QtCore.Qt.ItemDataRole.UserRole, raw_name)
                 item.setTextAlignment(1, int(QtCore.Qt.AlignmentFlag.AlignRight | QtCore.Qt.AlignmentFlag.AlignVCenter))
                 item.setTextAlignment(2, int(QtCore.Qt.AlignmentFlag.AlignRight | QtCore.Qt.AlignmentFlag.AlignVCenter))
                 self.playerList.addTopLevelItem(item)
         else:
             self.playerList.addTopLevelItem(QtWidgets.QTreeWidgetItem(["Server is empty.", "", ""]))
         self._set_levelshot(mapname)
+
+
+class ScreenshotWheelFilter(QtCore.QObject):
+    def __init__(self, window):
+        super().__init__(window)
+        self.window = window
+
+    def eventFilter(self, obj, event):
+        if event.type() == QtCore.QEvent.Type.Wheel:
+            w = self.window
+            if hasattr(w, "screenshotsPage") and w.pages.currentWidget() is w.screenshotsPage:
+                pos = QtGui.QCursor.pos()
+                list_top = w.screenshotList.mapToGlobal(QtCore.QPoint(0, 0))
+                list_rect = QtCore.QRect(list_top, w.screenshotList.size())
+                # Preserve normal list scrolling while pointer is over the list.
+                if not list_rect.contains(pos):
+                    delta = event.angleDelta().y() or event.angleDelta().x()
+                    if delta:
+                        w._step_screenshot(1 if delta < 0 else -1)
+                        return True
+        return False
 
 
 class ModernLauncherWindow(QtWidgets.QMainWindow):
@@ -4160,6 +4259,9 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
             self.pages.addWidget(page)
         body_layout.addWidget(self.pages, 1)
         root.addWidget(body, 1)
+
+        self.screenshotWheelFilter = ScreenshotWheelFilter(self)
+        QtWidgets.QApplication.instance().installEventFilter(self.screenshotWheelFilter)
 
         self.mediaFindShortcut = QtGui.QShortcut(QtGui.QKeySequence("Ctrl+F"), self)
         self.mediaFindShortcut.setContext(QtCore.Qt.ShortcutContext.WidgetWithChildrenShortcut)
@@ -4997,6 +5099,9 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
     def _osp_screenshots_dir(self):
         return GAME_ROOT / "baseq3" / "mods" / "osp" / "screenshots"
 
+    def _reshade_screenshots_dir(self):
+        return GAME_ROOT / "Q3Elite" / "Screenshots"
+
     def _osp_demos_dir(self):
         return GAME_ROOT / "baseq3" / "mods" / "osp" / "demos"
 
@@ -5088,11 +5193,41 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
         refresh.setObjectName("serverToolbarButton")
         refresh.clicked.connect(self.refresh_screenshots)
         header.addWidget(refresh)
+        prev_top = GlowButton("‹")
+        prev_top.setObjectName("serverToolbarButton")
+        prev_top.setFixedWidth(42)
+        prev_top.clicked.connect(lambda: self._step_screenshot(-1))
+        header.addWidget(prev_top)
+        next_top = GlowButton("›")
+        next_top.setObjectName("serverToolbarButton")
+        next_top.setFixedWidth(42)
+        next_top.clicked.connect(lambda: self._step_screenshot(1))
+        header.addWidget(next_top)
         full = GlowButton("FULL SCREEN")
         full.setObjectName("serverToolbarButton")
         full.clicked.connect(self.open_screenshot_fullscreen)
         header.addWidget(full)
         root.addLayout(header)
+
+        source_bar = QtWidgets.QHBoxLayout()
+        source_bar.setSpacing(7)
+        source_label = QtWidgets.QLabel("SOURCE")
+        source_label.setObjectName("muted")
+        source_bar.addWidget(source_label)
+        self.screenshotSourceGroup = QtWidgets.QButtonGroup(self)
+        self.screenshotSourceGroup.setExclusive(True)
+        self.screenshotSourceButtons = {}
+        for key, label in (("reshade", "ReShade Screenshots"), ("osp", "OSP Screenshots"), ("both", "Both Locations")):
+            btn = GlowButton(label)
+            btn.setObjectName("mediaSourceButton")
+            btn.setCheckable(True)
+            btn.clicked.connect(lambda checked=False, value=key: self.set_screenshot_source(value))
+            self.screenshotSourceGroup.addButton(btn)
+            self.screenshotSourceButtons[key] = btn
+            source_bar.addWidget(btn)
+        source_bar.addStretch(1)
+        root.addLayout(source_bar)
+
         root.addLayout(self._make_media_toolbar(
             "screenshotSearch", "screenshotSort", "screenshotFilter", self.refresh_screenshots
         ))
@@ -5104,6 +5239,7 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
         self.screenshotList.setObjectName("mediaList")
         self.screenshotList.setFixedWidth(285)
         self.screenshotList.setVerticalScrollMode(QtWidgets.QAbstractItemView.ScrollMode.ScrollPerPixel)
+        self.screenshotList.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.screenshotList.currentRowChanged.connect(self._show_selected_screenshot)
         self.screenshotList.itemDoubleClicked.connect(lambda _item: self.open_screenshot_fullscreen())
         previewFrame = QtWidgets.QFrame()
@@ -5137,15 +5273,192 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
         body.addWidget(previewFrame, 1)
         body.addWidget(self.screenshotList)
         root.addLayout(body, 1)
+
+        self.screenshotKeys = QtWidgets.QLabel(
+            "KEY BINDS\n"
+            "↑ / ↓ / ← / → : Navigation\n"
+            "F : Fullscreen\n"
+            "Ctrl+C : Copy screenshot\n"
+            "O : Open location\n"
+            "Del : Delete screenshot\n"
+            "F2 : Rename screenshot\n"
+            "F3 : Cycle sorting\n"
+            "F4 : Cycle gametype filter\n"
+            "Ctrl+F : Search\n"
+            "F1 : Show/Hide binds"
+        )
+        self.screenshotKeys.setObjectName("keyBindsLegend")
+        self.screenshotKeys.hide()
+        root.addWidget(self.screenshotKeys)
+
+        def shortcut(seq, fn):
+            sc = QtGui.QShortcut(QtGui.QKeySequence(seq), page)
+            sc.setContext(QtCore.Qt.ShortcutContext.WidgetWithChildrenShortcut)
+            sc.activated.connect(fn)
+        shortcut("F1", lambda: self.screenshotKeys.setVisible(not self.screenshotKeys.isVisible()))
+        shortcut("Left", lambda: self._step_screenshot(-1))
+        shortcut("Right", lambda: self._step_screenshot(1))
+        shortcut("F", self.open_screenshot_fullscreen)
+        shortcut("Ctrl+C", self.copy_selected_screenshot)
+        shortcut("O", lambda: self.open_media_location(self._selected_screenshot_path()))
+        shortcut("Delete", self.delete_selected_screenshot)
+        shortcut("F2", self.rename_selected_screenshot)
+        shortcut("F3", self._cycle_screenshot_sort)
+        shortcut("F4", self._cycle_screenshot_filter)
+
+        self._sync_screenshot_source_buttons()
         return page
 
+    def set_screenshot_source(self, source):
+        global launcher_settings
+        source = source if source in ("reshade", "osp", "both") else "reshade"
+        launcher_settings["screenshot_source"] = source
+        try:
+            save_launcher_settings(launcher_settings)
+        except Exception:
+            pass
+        self._sync_screenshot_source_buttons()
+        self.refresh_screenshots()
+
+    def _sync_screenshot_source_buttons(self):
+        source = launcher_settings.get("screenshot_source", "reshade")
+        reshade_has_files = False
+        folder = self._reshade_screenshots_dir()
+        if folder.is_dir():
+            reshade_has_files = any(p.is_file() for p in folder.iterdir())
+        # Keep the selected source even when its folder is empty.
+        for key, btn in getattr(self, "screenshotSourceButtons", {}).items():
+            btn.blockSignals(True)
+            btn.setChecked(key == source)
+            btn.blockSignals(False)
+        return source
+
+    def _cycle_media_sort(self, combo, prefix):
+        current = combo.currentText()
+        target = f"{prefix} ↓" if current == f"{prefix} ↑" else f"{prefix} ↑"
+        combo.setCurrentText(target)
+
+    def open_media_location(self, path):
+        if not path:
+            return
+        try:
+            import subprocess
+            subprocess.Popen(["explorer.exe", "/select,", str(path)])
+        except Exception:
+            pass
+
+    def copy_selected_screenshot(self):
+        path = self._selected_screenshot_path()
+        if path:
+            pix = QtGui.QPixmap(str(path))
+            if not pix.isNull():
+                QtWidgets.QApplication.clipboard().setPixmap(pix)
+                QtWidgets.QToolTip.showText(
+                    QtGui.QCursor.pos(),
+                    "Screenshot copied to clipboard",
+                    self.screenshotList,
+                    QtCore.QRect(),
+                    1800
+                )
+
+    def delete_selected_screenshot(self):
+        path = self._selected_screenshot_path()
+        if not path:
+            return
+        try:
+            path.unlink()
+            self.refresh_screenshots()
+        except Exception as error:
+            self.qerror(f"Could not delete screenshot:\n{error}")
+
+    def rename_selected_screenshot(self):
+        item = self.screenshotList.currentItem()
+        path = self._selected_screenshot_path()
+        if not item or not path:
+            return
+
+        # Keep the extension outside the editable text. The commit is handled
+        # after the editor closes; itemChanged cannot recursively refresh the list.
+        self._renameScreenshotPath = path
+        self._renameScreenshotItem = item
+        self._renameScreenshotActive = True
+
+        self.screenshotList.blockSignals(True)
+        item.setFlags(item.flags() | QtCore.Qt.ItemFlag.ItemIsEditable)
+        item.setText(path.stem)
+        self.screenshotList.blockSignals(False)
+
+        self.screenshotList.editItem(item)
+        editor = self.screenshotList.itemWidget(item)
+        QtCore.QTimer.singleShot(0, self._hook_screenshot_rename_editor)
+
+    def _hook_screenshot_rename_editor(self):
+        if not getattr(self, "_renameScreenshotActive", False):
+            return
+        editor = self.screenshotList.findChild(QtWidgets.QLineEdit)
+        if editor is None:
+            QtCore.QTimer.singleShot(10, self._hook_screenshot_rename_editor)
+            return
+        editor.setText(Path(self._renameScreenshotPath).stem)
+        editor.selectAll()
+        editor.editingFinished.connect(self._commit_screenshot_rename)
+
+    def _commit_screenshot_rename(self):
+        if not getattr(self, "_renameScreenshotActive", False):
+            return
+        self._renameScreenshotActive = False
+
+        path = getattr(self, "_renameScreenshotPath", None)
+        item = getattr(self, "_renameScreenshotItem", None)
+        editor = self.screenshotList.findChild(QtWidgets.QLineEdit)
+        stem = editor.text().strip() if editor is not None else (item.text().strip() if item else "")
+
+        self._renameScreenshotPath = None
+        self._renameScreenshotItem = None
+        if not path or not path.is_file():
+            self.refresh_screenshots()
+            return
+
+        # Strip any extension typed by the user and preserve the real original one.
+        if stem.lower().endswith(path.suffix.lower()):
+            stem = stem[:-len(path.suffix)]
+        stem = stem.strip().rstrip(".")
+        if not stem:
+            stem = path.stem
+
+        # Windows-invalid filename characters.
+        stem = re.sub(r'[<>:"/\\\\|?*]', "_", stem)
+        new_path = path.with_name(stem + path.suffix)
+
+        try:
+            if new_path != path:
+                path.rename(new_path)
+        except Exception as error:
+            self.qerror(f"Could not rename screenshot:\\n{error}")
+        self.refresh_screenshots()
+
+    def _cycle_screenshot_sort(self):
+        modes = ["Date ↓", "Date ↑", "Name ↑", "Name ↓"]
+        current = self.screenshotSort.currentText()
+        self.screenshotSort.setCurrentText(modes[(modes.index(current) + 1) % len(modes)] if current in modes else modes[0])
+
+    def _cycle_screenshot_filter(self):
+        modes = ["All", "FFA", "TDM", "CTF", "Singleplayer", "Others"]
+        current = self.screenshotFilter.currentText()
+        self.screenshotFilter.setCurrentText(modes[(modes.index(current) + 1) % len(modes)] if current in modes else modes[0])
+
     def refresh_screenshots(self):
-        folder = self._osp_screenshots_dir()
-        folder.mkdir(parents=True, exist_ok=True)
+        osp_folder = self._osp_screenshots_dir()
+        reshade_folder = self._reshade_screenshots_dir()
+        osp_folder.mkdir(parents=True, exist_ok=True)
+        reshade_folder.mkdir(parents=True, exist_ok=True)
         previous = self.screenshotList.currentItem().data(QtCore.Qt.ItemDataRole.UserRole) if self.screenshotList.currentItem() else None
+        source = self._sync_screenshot_source_buttons()
+        folders = [reshade_folder] if source == "reshade" else [osp_folder] if source == "osp" else [reshade_folder, osp_folder]
         files = []
-        for ext in ("*.jpg", "*.jpeg", "*.png", "*.bmp", "*.webp"):
-            files.extend(folder.glob(ext))
+        for folder in folders:
+            for ext in ("*.jpg", "*.jpeg", "*.png", "*.bmp", "*.webp"):
+                files.extend(folder.glob(ext))
         query = self.screenshotSearch.text().strip() if hasattr(self, "screenshotSearch") else ""
         category = self.screenshotFilter.currentText() if hasattr(self, "screenshotFilter") else "All"
         mode = self.screenshotSort.currentText() if hasattr(self, "screenshotSort") else "Date ↓"
@@ -5154,7 +5467,7 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
         self.screenshotList.clear()
         restore_row = 0
         for i, path in enumerate(files):
-            item = QtWidgets.QListWidgetItem(f"{path.name}   ·   {self._media_category(path.name)}")
+            item = QtWidgets.QListWidgetItem(path.name)
             item.setData(QtCore.Qt.ItemDataRole.UserRole, str(path))
             item.setToolTip(str(path))
             self.screenshotList.addItem(item)
@@ -5214,7 +5527,7 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
             return
         class _ScreenshotDialog(QtWidgets.QDialog):
             def keyPressEvent(self, event):
-                if event.key() in (QtCore.Qt.Key.Key_Escape, QtCore.Qt.Key.Key_F11):
+                if event.key() in (QtCore.Qt.Key.Key_Escape, QtCore.Qt.Key.Key_F11, QtCore.Qt.Key.Key_F):
                     self.accept()
                     return
                 super().keyPressEvent(event)
@@ -5292,7 +5605,81 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
         play.clicked.connect(self.play_selected_demo)
         bottom.addWidget(play)
         root.addLayout(bottom)
+
+        self.demoKeys = QtWidgets.QLabel(
+            "KEY BINDS\n"
+            "↑ / ↓ : Navigation\n"
+            "Enter / P : Play demo\n"
+            "Ctrl+C : Copy demo path\n"
+            "O : Open location\n"
+            "Del : Delete demo\n"
+            "F2 : Rename demo\n"
+            "F3 : Sort by name\n"
+            "F4 : Sort by date\n"
+            "Ctrl+F : Search\n"
+            "F1 : Show/Hide binds"
+        )
+        self.demoKeys.setObjectName("keyBindsLegend")
+        self.demoKeys.hide()
+        root.addWidget(self.demoKeys)
+
+        def shortcut(seq, fn):
+            sc = QtGui.QShortcut(QtGui.QKeySequence(seq), page)
+            sc.setContext(QtCore.Qt.ShortcutContext.WidgetWithChildrenShortcut)
+            sc.activated.connect(fn)
+        shortcut("F1", lambda: self.demoKeys.setVisible(not self.demoKeys.isVisible()))
+        shortcut("Return", self.play_selected_demo)
+        shortcut("P", self.play_selected_demo)
+        shortcut("Ctrl+C", self.copy_selected_demo_path)
+        shortcut("O", lambda: self.open_media_location(self._selected_demo_path()))
+        shortcut("Delete", self.delete_selected_demo)
+        shortcut("F2", self.rename_selected_demo)
+        shortcut("F3", lambda: self._cycle_media_sort(self.demoSort, "Name"))
+        shortcut("F4", lambda: self._cycle_media_sort(self.demoSort, "Date"))
         return page
+
+    def _selected_demo_path(self):
+        item = self.demoList.currentItem()
+        if not item:
+            return None
+        path = Path(item.data(0, QtCore.Qt.ItemDataRole.UserRole))
+        return path if path.is_file() else None
+
+    def copy_selected_demo_path(self):
+        path = self._selected_demo_path()
+        if path:
+            QtWidgets.QApplication.clipboard().setText(str(path))
+
+    def delete_selected_demo(self):
+        path = self._selected_demo_path()
+        if not path:
+            return
+        answer = QtWidgets.QMessageBox.question(
+            self, "Delete demo", f"Delete {path.name}?",
+            QtWidgets.QMessageBox.StandardButton.Yes | QtWidgets.QMessageBox.StandardButton.No
+        )
+        if answer == QtWidgets.QMessageBox.StandardButton.Yes:
+            try:
+                path.unlink()
+                self.refresh_demos()
+            except Exception as error:
+                self.qerror(f"Could not delete demo:\n{error}")
+
+    def rename_selected_demo(self):
+        path = self._selected_demo_path()
+        if not path:
+            return
+        name, ok = QtWidgets.QInputDialog.getText(
+            self, "Rename demo", "Filename:", QtWidgets.QLineEdit.EchoMode.Normal, path.name
+        )
+        if not ok or not name.strip():
+            return
+        new_path = path.with_name(name.strip())
+        try:
+            path.rename(new_path)
+            self.refresh_demos()
+        except Exception as error:
+            self.qerror(f"Could not rename demo:\n{error}")
 
     def refresh_demos(self):
         import datetime
@@ -5442,6 +5829,7 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
             card.copyRequested.connect(self.copy_server_address)
             card.removeRequested.connect(self.remove_custom_server)
             card.moveRequested.connect(self.move_server)
+            card.aliasRequested.connect(self.alias_server)
             card.wheelRequested.connect(self.scroll_server_monitors)
             self.serverCards.append(card)
             self.serversRow.addWidget(card)
@@ -5565,6 +5953,25 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
     def remove_custom_server(self, address):
         current = server_monitor.load_servers(self.serverConfigPath)
         current = [x for x in current if str(x.get("address","")).lower() != str(address).lower()]
+        server_monitor.save_custom_servers(self.serverConfigPath, current)
+        self._reload_server_cards()
+        self.refresh_servers()
+
+    def alias_server(self, address):
+        current = server_monitor.load_servers(self.serverConfigPath)
+        index = next((i for i, x in enumerate(current)
+                      if str(x.get("address","")).lower() == str(address).lower()), -1)
+        if index < 0:
+            return
+        old = str(current[index].get("name", "") or "")
+        alias, ok = QtWidgets.QInputDialog.getText(
+            self, "Server alias", "Custom server name:",
+            QtWidgets.QLineEdit.EchoMode.Normal, old
+        )
+        if not ok:
+            return
+        alias = _q3_plain_ascii(alias)
+        current[index]["name"] = alias
         server_monitor.save_custom_servers(self.serverConfigPath, current)
         self._reload_server_cards()
         self.refresh_servers()
