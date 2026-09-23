@@ -421,97 +421,161 @@ def _basic_remote_maps_group(files):
 
 def _bulk_install_basic_maps(files, control=None, progress_callback=None):
     """
-    Stage 2 of a fresh Basic install:
-      download Q3Elite_Basic_maps.zip -> extract the Basic QL maps.
+    Stage 2/3: install the permanent Basic QL maps using the same simple
+    archive workflow as install_addons/unziper:
 
-    The final SHA-256 pass is performed once by install_basic().
+        download ZIP -> extract to Temp -> copy wanted files -> clean Temp
+
+    The maps remain part of Basic and therefore have no uninstall action.
+    SHA-256 verification/repair is performed by install_basic() in stage 3/3.
     """
     group = _basic_remote_maps_group(files)
     if not group:
         return 0
 
     CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    TEMP_DIR.mkdir(parents=True, exist_ok=True)
 
-    if BASIC_MAPS_ZIP.is_file() and zipfile.is_zipfile(BASIC_MAPS_ZIP):
+    extract_dir = TEMP_DIR / "Q3Elite_Basic_maps.zipdir"
+
+    # Same behavior as addon installation: remove an old extraction directory,
+    # but keep/reuse a complete cached ZIP.
+    if extract_dir.exists():
+        shutil.rmtree(extract_dir, ignore_errors=True)
+
+    reuse = BASIC_MAPS_ZIP.is_file() and zipfile.is_zipfile(BASIC_MAPS_ZIP)
+
+    if reuse:
         print(
             f"[Basic 2/3] Reusing cached {BASIC_MAPS_ZIP.name} "
             f"({human(BASIC_MAPS_ZIP.stat().st_size)})"
         )
     else:
-        BASIC_MAPS_ZIP.unlink(missing_ok=True)
+        if BASIC_MAPS_ZIP.exists():
+            print("[Basic 2/3] Cached maps ZIP is invalid; removing it.")
+            BASIC_MAPS_ZIP.unlink(missing_ok=True)
+
+        # Dynamic pCloud ZIPs cannot be safely resumed after reconnect because
+        # pCloud may generate a different byte stream. Match addon behavior:
+        # start this archive clean.
         BASIC_MAPS_ZIP.with_name(BASIC_MAPS_ZIP.name + ".part").unlink(missing_ok=True)
 
         if progress_callback:
-            progress_callback(0, None, 0.0, "Basic 2/3 - Downloading Q3Elite_Basic_maps.zip")
+            progress_callback(
+                0, None, 0.0,
+                "Basic 2/3 - Downloading Q3Elite_Basic_maps.zip"
+            )
 
         print("\n[Basic 2/3] Downloading Q3Elite_Basic_maps.zip...")
-        url = pcloud.pubzip_url(f"{pcloud.MAPS}/QLmaps", BASIC_MAPS_ZIP.name)
+
+        url = pcloud.pubzip_url(
+            f"{pcloud.MAPS}/QLmaps",
+            BASIC_MAPS_ZIP.name
+        )
+
+        # Intentionally the same simple downloader usage as addon/unziper:
+        # no custom expected size, no custom dynamic-stream mode.
         result = downloader(
             url,
             str(CACHE_DIR),
             BASIC_MAPS_ZIP.name,
-            skip=False,
+            skip=True,
             control=control,
             progress_callback=progress_callback,
-            expected_size=None,
-            use_part_file=True,
-            timeout_value=120,
-            probe_remote_size=False,
         )
+
         if not result:
-            raise RuntimeError("Q3Elite_Basic_maps.zip download failed/cancelled.")
+            raise RuntimeError(
+                "Q3Elite_Basic_maps.zip download failed/cancelled."
+            )
 
     if not zipfile.is_zipfile(BASIC_MAPS_ZIP):
-        raise RuntimeError("Q3Elite_Basic_maps.zip is not a valid ZIP archive.")
+        raise RuntimeError(
+            "Q3Elite_Basic_maps.zip is not a valid ZIP archive."
+        )
 
     if progress_callback:
-        progress_callback(0, None, 0.0, "Basic 2/3 - Extracting Q3Elite_Basic_maps.zip")
+        progress_callback(
+            0, None, 0.0,
+            "Basic 2/3 - Extracting Q3Elite_Basic_maps.zip"
+        )
 
     print("[Basic 2/3] Extracting Q3Elite_Basic_maps.zip...")
 
-    wanted_cf = {norm(rel).casefold(): norm(rel) for rel in group}
-    extracted = set()
+    # Exactly like addon installation: extract archive to a temporary folder.
+    extract_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        with zipfile.ZipFile(BASIC_MAPS_ZIP, "r") as zf:
+            zf.extractall(extract_dir)
 
-    with zipfile.ZipFile(BASIC_MAPS_ZIP, "r") as zf:
-        for info in zf.infolist():
-            if info.is_dir():
+        wanted_cf = {
+            norm(rel).casefold(): norm(rel)
+            for rel in group
+        }
+        installed = set()
+
+        # pCloud may put the selected QLmaps folder itself and/or parent folders
+        # into the ZIP. Find each extracted file by the QLmaps suffix and map it
+        # back to its manifest-owned Basic destination.
+        for source in extract_dir.rglob("*"):
+            if not source.is_file():
                 continue
 
-            raw = norm(info.filename)
-            parts = PurePosixPath(raw).parts
+            rel_from_temp = source.relative_to(extract_dir)
+            parts = rel_from_temp.parts
+
             candidates = []
 
-            if parts:
-                candidates.append(norm("baseq3/maps/QLmaps/" + str(PurePosixPath(*parts))))
+            # Archive can contain just map.pk3.
+            if len(parts) == 1:
+                candidates.append(
+                    norm(f"baseq3/maps/QLmaps/{parts[0]}")
+                )
 
+            # Archive can contain QLmaps/map.pk3 or parent/QLmaps/map.pk3.
             for i, part in enumerate(parts):
                 if part.casefold() == "qlmaps":
                     suffix = parts[i + 1:]
                     if suffix:
                         candidates.append(
-                            norm("baseq3/maps/QLmaps/" + str(PurePosixPath(*suffix)))
+                            norm(
+                                "baseq3/maps/QLmaps/"
+                                + str(PurePosixPath(*suffix))
+                            )
                         )
 
-            rel = next(
-                (wanted_cf[c.casefold()] for c in candidates if c.casefold() in wanted_cf),
+            target_rel = next(
+                (
+                    wanted_cf[c.casefold()]
+                    for c in candidates
+                    if c.casefold() in wanted_cf
+                ),
                 None,
             )
-            if not rel:
+
+            # Ignore maps/files that are not part of the Basic manifest.
+            if target_rel is None:
                 continue
 
-            dest = ROOT / Path(rel)
-            dest.parent.mkdir(parents=True, exist_ok=True)
-            tmp = dest.with_name(dest.name + ".basicmaps.tmp")
-            try:
-                with zf.open(info, "r") as srcf, tmp.open("wb") as dstf:
-                    shutil.copyfileobj(srcf, dstf, length=4 * 1024 * 1024)
-                os.replace(tmp, dest)
-                extracted.add(rel.casefold())
-            finally:
-                tmp.unlink(missing_ok=True)
+            destination = ROOT / Path(target_rel)
+            destination.parent.mkdir(parents=True, exist_ok=True)
 
-    print(f"[Basic 2/3] Extracted: {len(extracted)} / {len(group)} maps.")
-    return len(extracted)
+            print(f"[Basic map] {source.name} -> {target_rel}")
+            shutil.copy2(source, destination)
+            installed.add(target_rel.casefold())
+
+        print(
+            f"[Basic 2/3] Installed: "
+            f"{len(installed)} / {len(group)} Basic maps."
+        )
+
+        # Do not fail here for a missing map. Stage 3/3 is authoritative and
+        # will download/repair any missing or corrupt manifest file individually.
+        return len(installed)
+
+    finally:
+        # Same cleanup behavior as addon installation.
+        shutil.rmtree(extract_dir, ignore_errors=True)
 
 def install_basic(external_maps=False, music_playlist=False, autoexec_update=False,
                   control=None, progress_callback=None):
