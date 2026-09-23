@@ -811,15 +811,8 @@ QListWidget#mediaList::item {
 QListWidget#mediaList::item:selected, QTreeWidget#demoList::item:selected {
     background: rgba(164, 0, 0, 150);
 }
-QFrame#mediaPreviewFrame {
-    background: rgba(8, 9, 10, 145);
-    border: 1px solid rgba(255,255,255,22);
-    border-radius: 12px;
-}
-QLabel#screenshotPreview {
-    background: #050505;
-    border-radius: 8px;
-}
+
+
 QPushButton#mediaArrow {
     min-height: 34px;
     font-size: 24px;
@@ -876,18 +869,57 @@ QListWidget#mediaList::item {
 QLabel#screenshotStatus { background: rgba(8,9,10,120); border: 1px solid rgba(255,255,255,18); border-radius: 6px; padding: 3px 9px; color: #9da3aa; }
 QLabel#screenshotStatus[error="true"] { color: #ff7777; border-color: rgba(180,35,35,100); }
 
-QFrame#mediaPreviewFrame { padding: 0px; }
-QLabel#screenshotPreview { margin: 0px; border-radius: 12px; }
 
-QFrame#mediaPreviewFrame { padding: 0px; margin: 0px; border-radius: 12px; }
-QLabel#screenshotPreview { padding: 0px; margin: 0px; border: 0px; border-radius: 12px; }
 
-QFrame#mediaPreviewFrame {
-    padding: 0px;
+
+
+
+
+
+
+
+/* v0.12.1 Screenshots compact/maximized layout */
+QWidget#screenshotToolsWidget {
     margin: 0px;
+    padding: 0px;
+}
+QPushButton#mediaSourceButton {
+    min-width: 150px;
+    max-width: 170px;
+    min-height: 32px;
+    padding: 0 10px;
+}
+
+
+
+/* v0.12.2 - single screenshot viewport edge */
+QFrame#mediaPreviewFrame {
+    background: transparent;
+    border: 0px;
+    margin: 0px;
+    padding: 0px;
 }
 QLabel#screenshotPreview {
-    padding: 0px;
+    background: #050505;
+    border: 1px solid rgba(255,255,255,22);
+    border-radius: 9px;
     margin: 0px;
-    border-radius: 12px;
+    padding: 0px;
+}
+
+/* v0.12.3 - permanent search + balanced media row */
+QWidget#screenshotToolsWidget {
+    margin: 0px;
+    padding: 0px;
+}
+QFrame#mediaPreviewFrame,
+QListWidget#mediaList {
+    margin-top: 0px;
+    margin-bottom: 0px;
+}
+
+/* v0.12.4 - screenshot/list use one common body height */
+QFrame#mediaPreviewFrame,
+QListWidget#mediaList {
+    min-height: 0px;
 }
