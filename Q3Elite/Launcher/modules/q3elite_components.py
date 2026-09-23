@@ -332,13 +332,14 @@ def _zip_member_to_managed(member_name, wanted_cf):
 
 
 def _extract_basic_zip(zip_path, group):
-    """Extract Basic first, then verify it in one separate SHA pass.
+    """Extract and SHA-256 verify Basic in a SINGLE pass.
 
-    Do not hash while decompressing. Besides being simpler/faster, this makes
-    completed files appear in the game directory immediately instead of keeping
-    every file hidden behind a .bulk.tmp name until its hash is finished.
+    Hash the decompressed bytes while they are already being written.  This
+    avoids the old second full-disk scan which could leave first install stuck
+    on "extracting and verifying" after extraction had actually completed.
     """
     wanted_cf = {norm(rel).casefold(): norm(rel) for rel in group}
+    verified = set()
 
     with zipfile.ZipFile(zip_path, "r") as zf:
         matched = []
@@ -360,44 +361,40 @@ def _extract_basic_zip(zip_path, group):
 
         print(f"[bulk] Basic ZIP matched {len(matched)} / {len(group)} managed files.")
 
-        # Extraction pass. No per-file console spam and no SHA work here.
         for info, rel in matched:
             dest = ROOT / Path(rel)
             if is_user_config(rel) and dest.is_file():
+                verified.add(rel.casefold())
                 continue
 
             dest.parent.mkdir(parents=True, exist_ok=True)
             tmp = dest.with_name(dest.name + ".bulk.tmp")
+            h = hashlib.sha256()
             try:
                 with zf.open(info, "r") as srcf, tmp.open("wb") as dstf:
-                    shutil.copyfileobj(srcf, dstf, length=16 * 1024 * 1024)
+                    while True:
+                        block = srcf.read(16 * 1024 * 1024)
+                        if not block:
+                            break
+                        dstf.write(block)
+                        h.update(block)
+
+                if h.hexdigest().lower() != group[rel].lower():
+                    raise RuntimeError(f"SHA-256 verification failed in Basic ZIP: {rel}")
+
                 os.replace(tmp, dest)
+                verified.add(rel.casefold())
             finally:
                 tmp.unlink(missing_ok=True)
 
-    # Required SHA pass happens only after the archive is fully extracted.
-    # This preserves the strict Basic -> verify -> Basic Maps sequence.
-    print("[bulk] Basic extraction complete. Verifying SHA-256...")
-    verified = set()
-    bad = []
-    for rel, expected in group.items():
-        dest = ROOT / Path(rel)
-        if is_user_config(rel) and dest.is_file():
-            verified.add(rel.casefold())
-            continue
-        if not dest.is_file() or sha256_file(dest, chunk=16 * 1024 * 1024).lower() != expected.lower():
-            bad.append(rel)
-        else:
-            verified.add(rel.casefold())
+    missing = [rel for rel in group if rel.casefold() not in verified]
+    if missing:
+        preview = ", ".join(missing[:8])
+        more = "" if len(missing) <= 8 else f" (+{len(missing)-8} more)"
+        raise RuntimeError(f"Basic ZIP did not contain required Basic files: {preview}{more}")
 
-    if bad:
-        preview = ", ".join(bad[:8])
-        more = "" if len(bad) <= 8 else f" (+{len(bad)-8} more)"
-        raise RuntimeError(f"Basic ZIP SHA-256 verification failed/missing: {preview}{more}")
-
-    print(f"[bulk] SHA-256 verified: {len(verified)} / {len(group)}")
+    print(f"[bulk] Extracted + SHA-256 verified in one pass: {len(verified)} / {len(group)}")
     return verified
-
 
 def _bulk_install_basic_core(files, control=None, progress_callback=None):
     """
@@ -485,7 +482,7 @@ def _bulk_install_basic_core(files, control=None, progress_callback=None):
         )
 
     if progress_callback:
-        progress_callback(0, None, 0.0, "Extracting and verifying Q3Elite Basic...")
+        progress_callback(0, None, 0.0, "Installing Q3Elite Basic...")
     try:
         extracted = _extract_basic_zip(archive, group)
     except zipfile.BadZipFile as exc:
@@ -644,12 +641,25 @@ def install_basic(external_maps=False, music_playlist=False, autoexec_update=Fal
     bulk_extracted = 0
 
     basic_maps_extracted = 0
-    if is_true_fresh_install():
-        # Strictly serial first-install pipeline. The second dynamic pCloud ZIP
-        # is not even requested until Q3Elite_Basic.zip has finished extracting
-        # and SHA-verifying. This avoids concurrent dynamic ZIP streams.
+    fresh_at_start = is_true_fresh_install()
+    if fresh_at_start:
+        # Stage 1: Basic core. Extraction and SHA happen in one pass.
+        # This call must return before the Basic Maps ZIP is even requested.
         bulk_extracted = _bulk_install_basic_core(files, control, progress_callback)
-        basic_maps_extracted = _bulk_install_basic_maps(files, control, progress_callback)
+
+    # Stage 2: the 26 Singleplayer maps are REQUIRED Basic content, not an
+    # optional addon.  Do not gate them behind is_true_fresh_install(): after
+    # Basic core extraction the engine marker exists, and after a launcher
+    # restart is_true_fresh_install() is also False.  That old gate is exactly
+    # why Q3Elite_Basic_Maps.zip was skipped.
+    basic_map_group = selected_basic_map_files(files)
+    basic_maps_missing = any(
+        not (ROOT / Path(rel)).is_file() for rel in basic_map_group
+    )
+    if basic_maps_missing:
+        basic_maps_extracted = _bulk_install_basic_maps(
+            files, control, progress_callback
+        )
 
     # Do NOT SHA-scan the entire Basic installation again after the bulk ZIPs.
     # Both bulk installers already verified their own payload against Manifest.json.
@@ -659,7 +669,7 @@ def install_basic(external_maps=False, music_playlist=False, autoexec_update=Fal
     # On a true fresh install, repair only Basic files that are not owned by either
     # bulk archive (currently the base music tracks 1..5). Existing installations
     # still use the normal full manifest repair path.
-    if bulk_extracted or basic_maps_extracted:
+    if bulk_extracted or basic_maps_extracted or fresh_at_start:
         bulk_owned = set(_basic_core_group(files)) | set(selected_basic_map_files(files))
         repair_group = {
             rel: digest for rel, digest in basic.items()
