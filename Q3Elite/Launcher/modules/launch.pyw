@@ -3907,7 +3907,14 @@ class Q3NameDelegate(QtWidgets.QStyledItemDelegate):
         style.drawControl(QtWidgets.QStyle.ControlElement.CE_ItemViewItem, opt, painter, opt.widget)
         x = option.rect.left() + 7
         baseline = option.rect.center().y() + painter.fontMetrics().ascent() // 2 - 1
-        for text_part, color in _q3_segments(raw):
+        raw_text = str(raw or "")
+        # Real player rows carry their raw nickname in UserRole. Placeholder rows
+        # ("Server is empty", "did not respond") do not get a player marker.
+        if index.data(QtCore.Qt.ItemDataRole.UserRole) is not None:
+            painter.setPen(QtGui.QColor("#8f969e"))
+            painter.drawText(x, baseline, "•")
+            x += painter.fontMetrics().horizontalAdvance("•") + 7
+        for text_part, color in _q3_segments(raw_text):
             painter.setPen(QtGui.QColor(color))
             painter.drawText(x, baseline, text_part)
             x += painter.fontMetrics().horizontalAdvance(text_part)
@@ -4029,10 +4036,11 @@ class ServerCard(QtWidgets.QFrame):
         copy_btn.clicked.connect(lambda: self.copyRequested.emit(self.server.get("address", "")))
         actions.addWidget(copy_btn)
         actions.addStretch(1)
-        connect_btn = GlowButton("▶  CONNECT")
-        connect_btn.setObjectName("serverConnectButton")
-        connect_btn.clicked.connect(lambda: self.connectRequested.emit(self.server.get("address", "")))
-        actions.addWidget(connect_btn)
+        self.connectButton = GlowButton("▶  CONNECT")
+        self.connectButton.setObjectName("serverConnectButton")
+        self.connectButton.setEnabled(q3elite_is_installed())
+        self.connectButton.clicked.connect(lambda: self.connectRequested.emit(self.server.get("address", "")))
+        actions.addWidget(self.connectButton)
         lay.addLayout(actions)
 
     def wheelEvent(self, event):
@@ -4045,6 +4053,10 @@ class ServerCard(QtWidgets.QFrame):
 
     def set_edit_mode(self, enabled):
         self.editActions.setVisible(bool(enabled))
+
+    def update_install_state(self):
+        if hasattr(self, "connectButton"):
+            self.connectButton.setEnabled(q3elite_is_installed())
 
     def _set_levelshot(self, mapname):
         safe = str(mapname or "").strip()
@@ -4112,6 +4124,42 @@ class ServerCard(QtWidgets.QFrame):
         self._set_levelshot(mapname)
 
 
+class DemoRenameFilter(QtCore.QObject):
+    def __init__(self, window):
+        super().__init__(window)
+        self.window = window
+
+    def eventFilter(self, obj, event):
+        if event.type() == QtCore.QEvent.Type.KeyPress and event.key() == QtCore.Qt.Key.Key_Escape:
+            self.window._renameDemoCancelled = True
+            self.window._cancel_demo_rename()
+            return True
+        return False
+
+
+class DemoWheelFilter(QtCore.QObject):
+    def __init__(self, window):
+        super().__init__(window)
+        self.window = window
+
+    def eventFilter(self, obj, event):
+        if event.type() == QtCore.QEvent.Type.Wheel:
+            delta = event.angleDelta().y() or event.angleDelta().x()
+            if delta:
+                self.window._step_demo(1 if delta < 0 else -1)
+                event.accept()
+                return True
+        return False
+
+
+class ScreenshotPreviewLabel(QtWidgets.QLabel):
+    resized = QtCore.pyqtSignal()
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self.resized.emit()
+
+
 class ScreenshotSearchFilter(QtCore.QObject):
     def __init__(self, window):
         super().__init__(window)
@@ -4121,7 +4169,10 @@ class ScreenshotSearchFilter(QtCore.QObject):
         if event.type() == QtCore.QEvent.Type.KeyPress:
             if event.key() in (QtCore.Qt.Key.Key_Return, QtCore.Qt.Key.Key_Enter,
                                QtCore.Qt.Key.Key_Escape):
-                self.window.screenshotList.setFocus()
+                if self.window.pages.currentWidget() is getattr(self.window, "demosPage", None):
+                    self.window.demoList.setFocus()
+                else:
+                    self.window.screenshotList.setFocus()
                 event.accept()
                 return True
         return False
@@ -5285,9 +5336,12 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
         )
         previewLay = QtWidgets.QVBoxLayout(previewFrame)
         previewLay.setContentsMargins(0, 0, 0, 0)
-        self.screenshotPreview = QtWidgets.QLabel("No screenshots found.")
+        self.screenshotPreview = ScreenshotPreviewLabel("No screenshots found.")
         self.screenshotPreview.setObjectName("screenshotPreview")
         self.screenshotPreview.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
+        self.screenshotPreview.resized.connect(
+            lambda: QtCore.QTimer.singleShot(0, self._rescale_screenshot_preview)
+        )
         self.screenshotPreview.setMinimumSize(320, 180)
         self.screenshotPreview.setSizePolicy(
             QtWidgets.QSizePolicy.Policy.Expanding,
@@ -5326,13 +5380,15 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
         self.screenshotKeys.hide()
         root.addWidget(self.screenshotKeys)
 
+        self.screenshotShortcuts = []
+
         def shortcut(seq, fn):
             sc = QtGui.QShortcut(QtGui.QKeySequence(seq), self)
             sc.setContext(QtCore.Qt.ShortcutContext.WindowShortcut)
-            sc.activated.connect(
-                lambda fn=fn: fn() if self.pages.currentWidget() is self.screenshotsPage else None
-            )
-        shortcut("F1", lambda: self.screenshotKeys.setVisible(not self.screenshotKeys.isVisible()))
+            sc.activated.connect(fn)
+            sc.setEnabled(False)
+            self.screenshotShortcuts.append(sc)
+        shortcut("F1", self._toggle_screenshot_keys)
         shortcut("Left", lambda: self._step_screenshot(-1))
         shortcut("Right", lambda: self._step_screenshot(1))
         shortcut("Up", lambda: self._step_screenshot(-1))
@@ -5347,6 +5403,12 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
 
         self._sync_screenshot_source_buttons()
         return page
+
+    def _toggle_screenshot_keys(self):
+        self.screenshotKeys.setVisible(not self.screenshotKeys.isVisible())
+        # Redraw after Qt has recalculated the body geometry.
+        QtCore.QTimer.singleShot(0, self._rescale_screenshot_preview)
+        QtCore.QTimer.singleShot(30, self._rescale_screenshot_preview)
 
     def _hide_screenshot_tools(self):
         # Search toolbar is permanent; this helper now only leaves the input.
@@ -5860,7 +5922,13 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
         root.addLayout(self._make_media_toolbar(
             "demoSearch", "demoSort", "demoFilter", self.refresh_demos
         ))
+        self.demoFilter.blockSignals(True)
+        self.demoFilter.clear()
+        self.demoFilter.addItems(["All", "Singleplayer", "Others"])
+        self.demoFilter.blockSignals(False)
 
+        self.demoSearchKeyFilter = ScreenshotSearchFilter(self)
+        self.demoSearch.installEventFilter(self.demoSearchKeyFilter)
 
         self.demoList = QtWidgets.QTreeWidget()
         self.demoList.setObjectName("demoList")
@@ -5877,6 +5945,9 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
             3, int(QtCore.Qt.AlignmentFlag.AlignRight | QtCore.Qt.AlignmentFlag.AlignVCenter)
         )
         self.demoList.itemDoubleClicked.connect(lambda _item, _col: self.play_selected_demo())
+        self.demoList.currentItemChanged.connect(lambda _c, _p: self._update_demo_play_button())
+        self.demoWheelFilter = DemoWheelFilter(self)
+        self.demoList.viewport().installEventFilter(self.demoWheelFilter)
         root.addWidget(self.demoList, 1)
 
         bottom = QtWidgets.QHBoxLayout()
@@ -5884,23 +5955,25 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
         self.demoStatusLabel.setObjectName("muted")
         bottom.addWidget(self.demoStatusLabel)
         bottom.addStretch(1)
-        play = GlowButton("▶  PLAY")
-        play.setObjectName("demoPlayButton")
-        play.setMinimumWidth(150)
-        play.clicked.connect(self.play_selected_demo)
-        bottom.addWidget(play)
+        self.demoPlayButton = GlowButton("▶  PLAY")
+        self.demoPlayButton.setObjectName("demoPlayButton")
+        self.demoPlayButton.setMinimumWidth(150)
+        self.demoPlayButton.setEnabled(False)
+        self.demoPlayButton.clicked.connect(self.play_selected_demo)
+        bottom.addWidget(self.demoPlayButton)
         root.addLayout(bottom)
 
         self.demoKeys = QtWidgets.QLabel(
             "KEY BINDS\n"
-            "↑ / ↓ : Navigation\n"
+            "Arrow Keys : Navigation\n"
+            "Mouse Wheel : Navigation\n"
             "Enter / P : Play demo\n"
             "Ctrl+C : Copy demo path\n"
             "O : Open location\n"
             "Del : Delete demo\n"
             "F2 : Rename demo\n"
-            "F3 : Sort by name\n"
-            "F4 : Sort by date\n"
+            "F3 : Sort Date ↓ / Date ↑ / Name ↓ / Name ↑\n"
+            "F4 : Filter All / Singleplayer / Others\n"
             "Ctrl+F : Search\n"
             "F1 : Show/Hide binds"
         )
@@ -5908,20 +5981,63 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
         self.demoKeys.hide()
         root.addWidget(self.demoKeys)
 
+        self.demoShortcuts = []
+
         def shortcut(seq, fn):
-            sc = QtGui.QShortcut(QtGui.QKeySequence(seq), page)
-            sc.setContext(QtCore.Qt.ShortcutContext.WidgetWithChildrenShortcut)
+            sc = QtGui.QShortcut(QtGui.QKeySequence(seq), self)
+            sc.setContext(QtCore.Qt.ShortcutContext.WindowShortcut)
             sc.activated.connect(fn)
+            sc.setEnabled(False)
+            self.demoShortcuts.append(sc)
         shortcut("F1", lambda: self.demoKeys.setVisible(not self.demoKeys.isVisible()))
+        shortcut("Up", lambda: self._step_demo(-1))
+        shortcut("Left", lambda: self._step_demo(-1))
+        shortcut("Down", lambda: self._step_demo(1))
+        shortcut("Right", lambda: self._step_demo(1))
         shortcut("Return", self.play_selected_demo)
-        shortcut("P", self.play_selected_demo)
         shortcut("Ctrl+C", self.copy_selected_demo_path)
         shortcut("O", lambda: self.open_media_location(self._selected_demo_path()))
         shortcut("Delete", self.delete_selected_demo)
         shortcut("F2", self.rename_selected_demo)
-        shortcut("F3", lambda: self._cycle_media_sort(self.demoSort, "Name"))
-        shortcut("F4", lambda: self._cycle_media_sort(self.demoSort, "Date"))
+        shortcut("F3", self._cycle_demo_sort)
+        shortcut("F4", self._cycle_demo_filter)
         return page
+
+    def _demo_category(self, name):
+        return "Singleplayer" if "localhost" in str(name or "").lower() else "Others"
+
+    def _demo_matches_filter(self, path, query, category):
+        if query and query.lower() not in path.name.lower():
+            return False
+        return category == "All" or self._demo_category(path.name) == category
+
+    def _step_demo(self, direction):
+        count = self.demoList.topLevelItemCount()
+        if not count:
+            return
+        item = self.demoList.currentItem()
+        row = self.demoList.indexOfTopLevelItem(item) if item else -1
+        if row < 0:
+            row = 0
+        target = (row + direction) % count
+        self.demoList.setCurrentItem(self.demoList.topLevelItem(target))
+        self.demoList.scrollToItem(self.demoList.currentItem())
+
+    def _cycle_demo_sort(self):
+        modes = ["Date ↓", "Date ↑", "Name ↓", "Name ↑"]
+        current = self.demoSort.currentText()
+        self.demoSort.setCurrentText(modes[(modes.index(current) + 1) % len(modes)] if current in modes else modes[0])
+
+    def _cycle_demo_filter(self):
+        modes = ["All", "Singleplayer", "Others"]
+        current = self.demoFilter.currentText()
+        self.demoFilter.setCurrentText(modes[(modes.index(current) + 1) % len(modes)] if current in modes else modes[0])
+
+    def _update_demo_play_button(self):
+        if hasattr(self, "demoPlayButton"):
+            self.demoPlayButton.setEnabled(
+                bool(q3elite_is_installed()) and self._selected_demo_path() is not None
+            )
 
     def _selected_demo_path(self):
         item = self.demoList.currentItem()
@@ -5932,39 +6048,114 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
 
     def copy_selected_demo_path(self):
         path = self._selected_demo_path()
-        if path:
-            QtWidgets.QApplication.clipboard().setText(str(path))
+        if not path:
+            return
+        mime = QtCore.QMimeData()
+        mime.setUrls([QtCore.QUrl.fromLocalFile(str(path.resolve()))])
+        QtWidgets.QApplication.clipboard().setMimeData(mime)
+        self.demoStatusLabel.setText(f"Copied file: {path.name}")
 
     def delete_selected_demo(self):
         path = self._selected_demo_path()
         if not path:
             return
-        answer = QtWidgets.QMessageBox.question(
-            self, "Delete demo", f"Delete {path.name}?",
-            QtWidgets.QMessageBox.StandardButton.Yes | QtWidgets.QMessageBox.StandardButton.No
-        )
-        if answer == QtWidgets.QMessageBox.StandardButton.Yes:
-            try:
-                path.unlink()
-                self.refresh_demos()
-            except Exception as error:
-                self.qerror(f"Could not delete demo:\n{error}")
-
-    def rename_selected_demo(self):
-        path = self._selected_demo_path()
-        if not path:
-            return
-        name, ok = QtWidgets.QInputDialog.getText(
-            self, "Rename demo", "Filename:", QtWidgets.QLineEdit.EchoMode.Normal, path.name
-        )
-        if not ok or not name.strip():
-            return
-        new_path = path.with_name(name.strip())
         try:
-            path.rename(new_path)
+            path.unlink()
+            self.demoStatusLabel.setText(f"Deleted: {path.name}")
             self.refresh_demos()
         except Exception as error:
-            self.qerror(f"Could not rename demo:\n{error}")
+            self.demoStatusLabel.setText(f"Delete failed: {error}")
+
+    def rename_selected_demo(self):
+        item = self.demoList.currentItem()
+        path = self._selected_demo_path()
+        if not item or not path or getattr(self, "_renameDemoActive", False):
+            return
+        self._renameDemoActive = True
+        self._renameDemoCancelled = False
+        self._renameDemoPath = path
+        self._renameDemoItem = item
+        item.setFlags(item.flags() | QtCore.Qt.ItemFlag.ItemIsEditable)
+        self.demoList.editItem(item, 0)
+        QtCore.QTimer.singleShot(0, self._hook_demo_rename_editor)
+
+    def _hook_demo_rename_editor(self):
+        if not getattr(self, "_renameDemoActive", False):
+            return
+        editor = self.demoList.findChild(QtWidgets.QLineEdit)
+        if editor is None:
+            QtCore.QTimer.singleShot(10, self._hook_demo_rename_editor)
+            return
+        self._renameDemoEditor = editor
+        editor.setText(self._renameDemoPath.stem)
+        editor.selectAll()
+        self._demoRenameFilter = DemoRenameFilter(self)
+        editor.installEventFilter(self._demoRenameFilter)
+        editor.editingFinished.connect(self._finish_demo_rename_editor)
+
+    def _finish_demo_rename_editor(self):
+        if getattr(self, "_renameDemoCancelled", False):
+            self._cancel_demo_rename()
+        else:
+            self._commit_demo_rename()
+
+    def _cancel_demo_rename(self):
+        if not getattr(self, "_renameDemoActive", False):
+            return
+        self._renameDemoActive = False
+        path = getattr(self, "_renameDemoPath", None)
+        item = getattr(self, "_renameDemoItem", None)
+        editor = getattr(self, "_renameDemoEditor", None)
+        if editor is not None:
+            try: editor.removeEventFilter(self._demoRenameFilter)
+            except Exception: pass
+        if item is not None and path:
+            self.demoList.blockSignals(True)
+            item.setText(0, path.name)
+            item.setFlags(item.flags() & ~QtCore.Qt.ItemFlag.ItemIsEditable)
+            self.demoList.blockSignals(False)
+        self._renameDemoPath = self._renameDemoItem = self._renameDemoEditor = None
+        self.demoStatusLabel.setText("Rename cancelled.")
+        self.demoList.setFocus()
+
+    def _commit_demo_rename(self):
+        if not getattr(self, "_renameDemoActive", False):
+            return
+        self._renameDemoActive = False
+        path = getattr(self, "_renameDemoPath", None)
+        item = getattr(self, "_renameDemoItem", None)
+        editor = getattr(self, "_renameDemoEditor", None)
+        stem = editor.text().strip() if editor is not None else ""
+        if editor is not None:
+            try: editor.removeEventFilter(self._demoRenameFilter)
+            except Exception: pass
+        self._renameDemoPath = self._renameDemoItem = self._renameDemoEditor = None
+        if not path or not path.is_file():
+            self.refresh_demos()
+            return
+        if stem.lower().endswith(path.suffix.lower()):
+            stem = stem[:-len(path.suffix)]
+        stem = re.sub(r'[<>:"/\\|?*]', "_", stem.strip()).rstrip(".") or path.stem
+        new_path = path.with_name(stem + path.suffix)
+        try:
+            if new_path.exists() and new_path != path:
+                self.refresh_demos()
+                self.demoStatusLabel.setText(f'Rename failed: "{new_path.name}" already exists.')
+                return
+            if new_path != path:
+                path.rename(new_path)
+            self.refresh_demos()
+            for i in range(self.demoList.topLevelItemCount()):
+                candidate = self.demoList.topLevelItem(i)
+                if Path(candidate.data(0, QtCore.Qt.ItemDataRole.UserRole)) == new_path:
+                    self.demoList.setCurrentItem(candidate)
+                    break
+            self.demoStatusLabel.setText(
+                f"Renamed to: {new_path.name}" if new_path != path else "Filename unchanged."
+            )
+        except Exception as error:
+            self.refresh_demos()
+            self.demoStatusLabel.setText(f"Rename failed: {error}")
 
     def refresh_demos(self):
         import datetime
@@ -5975,7 +6166,7 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
         query = self.demoSearch.text().strip() if hasattr(self, "demoSearch") else ""
         category = self.demoFilter.currentText() if hasattr(self, "demoFilter") else "All"
         mode = self.demoSort.currentText() if hasattr(self, "demoSort") else "Date ↓"
-        files = [p for p in files if self._media_matches_filter(p, query, category)]
+        files = [p for p in files if self._demo_matches_filter(p, query, category)]
         files = self._media_sort_files(files, mode)
         self.demoList.clear()
         restore = None
@@ -5984,7 +6175,7 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
             modified = datetime.datetime.fromtimestamp(st.st_mtime).strftime("%Y-%m-%d  %H:%M")
             size = st.st_size
             size_text = f"{size / (1024*1024):.1f} MB" if size >= 1024*1024 else f"{size / 1024:.0f} KB"
-            item = QtWidgets.QTreeWidgetItem([path.name, self._media_category(path.name), modified, size_text])
+            item = QtWidgets.QTreeWidgetItem([path.name, self._demo_category(path.name), modified, size_text])
             item.setData(0, QtCore.Qt.ItemDataRole.UserRole, str(path))
             item.setTextAlignment(3, int(QtCore.Qt.AlignmentFlag.AlignRight | QtCore.Qt.AlignmentFlag.AlignVCenter))
             self.demoList.addTopLevelItem(item)
@@ -5995,8 +6186,13 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
             self.demoList.setCurrentItem(restore)
         elif self.demoList.topLevelItemCount():
             self.demoList.setCurrentItem(self.demoList.topLevelItem(0))
+        self._update_demo_play_button()
 
     def play_selected_demo(self):
+        if not q3elite_is_installed():
+            self.demoStatusLabel.setText("Install Quake 3 Elite before playing demos.")
+            self._update_demo_play_button()
+            return
         item = self.demoList.currentItem()
         if not item:
             self.demoStatusLabel.setText("Select a demo first.")
@@ -6178,6 +6374,8 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
             self.serverNextButton.setEnabled(enabled)
 
     def refresh_servers(self):
+        for card in getattr(self, "serverCards", []):
+            card.update_install_state()
         if self.serverQueryWorker is not None and self.serverQueryWorker.isRunning():
             return
         if not self.configuredServers:
@@ -6395,7 +6593,16 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
         if hasattr(self, "screenshotPreview"):
             QtCore.QTimer.singleShot(0, self._rescale_screenshot_preview)
 
+    def _sync_media_shortcuts(self, page):
+        screenshots_active = page == "screenshots"
+        demos_active = page == "demos"
+        for shortcut in getattr(self, "screenshotShortcuts", []):
+            shortcut.setEnabled(screenshots_active)
+        for shortcut in getattr(self, "demoShortcuts", []):
+            shortcut.setEnabled(demos_active)
+
     def show_page(self, page):
+        self._sync_media_shortcuts(page)
         mapping = {
             "home": (self.homePage, self.homeNav),
             "addons": (self.addonsPage, self.addonsNav),
@@ -6417,6 +6624,7 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
             QtCore.QTimer.singleShot(0, self.screenshotList.setFocus)
         if page == "demos":
             self.refresh_demos()
+            QtCore.QTimer.singleShot(0, self.demoList.setFocus)
         if page == "servers":
             self.serverRefreshTimer.start()
             QtCore.QTimer.singleShot(0, self._resize_servers_content)
