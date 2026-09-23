@@ -270,10 +270,17 @@ def is_true_fresh_install():
 
 
 def _basic_core_group(files):
-    """Basic files physically stored inside the remote CORE folder."""
+    """Basic files physically stored inside the remote CORE folder.
+
+    QLmaps can logically belong to Basic while being physically hosted under
+    the separate pCloud Maps tree. They must not be expected inside the
+    dynamically generated CORE/Q3Elite_Basic.zip.
+    """
     return {
-        rel: digest for rel, digest in selected_basic_files(files).items()
+        rel: digest
+        for rel, digest in selected_basic_files(files).items()
         if rel.casefold() not in BASE_MUSIC
+        and not is_remote_map(rel)
     }
 
 
