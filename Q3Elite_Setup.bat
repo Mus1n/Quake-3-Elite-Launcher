@@ -47,11 +47,18 @@ if errorlevel 1 (
 :: CHECK EXISTING INSTALLATION
 :: ============================================================
 
-if exist "%LAUNCHER%\launch.bat" (
+if exist "%LAUNCHER%\launch.bat" if exist "%LAUNCHER%\modules\launch.pyw" if exist "%LAUNCHER%\modules\python\setup_python.bat" if exist "%LAUNCHER%\modules\python\requirements.txt" (
     echo Existing Q3Elite Launcher detected.
+    echo Launcher structure is current.
     echo Skipping launcher download.
     echo.
     goto INSTALL
+)
+
+if exist "%LAUNCHER%\launch.bat" (
+    echo Existing launcher uses an old or incomplete folder structure.
+    echo Updating launcher files before environment setup...
+    echo.
 )
 
 :: ============================================================
@@ -217,7 +224,42 @@ if exist "%LOCAL_SHORTCUT%" (
 :: FIRST LAUNCH / PYTHON ENVIRONMENT
 :: ============================================================
 
+if not exist "%LAUNCHER%\modules\launch.pyw" (
+    echo.
+    echo ERROR: Launcher module is missing:
+    echo "%LAUNCHER%\modules\launch.pyw"
+    echo.
+    pause
+    exit /b 1
+)
+
+if not exist "%LAUNCHER%\modules\python\setup_python.bat" (
+    echo.
+    echo ERROR: Python bootstrap is missing:
+    echo "%LAUNCHER%\modules\python\setup_python.bat"
+    echo.
+    pause
+    exit /b 1
+)
+
+if not exist "%LAUNCHER%\modules\python\requirements.txt" (
+    echo.
+    echo ERROR: Python requirements file is missing:
+    echo "%LAUNCHER%\modules\python\requirements.txt"
+    echo.
+    pause
+    exit /b 1
+)
+
 cd /d "%LAUNCHER%"
+if errorlevel 1 (
+    echo.
+    echo ERROR: Could not enter Launcher directory:
+    echo "%LAUNCHER%"
+    echo.
+    pause
+    exit /b 1
+)
 
 echo.
 echo ============================================================
@@ -225,7 +267,7 @@ echo Starting Q3Elite Launcher installation...
 echo ============================================================
 echo.
 
-call ".\python\setup_python.bat" ".\modules\launch.pyw"
+call "%LAUNCHER%\modules\python\setup_python.bat" "%LAUNCHER%\modules\launch.pyw"
 
 set "SETUP_RESULT=%ERRORLEVEL%"
 
