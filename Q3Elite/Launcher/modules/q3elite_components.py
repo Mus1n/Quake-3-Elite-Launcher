@@ -73,10 +73,16 @@ def is_user_config(rel):
     return norm(rel).casefold() == USER_CONFIG.casefold()
 
 
-def sha256_file(path, chunk=4 * 1024 * 1024):
+def sha256_file(path, chunk=4 * 1024 * 1024, control=None):
+    """SHA-256 with cooperative Pause/Resume/Cancel support."""
     h = hashlib.sha256()
     with Path(path).open("rb") as f:
-        for block in iter(lambda: f.read(chunk), b""):
+        while True:
+            if control is not None and not control.wait_if_paused():
+                raise RuntimeError("Q3Elite verification cancelled.")
+            block = f.read(chunk)
+            if not block:
+                break
             h.update(block)
     return h.hexdigest()
 
@@ -243,7 +249,7 @@ def _download_managed(rel, digest, control=None, progress_callback=None):
     if is_user_config(rel) and dest.is_file():
         print(f"[preserved user config] {rel}")
         return False
-    if dest.is_file() and sha256_file(dest).lower() == digest.lower():
+    if dest.is_file() and sha256_file(dest, control=control).lower() == digest.lower():
         print(f"[current] {rel}")
         return False
     info = pcloud.resolve(pcloud.remote_for(rel, is_map=classify(rel) in ("maps", "basic_map")))
@@ -256,7 +262,7 @@ def _download_managed(rel, digest, control=None, progress_callback=None):
     )
     if not result:
         raise RuntimeError(f"Download failed/cancelled: {rel}")
-    if sha256_file(dest).lower() != digest.lower():
+    if sha256_file(dest, control=control).lower() != digest.lower():
         raise RuntimeError(f"SHA-256 verification failed: {rel}")
     print(f"[verified] {rel}")
     return True
@@ -266,6 +272,8 @@ def _install_group(group, control=None, progress_callback=None):
     downloaded=0
     total=len(group)
     for i,(rel,digest) in enumerate(group.items(),1):
+        if control is not None and not control.wait_if_paused():
+            raise RuntimeError("Q3Elite verification cancelled.")
         print(f"\n--- [{i}/{total}] {rel} ---")
         if _download_managed(rel,digest,control,progress_callback):
             downloaded+=1
