@@ -6948,9 +6948,17 @@ def q3elite_install_result(success):
     install_state["q3elite_update_ok"] = success
 
     if not success:
+        # Q3Elite is the first serial installation stage. If it fails, PAK
+        # verification has not started yet, so waiting for base_done here leaves
+        # the GUI permanently on INSTALLING. Fail immediately instead.
         if hasattr(window, "firstInstallCard"):
             window.firstInstallCard.setEnabled(True)
-        check_install_finished()
+        hide_download_controls()
+        set_gui_error("RETRY")
+        window.qerror(
+            "Q3Elite Basic installation failed.\n"
+            "Check the launcher log for the exact file/error."
+        )
         return
 
     # FirstLaunch.bat logic is now owned by the launcher.

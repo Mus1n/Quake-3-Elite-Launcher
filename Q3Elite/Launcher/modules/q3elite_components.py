@@ -315,7 +315,7 @@ def _zip_member_to_managed(member_name, wanted_cf):
 
 
 def _extract_basic_zip(zip_path, group, control=None, progress_callback=None):
-    """Extract Basic with visible per-file/byte progress and SHA verification."""
+    """Fast bulk extraction. SHA verification is intentionally a separate pass."""
     wanted_cf = {norm(rel).casefold(): norm(rel) for rel in group}
     extracted = set()
 
@@ -335,60 +335,24 @@ def _extract_basic_zip(zip_path, group, control=None, progress_callback=None):
                 "Archive sample: " + ", ".join(sample)
             )
 
-        total_bytes = sum(max(0, info.file_size) for info, _ in matched)
-        done_bytes = 0
-        total_files = len(matched)
-        print(f"[bulk] ZIP opened: {total_files} Basic file(s), {human(total_bytes)} unpacked")
+        print(f"[bulk] Extracting {len(matched)} Basic files...")
+        if progress_callback:
+            progress_callback(0, None, 0.0, "Extracting Q3Elite_Basic.zip...")
 
-        for index, (info, rel) in enumerate(matched, 1):
+        # Keep this deliberately simple/fast, like the original launcher.
+        # Do NOT hash every member while ZipFile is decompressing it.
+        for info, rel in matched:
             dest = ROOT / Path(rel)
             if is_user_config(rel) and dest.is_file():
-                print(f"[preserved user config] {rel}")
                 extracted.add(rel.casefold())
-                done_bytes += max(0, info.file_size)
                 continue
-
             dest.parent.mkdir(parents=True, exist_ok=True)
-            tmp = dest.with_name(dest.name + ".bulk.tmp")
-            message = f"Extracting Basic {index}/{total_files}: {rel}"
-            print(f"[bulk] {message} ({human(info.file_size)})")
-            if progress_callback:
-                progress_callback(done_bytes, total_bytes or None, 0.0, message)
+            with zf.open(info, "r") as srcf, dest.open("wb") as dstf:
+                shutil.copyfileobj(srcf, dstf, length=16 * 1024 * 1024)
+            extracted.add(rel.casefold())
 
-            h = hashlib.sha256()
-            try:
-                file_done = 0
-                with zf.open(info, "r") as srcf, tmp.open("wb") as dstf:
-                    while True:
-                        block = srcf.read(4 * 1024 * 1024)
-                        if not block:
-                            break
-                        dstf.write(block)
-                        h.update(block)
-                        file_done += len(block)
-                        if progress_callback:
-                            progress_callback(
-                                done_bytes + file_done,
-                                total_bytes or None,
-                                0.0,
-                                message,
-                            )
-
-                expected = group[rel]
-                if h.hexdigest().lower() != expected.lower():
-                    raise RuntimeError(f"SHA-256 verification failed in Basic ZIP: {rel}")
-
-                os.replace(tmp, dest)
-                extracted.add(rel.casefold())
-                done_bytes += max(0, info.file_size)
-                print(f"[bulk verified] {rel}")
-            finally:
-                tmp.unlink(missing_ok=True)
-
-    print(f"[bulk] Extracted and SHA-256 verified: {len(extracted)} / {len(group)}")
-    if progress_callback:
-        progress_callback(total_bytes, total_bytes or None, 0.0, "Q3Elite Basic extracted and verified.")
-    return extracted
+    print(f"[bulk] Extracted: {len(extracted)} / {len(group)}")
+    return len(extracted)
 
 
 def _bulk_install_basic_core(files, control=None, progress_callback=None):
@@ -600,10 +564,12 @@ def install_basic(external_maps=False, music_playlist=False, autoexec_update=Fal
         # downloads on first install.
         _bulk_install_basic_maps(files, control, progress_callback)
 
-        # Repair only non-map Basic files (base music etc.). Required maps were
-        # already SHA-verified by _extract_basic_maps_zip above.
-        repair = {rel: digest for rel, digest in basic.items() if classify(rel) != "basic_map"}
-        downloaded += _install_group(repair, control, progress_callback)
+        # One normal manifest verification pass AFTER both bulk archives are
+        # extracted. This is the same proven model used by the old launcher:
+        # fast ZIP extraction first, then hash/repair the installed tree once.
+        if progress_callback:
+            progress_callback(0, None, 0.0, "Verifying Q3Elite Basic...")
+        downloaded += _install_group(basic, control, progress_callback)
     else:
         # Existing installation: normal manifest repair is appropriate.
         downloaded += _install_group(basic, control, progress_callback)
