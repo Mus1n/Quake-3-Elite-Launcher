@@ -297,71 +297,103 @@ def _basic_missing_ratio(group):
     return missing / len(group)
 
 
-def _zip_member_to_managed(member_name, wanted_cf):
-    """Map a pCloud ZIP member to a managed local path, ignoring archive prefix."""
-    raw = norm(member_name)
-    parts = PurePosixPath(raw).parts
+def _zip_member_to_basic_path(member_name):
+    """Map any safe Q3Elite_Basic.zip member to its GAME_ROOT-relative path."""
+    raw = str(member_name).replace("\\", "/").lstrip("/")
+    parts = list(PurePosixPath(raw).parts)
     if not parts:
         return None
 
-    # pCloud may package the selected folder itself and/or its parents.
-    # Locate the first local managed root inside the archive path.
+    # pCloud may wrap the selected folder in one or more parent folders.
+    # Prefer the known local roots wherever they occur in the archive path.
     for root_name in ("baseq3", "Q3Elite"):
         for i, part in enumerate(parts):
             if part.casefold() == root_name.casefold():
-                candidate = norm(str(PurePosixPath(*parts[i:])))
-                return wanted_cf.get(candidate.casefold())
-    return None
+                parts = parts[i:]
+                break
+        else:
+            continue
+        break
+    else:
+        # Root-level files are normally wrapped by the selected pCloud folder.
+        # Strip everything through the "Quake 3 Elite" folder when present.
+        marker = None
+        for i, part in enumerate(parts):
+            if part.casefold() == "quake 3 elite":
+                marker = i
+        if marker is not None:
+            parts = parts[marker + 1:]
+
+    if not parts or any(part in ("", ".", "..") for part in parts):
+        return None
+    if any(":" in part for part in parts):
+        return None
+
+    rel = norm(str(PurePosixPath(*parts)))
+    if rel.casefold().startswith("q3elite/launcher/"):
+        # Launcher has its own self-update/cache lifecycle.  A cached Basic ZIP
+        # must never downgrade the currently running launcher.
+        return None
+    return rel
 
 
-def _extract_basic_zip(zip_path, group, control=None, progress_callback=None):
-    """Fast bulk extraction. SHA verification is intentionally a separate pass."""
-    wanted_cf = {norm(rel).casefold(): norm(rel) for rel in group}
+def _extract_basic_zip(zip_path, group=None, control=None, progress_callback=None,
+                       autoexec_update=False):
+    """Extract the complete Basic payload; Manifest hashes are verified later."""
     extracted = set()
+    root_resolved = ROOT.resolve()
 
     with zipfile.ZipFile(zip_path, "r") as zf:
-        matched = []
+        members = []
         for info in zf.infolist():
             if info.is_dir():
                 continue
-            rel = _zip_member_to_managed(info.filename, wanted_cf)
-            if rel:
-                matched.append((info, rel))
+            rel = _zip_member_to_basic_path(info.filename)
+            if not rel:
+                continue
+            dest = ROOT / Path(rel)
+            try:
+                dest.resolve().relative_to(root_resolved)
+            except (ValueError, OSError):
+                raise RuntimeError(f"Unsafe path in Q3Elite_Basic.zip: {info.filename}")
+            members.append((info, rel, dest))
 
-        if not matched:
+        if not members:
             sample = [i.filename for i in zf.infolist() if not i.is_dir()][:12]
             raise RuntimeError(
-                "Q3Elite_Basic.zip contains no files matching Manifest.json. "
+                "Q3Elite_Basic.zip contains no installable files. "
                 "Archive sample: " + ", ".join(sample)
             )
 
-        print(f"[bulk] Extracting {len(matched)} Basic files...")
+        print(f"[bulk] Extracting complete Basic payload: {len(members)} files...")
         if progress_callback:
             progress_callback(0, None, 0.0, "Extracting Q3Elite_Basic.zip...")
 
-        # Keep this deliberately simple/fast, like the original launcher.
-        # Do NOT hash every member while ZipFile is decompressing it.
-        for info, rel in matched:
-            dest = ROOT / Path(rel)
+        for info, rel, dest in members:
+            # UserConfig is always user-owned after it exists. autoexec is also
+            # user-owned when Autoexec Update is disabled.
             if is_user_config(rel) and dest.is_file():
-                extracted.add(rel.casefold())
+                continue
+            if (not autoexec_update and rel.casefold() == AUTOEXEC.casefold()
+                    and dest.is_file()):
                 continue
             dest.parent.mkdir(parents=True, exist_ok=True)
             with zf.open(info, "r") as srcf, dest.open("wb") as dstf:
                 shutil.copyfileobj(srcf, dstf, length=16 * 1024 * 1024)
             extracted.add(rel.casefold())
 
-    print(f"[bulk] Extracted: {len(extracted)} / {len(group)}")
+    print(f"[bulk] Extracted complete payload: {len(extracted)} files")
     return len(extracted)
 
 
-def _bulk_install_basic_core(files, control=None, progress_callback=None):
+def _bulk_install_basic_core(files, control=None, progress_callback=None, autoexec_update=False):
     """
     Fresh-install accelerator.
 
-    Downloads the remote Quake 3 Elite folder as one streamed pCloud ZIP,
-    but extracts ONLY Basic files present in Manifest.json. This prevents
-    launcher/control/unmanaged files from being overwritten by the archive.
+    Downloads the remote Quake 3 Elite folder as one streamed pCloud ZIP.
+    The ZIP is the installation payload, so every safe file is extracted except
+    Q3Elite/Launcher (owned by the launcher self-updater). Manifest.json is used
+    afterwards only to verify/repair files that Q3Elite intentionally manages.
     """
     group = _basic_core_group(files)
     if not group:
@@ -433,7 +465,10 @@ def _bulk_install_basic_core(files, control=None, progress_callback=None):
         )
 
     try:
-        extracted = _extract_basic_zip(archive, group, control, progress_callback)
+        extracted = _extract_basic_zip(
+            archive, group, control, progress_callback,
+            autoexec_update=autoexec_update,
+        )
     except zipfile.BadZipFile as exc:
         # Preserve a bad archive only as .bad for diagnosis; fallback below can
         # still repair/download individual files.
@@ -572,6 +607,26 @@ def install_basic(external_maps=False, music_playlist=False, autoexec_update=Fal
     control = control or DownloadControl()
     pending_state = load_state()
     was_complete = bool(pending_state.get("basic", False))
+
+    # Saved component state is a preference/history flag, not proof that the
+    # payload still exists.  If a core tree was deleted, force the cached bulk
+    # ZIP recovery path instead of downloading Manifest entries one by one.
+    baseq3_dir = ROOT / "baseq3"
+    engines_dir = ROOT / "Q3Elite" / "Engines"
+    qlmaps_dir = baseq3_dir / "maps" / "QLmaps"
+    try:
+        has_basic_map = qlmaps_dir.is_dir() and any(
+            p.is_file() and p.suffix.casefold() == ".pk3"
+            for p in qlmaps_dir.iterdir()
+        )
+    except OSError:
+        has_basic_map = False
+    physical_basic_ok = baseq3_dir.is_dir() and engines_dir.is_dir() and has_basic_map
+    force_bulk_recovery = was_complete and not physical_basic_ok
+    if force_bulk_recovery:
+        print("[recovery] Saved Basic state is stale; core payload is missing.")
+        print("[recovery] Reusing Basic ZIP caches instead of per-file Manifest repair.")
+
     pending_state["external_maps"] = bool(external_maps)
     pending_state["music_playlist"] = bool(music_playlist)
     pending_state["autoexec_update"] = bool(autoexec_update)
@@ -602,10 +657,13 @@ def install_basic(external_maps=False, music_playlist=False, autoexec_update=Fal
     downloaded = 0
     bulk_extracted = 0
 
-    if not was_complete:
-        # A first install is a transaction. Creating Q3Elite/Engines halfway through
+    if not was_complete or force_bulk_recovery:
+        # A first install/recovery is a transaction. Creating Q3Elite/Engines halfway through
         # must NOT turn it into an update/repair installation.
-        bulk_extracted = _bulk_install_basic_core(files, control, progress_callback)
+        bulk_extracted = _bulk_install_basic_core(
+            files, control, progress_callback,
+            autoexec_update=autoexec_update,
+        )
         print("[stage] Basic ZIP extraction finished.", flush=True)
 
         # Required Singleplayer maps are a second bulk archive, never 26 individual
