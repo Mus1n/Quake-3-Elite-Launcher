@@ -3,10 +3,10 @@ setlocal
 
 cd /d "%~dp0"
 
-set "PYTHON_DIR=%APPDATA%\Quake 3 Elite\Python"
+set "PYTHON_DIR=%APPDATA%\Python"
 set "PYTHON=%PYTHON_DIR%\venv\Scripts\python.exe"
 set "PYTHONW=%PYTHON_DIR%\venv\Scripts\pythonw.exe"
-set "SETUP=%~dp0python\setup_python.bat"
+set "SETUP=%~dp0modules\python\setup_python.bat"
 set "LAUNCHER=%~dp0modules\launch.pyw"
 
 if not exist "%LAUNCHER%" (
@@ -17,7 +17,7 @@ if not exist "%LAUNCHER%" (
 )
 
 if exist "%PYTHON%" if exist "%PYTHONW%" (
-    "%PYTHON%" -c "import PyQt6; import vulkan" >nul 2>&1
+    "%PYTHON%" -c "import PyQt6; import PyQt6.QtWebEngineWidgets; import vulkan; import qtawesome" >nul 2>&1
     if not errorlevel 1 (
         start "" "%PYTHONW%" "%LAUNCHER%"
         exit /b 0

@@ -27,8 +27,10 @@ GAME_ROOT = Q3ELITE_DIR.parent
 
 UI_DIR = LAUNCHER_DIR / "ui"
 ICONS_DIR = LAUNCHER_DIR / "icons"
-DOWNLOAD_CONFS_DIR = LAUNCHER_DIR / "download_confs"
-PYTHON_DIR = LAUNCHER_DIR / "python"
+DOWNLOAD_CONFS_DIR = MODULES_DIR / "download_confs"
+PYTHON_DIR = MODULES_DIR / "python"
+SETTINGS_DIR = LAUNCHER_DIR / "settings"
+DEFAULT_SERVERS_FILE = SETTINGS_DIR / "servers.json"
 
 
 # ============================================================================
@@ -53,7 +55,8 @@ Q3ELITE_LAUNCHER_DATA_DIR = Q3ELITE_APPDATA_DIR / "Launcher"
 CACHE_DIR = Q3ELITE_LAUNCHER_DATA_DIR / "cache"
 
 # Large temporary Q3Elite downloads
-Q3ELITE_TEMP_DIR = Q3ELITE_APPDATA_DIR / "Temp"
+Q3ELITE_TEMP_DIR = Q3ELITE_LAUNCHER_DATA_DIR / "temp"
+SERVERS_FILE = Q3ELITE_LAUNCHER_DATA_DIR / "servers.json"
 
 
 # ============================================================================

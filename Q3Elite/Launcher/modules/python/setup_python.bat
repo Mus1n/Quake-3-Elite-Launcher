@@ -2,9 +2,8 @@
 setlocal enabledelayedexpansion
 
 set "BASE_DIR=%~dp0"
-set "APP_ROOT=%APPDATA%\Quake 3 Elite"
-set "PY_ROOT=%APP_ROOT%\Python"
-set "CACHE_ROOT=%APP_ROOT%\Cache\Python"
+set "PY_ROOT=%APPDATA%\Python"
+set "CACHE_ROOT=%PY_ROOT%\cache"
 set "UV_EXE=%PY_ROOT%\uv.exe"
 set "VENV_DIR=%PY_ROOT%\venv"
 set "PYTHON_EXE=%VENV_DIR%\Scripts\python.exe"
@@ -21,13 +20,12 @@ set "UV_PYTHON_BIN_DIR=%PY_ROOT%\bin"
 set "UV_NO_MODIFY_PATH=1"
 set "UV_PYTHON_PREFERENCE=only-managed"
 
-if not exist "%APP_ROOT%" mkdir "%APP_ROOT%"
 if not exist "%PY_ROOT%" mkdir "%PY_ROOT%"
 if not exist "%CACHE_ROOT%" mkdir "%CACHE_ROOT%"
 
 :: Healthy persistent environment -> no Python/PyQt reinstall.
 if exist "%PYTHON_EXE%" if exist "%PYTHONW_EXE%" (
-    "%PYTHON_EXE%" -c "import PyQt6; import vulkan" >nul 2>&1
+    "%PYTHON_EXE%" -c "import PyQt6; import PyQt6.QtWebEngineWidgets; import vulkan; import qtawesome" >nul 2>&1
     if not errorlevel 1 (
         echo Existing Q3Elite Python environment is ready.
         goto START_LAUNCHER
@@ -89,7 +87,7 @@ if exist "%REQUIREMENTS%" (
 )
 
 echo Verifying Python dependencies...
-"%PYTHON_EXE%" -c "import PyQt6; import vulkan"
+"%PYTHON_EXE%" -c "import PyQt6; import PyQt6.QtWebEngineWidgets; import vulkan; import qtawesome"
 if !ERRORLEVEL! neq 0 (
     echo.
     echo ERROR: Q3Elite Python dependencies are incomplete.

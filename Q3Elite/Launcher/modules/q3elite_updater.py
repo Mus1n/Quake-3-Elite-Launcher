@@ -81,16 +81,8 @@ def norm(value):
     return str(PurePosixPath(str(value).replace("\\", "/").lstrip("/")))
 
 
-def is_required_basic_map(path):
-    try:
-        import q3elite_components
-        return q3elite_components.is_basic_ql_map(path)
-    except Exception:
-        return False
-
 def is_external_map(path):
-    p = norm(path).casefold()
-    return p.startswith("baseq3/maps/") and not is_required_basic_map(path)
+    return norm(path).casefold().startswith("baseq3/maps/")
 
 
 def is_official_q3_pak(path):
