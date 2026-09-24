@@ -7,10 +7,16 @@ import re
 import urllib.parse
 import urllib.request
 import zipfile
+import time
+import uuid
 
 from pathlib import Path
 
 from PyQt6 import QtCore, QtGui, QtWidgets, QtNetwork
+try:
+    from PyQt6 import QtMultimedia
+except Exception:
+    QtMultimedia = None
 
 try:
     from PyQt6.QtWebEngineWidgets import QWebEngineView
@@ -1654,6 +1660,8 @@ def sorted_launcher_releases():
 # ============================================================================
 
 SETTINGS_FILE = LAUNCHER_DATA_DIR / "settings.json"
+MATCHMAKING_FILE = LAUNCHER_DATA_DIR / "matchmaking.json"
+NOTIFY_SOUND = ASSETS_DIR / "sounds" / "notify.mp3"
 
 DEFAULT_SETTINGS = {
     "auto_update_q3elite": True,
@@ -1667,6 +1675,7 @@ DEFAULT_SETTINGS = {
     "cleanup_demos_days": 0,
     "pause_server_refresh_unfocused": False,
     "screenshot_source": "reshade",
+    "suppress_startup_notification_sound": True,
 }
 
 
@@ -2144,6 +2153,7 @@ def apply_settings():
         "cleanup_screenshots_days": cleanup_screenshots_days,
         "cleanup_demos_days": cleanup_demos_days,
         "pause_server_refresh_unfocused": window.pauseServerRefreshBox.isChecked(),
+        "suppress_startup_notification_sound": window.suppressStartupSoundBox.isChecked(),
         "screenshot_source": launcher_settings.get("screenshot_source", "reshade"),
     }
     try:
@@ -4342,11 +4352,12 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
         self.addonsNav = self._nav_button("INSTALL ADDONS", "addons", "fa5s.puzzle-piece")
         self.statisticsNav = self._nav_button("STATISTICS", "statistics", "fa5s.chart-bar")
         self.serversNav = self._nav_button("SERVERS", "servers", "fa5s.server")
+        self.matchmakingNav = self._nav_button("MATCHMAKING", "matchmaking", "fa5s.bell")
         self.screenshotsNav = self._nav_button("SCREENSHOTS", "screenshots", "fa5s.image")
         self.demosNav = self._nav_button("DEMOS", "demos", "fa5s.film")
         self.settingsNav = self._nav_button("SETTINGS", "settings", "fa5s.cog")
         self.changelogNav = self._nav_button("CHANGELOG", "changelog", "fa5s.scroll")
-        for button in (self.homeNav, self.addonsNav, self.statisticsNav, self.serversNav, self.screenshotsNav, self.demosNav, self.settingsNav, self.changelogNav):
+        for button in (self.homeNav, self.addonsNav, self.statisticsNav, self.serversNav, self.matchmakingNav, self.screenshotsNav, self.demosNav, self.settingsNav, self.changelogNav):
             side.addWidget(button)
 
         side.addStretch(1)
@@ -4396,11 +4407,12 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
         self.addonsPage = self._build_addons()
         self.statisticsPage = self._build_statistics()
         self.serversPage = self._build_servers()
+        self.matchmakingPage = self._build_matchmaking()
         self.screenshotsPage = self._build_screenshots()
         self.demosPage = self._build_demos()
         self.settingsPage = self._build_settings()
         self.changelogPage = self._build_changelog()
-        for page in (self.homePage, self.addonsPage, self.statisticsPage, self.serversPage, self.screenshotsPage, self.demosPage, self.settingsPage, self.changelogPage):
+        for page in (self.homePage, self.addonsPage, self.statisticsPage, self.serversPage, self.matchmakingPage, self.screenshotsPage, self.demosPage, self.settingsPage, self.changelogPage):
             self.pages.addWidget(page)
         body_layout.addWidget(self.pages, 1)
         root.addWidget(body, 1)
@@ -4772,6 +4784,7 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
         servers_label = QtWidgets.QLabel("[Servers]")
         servers_label.setObjectName("sectionTitle")
         self.pauseServerRefreshBox = QtWidgets.QCheckBox("Do not refresh servers while Launcher is out of focus")
+        self.suppressStartupSoundBox = QtWidgets.QCheckBox("Suppress notification sounds for 1 minute after Launcher startup")
 
         cleanup_label = QtWidgets.QLabel("TEMPORARY FILE CLEANUP")
         cleanup_label.setObjectName("sectionTitle")
@@ -4856,6 +4869,7 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
         c.addSpacing(10)
         c.addWidget(servers_label)
         c.addWidget(self.pauseServerRefreshBox)
+        c.addWidget(self.suppressStartupSoundBox)
         lay.addWidget(card)
 
         cache = self._card("settingsCard")
@@ -6338,6 +6352,374 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
     # ------------------------------------------------------------------
     # SERVERS — native Quake 3 UDP monitor
     # ------------------------------------------------------------------
+    # ------------------------------------------------------------------
+    # MATCHMAKING — rule based server notifications
+    # ------------------------------------------------------------------
+    def _load_matchmaking_rules(self):
+        try:
+            if MATCHMAKING_FILE.is_file():
+                raw = json.loads(MATCHMAKING_FILE.read_text(encoding="utf-8"))
+                rules = raw.get("rules", raw) if isinstance(raw, dict) else raw
+                if isinstance(rules, list):
+                    return [r for r in rules if isinstance(r, dict)]
+        except Exception as error:
+            print(f"[matchmaking] Could not read rules: {error}")
+        return []
+
+    def _save_matchmaking_rules(self):
+        MATCHMAKING_FILE.parent.mkdir(parents=True, exist_ok=True)
+        MATCHMAKING_FILE.write_text(json.dumps({"rules": self.matchmakingRules}, indent=2, ensure_ascii=False), encoding="utf-8")
+
+    def _matchmaking_servers(self):
+        path = getattr(self, "serverConfigPath", USER_SERVERS_FILE)
+        return server_monitor.load_servers(path)
+
+    def _build_matchmaking(self):
+        page = QtWidgets.QWidget()
+        outer = QtWidgets.QVBoxLayout(page)
+        outer.setContentsMargins(4, 4, 4, 4)
+        header = QtWidgets.QHBoxLayout()
+        title = QtWidgets.QLabel("MATCHMAKING")
+        title.setObjectName("pageTitle")
+        header.addWidget(title)
+        header.addStretch(1)
+        add = GlowButton("+  ADD RULE")
+        add.setObjectName("serverToolbarButton")
+        add.clicked.connect(self.add_matchmaking_rule)
+        header.addWidget(add)
+        outer.addLayout(header)
+        hint = QtWidgets.QLabel("Create server conditions. A rule notifies only when it changes from NOT MATCHED to MATCHED.")
+        hint.setObjectName("muted")
+        outer.addWidget(hint)
+        self.matchmakingScroll = QtWidgets.QScrollArea()
+        self.matchmakingScroll.setWidgetResizable(True)
+        self.matchmakingScroll.setFrameShape(QtWidgets.QFrame.Shape.NoFrame)
+        self.matchmakingScroll.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.matchmakingBody = QtWidgets.QWidget()
+        self.matchmakingLayout = QtWidgets.QVBoxLayout(self.matchmakingBody)
+        self.matchmakingLayout.setContentsMargins(0, 8, 6, 4)
+        self.matchmakingLayout.setSpacing(10)
+        self.matchmakingScroll.setWidget(self.matchmakingBody)
+        outer.addWidget(self.matchmakingScroll, 1)
+        self.matchmakingRules = self._load_matchmaking_rules()
+        self.matchmakingRuleStates = {}
+        self.matchmakingResults = {}
+        self.matchmakingWorker = None
+        self.matchmakingStartedAt = time.monotonic()
+        self.matchmakingBadgesHiddenUntil = 0.0
+        self.matchmakingSound = None
+        self.matchmakingAudio = None
+        if QtMultimedia is not None:
+            try:
+                self.matchmakingAudio = QtMultimedia.QAudioOutput(self)
+                self.matchmakingAudio.setVolume(1.0)
+                self.matchmakingSound = QtMultimedia.QMediaPlayer(self)
+                self.matchmakingSound.setAudioOutput(self.matchmakingAudio)
+                self.matchmakingSound.setSource(QtCore.QUrl.fromLocalFile(str(NOTIFY_SOUND)))
+            except Exception as error:
+                print(f"[matchmaking] Sound unavailable: {error}")
+        self.matchmakingTimer = QtCore.QTimer(self)
+        self.matchmakingTimer.setInterval(30000)
+        self.matchmakingTimer.timeout.connect(self.refresh_matchmaking)
+        self.matchmakingTimer.start()
+        self._rebuild_matchmaking_rules()
+        QtCore.QTimer.singleShot(1500, self.refresh_matchmaking)
+        return page
+
+    def _server_choices_widget(self, selected):
+        host = QtWidgets.QWidget()
+        lay = QtWidgets.QVBoxLayout(host)
+        lay.setContentsMargins(0, 0, 0, 0)
+        checks = []
+        for number, server in enumerate(self._matchmaking_servers(), 1):
+            address = str(server.get("address", ""))
+            alias = _q3_plain_ascii(server.get("name", "")) or address
+            box = QtWidgets.QCheckBox(f"#{number}  {alias}  ({address})")
+            box.setProperty("serverNumber", number)
+            box.setChecked(number in selected)
+            lay.addWidget(box)
+            checks.append(box)
+        if not checks:
+            lay.addWidget(QtWidgets.QLabel("No servers in servers.json"))
+        return host, checks
+
+    def _rebuild_matchmaking_rules(self):
+        while self.matchmakingLayout.count():
+            item = self.matchmakingLayout.takeAt(0)
+            if item.widget(): item.widget().deleteLater()
+        if not self.matchmakingRules:
+            empty = QtWidgets.QLabel("No matchmaking rules yet.\nPress + ADD RULE to create one.")
+            empty.setObjectName("serverEmpty")
+            empty.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
+            self.matchmakingLayout.addWidget(empty)
+        self.matchmakingEditors = []
+        for idx, rule in enumerate(self.matchmakingRules):
+            card = self._card("settingsCard")
+            v = QtWidgets.QVBoxLayout(card)
+            top = QtWidgets.QHBoxLayout()
+            active = QtWidgets.QCheckBox("ACTIVE")
+            active.setChecked(bool(rule.get("active", False)))
+            top.addWidget(active)
+            alias = QtWidgets.QLineEdit(str(rule.get("alias", f"Rule #{idx+1}")))
+            alias.setPlaceholderText(f"Rule #{idx+1} alias")
+            alias.setMinimumWidth(360)
+            alias.setMaximumWidth(560)
+            top.addWidget(alias)
+            status = QtWidgets.QLabel("NOT MATCHED")
+            status.setObjectName("muted")
+            top.addWidget(status)
+            top.addStretch(1)
+            delete = QtWidgets.QPushButton("DELETE RULE")
+            delete.setObjectName("secondaryButton")
+            delete.clicked.connect(lambda checked=False, i=idx: self.delete_matchmaking_rule(i))
+            top.addWidget(delete)
+            v.addLayout(top)
+
+            server_mode_row = QtWidgets.QHBoxLayout()
+            server_mode_row.addWidget(QtWidgets.QLabel("SERVERS"))
+            server_mode = QtWidgets.QComboBox()
+            server_mode.addItem("ANY selected server (OR)", "or")
+            server_mode.addItem("ALL selected servers (AND)", "and")
+            server_mode.setCurrentIndex(max(0, server_mode.findData(str(rule.get("server_mode", "or")).lower())))
+            server_mode_row.addWidget(server_mode)
+            server_mode_row.addStretch(1)
+            v.addLayout(server_mode_row)
+            servers_host, checks = self._server_choices_widget(set(int(x) for x in rule.get("servers", []) if str(x).isdigit()))
+            v.addWidget(servers_host)
+
+            # Conditions inside one server are combined with AND.  Each one can be disabled.
+            conditions_box = QtWidgets.QVBoxLayout()
+
+            players_row = QtWidgets.QHBoxLayout()
+            players_row.addWidget(QtWidgets.QLabel("PLAYERS"))
+            min_on = QtWidgets.QCheckBox("More than")
+            min_on.setChecked(bool(rule.get("min_enabled", True)))
+            players_row.addWidget(min_on)
+            minp = QtWidgets.QSpinBox(); minp.setRange(0, 128); minp.setValue(int(rule.get("min_players", 3))); players_row.addWidget(minp)
+            max_on = QtWidgets.QCheckBox("Less than")
+            max_on.setChecked(bool(rule.get("max_enabled", True)))
+            players_row.addWidget(max_on)
+            maxp = QtWidgets.QSpinBox(); maxp.setRange(0, 128); maxp.setValue(int(rule.get("max_players", 6))); players_row.addWidget(maxp)
+            players_row.addStretch(1)
+            conditions_box.addLayout(players_row)
+
+            map_row = QtWidgets.QHBoxLayout()
+            map_on = QtWidgets.QCheckBox("MAP NAME")
+            map_on.setChecked(bool(rule.get("map_enabled", False)))
+            map_row.addWidget(map_on)
+            map_op = QtWidgets.QComboBox(); map_op.addItem("=", "eq"); map_op.addItem("!=", "neq")
+            map_op.setCurrentIndex(max(0, map_op.findData(rule.get("map_operator", "eq"))))
+            map_row.addWidget(map_op)
+            map_text = QtWidgets.QLineEdit(str(rule.get("map_name", ""))); map_text.setPlaceholderText("map name")
+            map_row.addWidget(map_text, 1)
+            conditions_box.addLayout(map_row)
+
+            player_conditions_host = QtWidgets.QWidget()
+            player_conditions_layout = QtWidgets.QVBoxLayout(player_conditions_host)
+            player_conditions_layout.setContentsMargins(0, 0, 0, 0)
+            player_conditions_layout.setSpacing(5)
+            player_rows = []
+
+            def add_player_condition(value=None):
+                value = value or {}
+                row_widget = QtWidgets.QWidget()
+                r = QtWidgets.QHBoxLayout(row_widget); r.setContentsMargins(0, 0, 0, 0)
+                enabled = QtWidgets.QCheckBox(f"PLAYER NAME [{len(player_rows)+1}]")
+                enabled.setChecked(bool(value.get("enabled", True))); r.addWidget(enabled)
+                op = QtWidgets.QComboBox(); op.addItem("=", "eq"); op.addItem("!=", "neq")
+                op.setCurrentIndex(max(0, op.findData(value.get("operator", "eq")))); r.addWidget(op)
+                edit = QtWidgets.QLineEdit(str(value.get("name", ""))); edit.setPlaceholderText("player name"); r.addWidget(edit, 1)
+                remove = QtWidgets.QPushButton("×"); remove.setObjectName("smallButton"); remove.setFixedSize(32, 32); r.addWidget(remove)
+                entry = {"widget":row_widget,"enabled":enabled,"op":op,"text":edit}
+                player_rows.append(entry)
+                player_conditions_layout.addWidget(row_widget)
+                def remove_row():
+                    if entry in player_rows: player_rows.remove(entry)
+                    row_widget.deleteLater()
+                    for n, item in enumerate(player_rows, 1): item["enabled"].setText(f"PLAYER NAME [{n}]")
+                remove.clicked.connect(remove_row)
+
+            old_player_conditions = rule.get("player_conditions", [])
+            # Migrate the old single map/player text rule into a player condition when possible.
+            if not old_player_conditions and rule.get("type") == "text" and rule.get("text"):
+                old_player_conditions = [{"enabled": True, "operator": "eq", "name": rule.get("text", "")}]
+            for condition in old_player_conditions:
+                if isinstance(condition, dict): add_player_condition(condition)
+
+            add_player = QtWidgets.QPushButton("+ PLAYER CONDITION")
+            add_player.setObjectName("secondaryButton")
+            add_player.clicked.connect(lambda checked=False: add_player_condition())
+            conditions_box.addWidget(player_conditions_host)
+            conditions_box.addWidget(add_player, 0, QtCore.Qt.AlignmentFlag.AlignLeft)
+
+            notify_row = QtWidgets.QHBoxLayout()
+            notify_row.addWidget(QtWidgets.QLabel("NOTIFICATION"))
+            color = QtWidgets.QComboBox()
+            for name, value in (("Blue", "#3b82f6"), ("White", "#ffffff"), ("Red", "#e53935"), ("Green", "#4caf50"), ("Orange", "#f0a51a")):
+                color.addItem(name, value)
+            color.setCurrentIndex(max(0, color.findData(rule.get("color", "#3b82f6"))))
+            notify_row.addWidget(color)
+            sound = QtWidgets.QCheckBox("notify.mp3"); sound.setChecked(bool(rule.get("sound", False))); notify_row.addWidget(sound)
+            notify_row.addStretch(1)
+            conditions_box.addLayout(notify_row)
+            v.addLayout(conditions_box)
+
+            save = QtWidgets.QPushButton("SAVE RULE")
+            save.setObjectName("secondaryButton")
+            v.addWidget(save, 0, QtCore.Qt.AlignmentFlag.AlignRight)
+            editor = {"active":active,"alias":alias,"server_mode":server_mode,"checks":checks,"min_on":min_on,"min":minp,"max_on":max_on,"max":maxp,"map_on":map_on,"map_op":map_op,"map_text":map_text,"player_rows":player_rows,"color":color,"sound":sound,"status":status}
+            self.matchmakingEditors.append(editor)
+            min_on.toggled.connect(minp.setEnabled); max_on.toggled.connect(maxp.setEnabled)
+            minp.setEnabled(min_on.isChecked()); maxp.setEnabled(max_on.isChecked())
+            map_on.toggled.connect(map_op.setEnabled); map_on.toggled.connect(map_text.setEnabled)
+            map_op.setEnabled(map_on.isChecked()); map_text.setEnabled(map_on.isChecked())
+            save.clicked.connect(lambda checked=False, i=idx: self.save_matchmaking_rule(i))
+            self.matchmakingLayout.addWidget(card)
+        self.matchmakingLayout.addStretch(1)
+        self._update_matchmaking_status_ui()
+
+    def add_matchmaking_rule(self):
+        number = len(self.matchmakingRules) + 1
+        self.matchmakingRules.append({"id":uuid.uuid4().hex,"alias":f"Rule #{number}","active":False,"servers":[],"server_mode":"or","min_enabled":True,"min_players":3,"max_enabled":True,"max_players":6,"map_enabled":False,"map_operator":"eq","map_name":"","player_conditions":[],"color":"#3b82f6","sound":False})
+        self._save_matchmaking_rules(); self._rebuild_matchmaking_rules()
+
+    def delete_matchmaking_rule(self, index):
+        if 0 <= index < len(self.matchmakingRules):
+            self.matchmakingRules.pop(index); self._save_matchmaking_rules(); self._rebuild_matchmaking_rules(); self.refresh_matchmaking()
+
+    def save_matchmaking_rule(self, index):
+        if not (0 <= index < len(self.matchmakingRules)): return
+        e = self.matchmakingEditors[index]
+        old = self.matchmakingRules[index]
+        self.matchmakingRules[index] = {"id":old.get("id") or uuid.uuid4().hex,"alias":e["alias"].text().strip() or f"Rule #{index+1}","active":e["active"].isChecked(),"servers":[int(b.property("serverNumber")) for b in e["checks"] if b.isChecked()],"server_mode":e["server_mode"].currentData(),"min_enabled":e["min_on"].isChecked(),"min_players":e["min"].value(),"max_enabled":e["max_on"].isChecked(),"max_players":e["max"].value(),"map_enabled":e["map_on"].isChecked(),"map_operator":e["map_op"].currentData(),"map_name":e["map_text"].text().strip(),"player_conditions":[{"enabled":r["enabled"].isChecked(),"operator":r["op"].currentData(),"name":r["text"].text().strip()} for r in e["player_rows"]],"color":e["color"].currentData(),"sound":e["sound"].isChecked()}
+        self._save_matchmaking_rules(); self.matchmakingRuleStates[self.matchmakingRules[index]["id"]] = False; self._update_matchmaking_status_ui(); self.refresh_matchmaking()
+
+    def refresh_matchmaking(self):
+        active = [r for r in self.matchmakingRules if r.get("active") and r.get("servers")]
+        if not active or (self.matchmakingWorker is not None and self.matchmakingWorker.isRunning()):
+            if not active: self._update_matchmaking_status_ui()
+            return
+        servers = self._matchmaking_servers()
+        needed = sorted({int(n) for r in active for n in r.get("servers", []) if 1 <= int(n) <= len(servers)})
+        selected = []
+        self._matchmakingWorkerNumbers = needed
+        for n in needed: selected.append(dict(servers[n-1]))
+        if not selected: return
+        self.matchmakingWorker = ServerQueryWorker(selected, self)
+        self.matchmakingWorker.serverReady.connect(self._matchmaking_result_ready)
+        self.matchmakingWorker.batchFinished.connect(self._matchmaking_refresh_finished)
+        self.matchmakingWorker.start()
+
+    def _matchmaking_result_ready(self, index, result):
+        if 0 <= index < len(getattr(self, "_matchmakingWorkerNumbers", [])):
+            self.matchmakingResults[self._matchmakingWorkerNumbers[index]] = result
+
+    def _matchmaking_refresh_finished(self):
+        self._evaluate_matchmaking_rules()
+
+    def _rule_matches(self, rule):
+        selected = [int(n) for n in rule.get("servers", [])]
+        if not selected:
+            return False
+
+        def server_matches(number):
+            result = self.matchmakingResults.get(number)
+            if not result or not result.get("online"):
+                return False
+            conditions = []
+            count = int(result.get("clients", 0) or 0)
+            if rule.get("min_enabled", True):
+                conditions.append(count > int(rule.get("min_players", 3)))
+            if rule.get("max_enabled", True):
+                conditions.append(count < int(rule.get("max_players", 6)))
+
+            if rule.get("map_enabled", False):
+                wanted = str(rule.get("map_name", "")).casefold().strip()
+                actual = str(result.get("mapname", "")).casefold().strip()
+                if wanted:
+                    equal = actual == wanted
+                    conditions.append(equal if rule.get("map_operator", "eq") == "eq" else not equal)
+                else:
+                    conditions.append(False)
+
+            players = [_q3_plain_ascii(p.get("name", "")).casefold().strip() for p in (result.get("players", []) or [])]
+            player_conditions = rule.get("player_conditions", [])
+            # Compatibility with v1 text rules.
+            if not player_conditions and rule.get("type") == "text" and rule.get("text"):
+                player_conditions = [{"enabled": True, "operator": "eq", "name": rule.get("text", "")}]
+            for pc in player_conditions:
+                if not isinstance(pc, dict) or not pc.get("enabled", True):
+                    continue
+                wanted = _q3_plain_ascii(pc.get("name", "")).casefold().strip()
+                if not wanted:
+                    conditions.append(False)
+                    continue
+                present = any(name == wanted for name in players)
+                conditions.append(present if pc.get("operator", "eq") == "eq" else not present)
+
+            # All enabled arguments inside a single rule/server are ANDed.
+            return bool(conditions) and all(conditions)
+
+        states = [server_matches(number) for number in selected]
+        if str(rule.get("server_mode", "or")).lower() == "and":
+            return bool(states) and all(states)
+        return any(states)
+
+    def _evaluate_matchmaking_rules(self):
+        for rule in self.matchmakingRules:
+            rid = rule.get("id") or str(id(rule))
+            matched = bool(rule.get("active")) and self._rule_matches(rule)
+            previous = self.matchmakingRuleStates.get(rid, False)
+            self.matchmakingRuleStates[rid] = matched
+            if matched and not previous and rule.get("sound"):
+                suppress = launcher_settings.get("suppress_startup_notification_sound", True) and (time.monotonic() - self.matchmakingStartedAt < 60)
+                if not suppress and self.matchmakingSound is not None and NOTIFY_SOUND.is_file():
+                    self.matchmakingSound.play()
+        self._update_matchmaking_status_ui()
+
+    def _badge_icon(self, colors):
+        """Render up to three simultaneous rule badges in the sidebar icon."""
+        colors = list(colors)[:3]
+        pix = QtGui.QPixmap(24, 18)
+        pix.fill(QtCore.Qt.GlobalColor.transparent)
+        painter = QtGui.QPainter(pix)
+        painter.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing)
+        positions = {1: [12], 2: [8, 16], 3: [5, 12, 19]}.get(len(colors), [])
+        for x, color in zip(positions, colors):
+            painter.setBrush(QtGui.QColor(color))
+            painter.setPen(QtCore.Qt.PenStyle.NoPen)
+            painter.drawEllipse(QtCore.QPointF(x, 9), 4.0, 4.0)
+        painter.end()
+        return QtGui.QIcon(pix)
+
+    def _update_matchmaking_status_ui(self):
+        matches = []
+        for i, rule in enumerate(self.matchmakingRules):
+            rid = rule.get("id") or str(id(rule))
+            if self.matchmakingRuleStates.get(rid, False):
+                matches.append((i, rule))
+        badges_hidden = time.monotonic() < getattr(self, "matchmakingBadgesHiddenUntil", 0.0)
+        if matches and not badges_hidden:
+            visible = matches[:3]
+            self.matchmakingNav.setIcon(self._badge_icon([r.get("color", "#3b82f6") for _, r in visible]))
+            aliases = [r.get("alias") or f"Rule #{i+1}" for i, r in matches]
+            extra = len(matches) - len(visible)
+            tip = "Matched: " + ", ".join(aliases[:3])
+            if extra > 0:
+                tip += f" (+{extra} more)"
+            self.matchmakingNav.setToolTip(tip)
+        else:
+            if qta is not None:
+                try: self.matchmakingNav.setIcon(qta.icon("fa5s.bell", color='#b8b8b8', color_active='#b00000'))
+                except Exception: pass
+            self.matchmakingNav.setToolTip("")
+        for i, e in enumerate(getattr(self, "matchmakingEditors", [])):
+            rule = self.matchmakingRules[i]
+            rid = rule.get("id") or str(id(rule))
+            matched = self.matchmakingRuleStates.get(rid, False)
+            e["status"].setText("MATCHED" if matched else "NOT MATCHED")
+            e["status"].setStyleSheet(f"color: {rule.get('color','#3b82f6')};" if matched else "")
+
     def _build_servers(self):
         page = QtWidgets.QWidget()
         root = QtWidgets.QVBoxLayout(page)
@@ -6728,6 +7110,7 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
             "addons": (self.addonsPage, self.addonsNav),
             "statistics": (self.statisticsPage, self.statisticsNav),
             "servers": (self.serversPage, self.serversNav),
+            "matchmaking": (self.matchmakingPage, self.matchmakingNav),
             "screenshots": (self.screenshotsPage, self.screenshotsNav),
             "demos": (self.demosPage, self.demosNav),
             "settings": (self.settingsPage, self.settingsNav),
@@ -6735,7 +7118,12 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
         }
         widget, active = mapping[page]
         self.pages.setCurrentWidget(widget)
-        for b in (self.homeNav, self.addonsNav, self.statisticsNav, self.serversNav, self.screenshotsNav, self.demosNav, self.settingsNav, self.changelogNav):
+        if page == "matchmaking":
+            # Opening Matchmaking marks current badge notifications as read for one minute.
+            self.matchmakingBadgesHiddenUntil = time.monotonic() + 60.0
+            self._update_matchmaking_status_ui()
+            QtCore.QTimer.singleShot(60000, self._update_matchmaking_status_ui)
+        for b in (self.homeNav, self.addonsNav, self.statisticsNav, self.serversNav, self.matchmakingNav, self.screenshotsNav, self.demosNav, self.settingsNav, self.changelogNav):
             b.setChecked(b is active)
         if page == "addons":
             refresh_component_gui()
@@ -6753,7 +7141,7 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
             self.serverRefreshTimer.stop()
 
     def set_navigation_enabled(self, enabled):
-        for b in (self.homeNav, self.addonsNav, self.statisticsNav, self.serversNav, self.screenshotsNav, self.demosNav, self.settingsNav, self.changelogNav, self.refreshButton):
+        for b in (self.homeNav, self.addonsNav, self.statisticsNav, self.serversNav, self.matchmakingNav, self.screenshotsNav, self.demosNav, self.settingsNav, self.changelogNav, self.refreshButton):
             b.setEnabled(enabled)
 
     def _load_component_state_initial(self):
@@ -6807,6 +7195,9 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
         )
         self.pauseServerRefreshBox.setChecked(
             launcher_settings.get("pause_server_refresh_unfocused", False)
+        )
+        self.suppressStartupSoundBox.setChecked(
+            launcher_settings.get("suppress_startup_notification_sound", True)
         )
         def load_cleanup_control(days, checkbox, combo, custom):
             days = max(0, int(days or 0))
