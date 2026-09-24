@@ -119,6 +119,21 @@ def pubzip_files_url(remotes, filename="Q3Elite_Basic_Maps.zip"):
     return f"{API}/getpubzip?{params}"
 
 
+
+
+def pubzip_fileids_url(fileids, filename="Q3Elite_Basic_Maps.zip"):
+    """Return one public getpubzip URL for an already-resolved list of file IDs."""
+    ids = [str(x) for x in fileids if x is not None]
+    if not ids:
+        raise ValueError("No file IDs selected for pCloud ZIP")
+    params = urllib.parse.urlencode({
+        "code": CODE,
+        "fileids": ",".join(ids),
+        "forcedownload": 1,
+        "filename": filename,
+    })
+    return f"{API}/getpubzip?{params}"
+
 def resolve(remote):
     e=find(remote)
     if e.get("isfolder"): raise IsADirectoryError(remote)

@@ -246,7 +246,7 @@ def _download_managed(rel, digest, control=None, progress_callback=None):
     if dest.is_file() and sha256_file(dest).lower() == digest.lower():
         print(f"[current] {rel}")
         return False
-    info = pcloud.resolve(pcloud.remote_for(rel, is_map=classify(rel)=="maps"))
+    info = pcloud.resolve(pcloud.remote_for(rel, is_map=classify(rel) in ("maps", "basic_map")))
     dest.parent.mkdir(parents=True, exist_ok=True)
     print(f"[download] {rel} ({human(info['size'])})")
     result = downloader(
@@ -447,7 +447,7 @@ def _bulk_install_basic_core(files, control=None, progress_callback=None):
         return 0
     else:
         print(f"[bulk cache] Kept: {BASIC_ZIP}")
-        return len(extracted)
+        return extracted
 
 
 
@@ -458,6 +458,7 @@ def _basic_map_member(member_name, wanted_cf):
 
 
 def _extract_basic_maps_zip(zip_path, group):
+    """Fast extraction of the required 26 maps. Verification is done afterwards."""
     wanted_cf = {norm(rel).casefold(): norm(rel) for rel in group}
     extracted = set()
     with zipfile.ZipFile(zip_path, "r") as zf:
@@ -469,64 +470,100 @@ def _extract_basic_maps_zip(zip_path, group):
                 continue
             dest = ROOT / Path(rel)
             dest.parent.mkdir(parents=True, exist_ok=True)
-            tmp = dest.with_name(dest.name + ".basicmaps.tmp")
-            h = hashlib.sha256()
-            try:
-                with zf.open(info, "r") as srcf, tmp.open("wb") as dstf:
-                    for block in iter(lambda: srcf.read(4 * 1024 * 1024), b""):
-                        dstf.write(block); h.update(block)
-                if h.hexdigest().lower() != group[rel].lower():
-                    raise RuntimeError(f"SHA-256 verification failed in Basic Maps ZIP: {rel}")
-                os.replace(tmp, dest)
-                extracted.add(rel.casefold())
-            finally:
-                tmp.unlink(missing_ok=True)
-    if len(extracted) != len(group):
-        missing = [r for r in group if r.casefold() not in extracted]
+            with zf.open(info, "r") as srcf, dest.open("wb") as dstf:
+                shutil.copyfileobj(srcf, dstf, length=16 * 1024 * 1024)
+            extracted.add(rel.casefold())
+    missing = [r for r in group if r.casefold() not in extracted]
+    if missing:
         raise RuntimeError("Q3Elite_Basic_Maps.zip is missing: " + ", ".join(missing))
-    print(f"[basic maps] Extracted and SHA-256 verified: {len(extracted)} / {len(group)}")
+    print(f"[basic maps] Extracted: {len(extracted)} / {len(group)}")
     return extracted
 
 
-def _bulk_install_basic_maps(files, control=None, progress_callback=None):
-    group = selected_basic_map_files(files)
+def _resolve_basic_map_fileids(group):
+    """Resolve exactly the 26 manifest paths; do not recursively enumerate Maps."""
     if not group:
-        raise RuntimeError("Manifest contains none of the 26 required Singleplayer maps.")
-    if len(group) != len(BASIC_QL_MAP_NAMES):
-        raise RuntimeError(f"Manifest contains only {len(group)}/{len(BASIC_QL_MAP_NAMES)} required Singleplayer maps.")
+        raise RuntimeError("No required Basic maps were selected from Manifest.json.")
+
+    fileids = []
+    for rel in group:
+        remote = pcloud.remote_for(rel, is_map=True)
+        entry = pcloud.find(remote)
+        if entry.get("isfolder"):
+            raise RuntimeError(f"Required map resolves to a folder: {remote}")
+        fid = entry.get("fileid")
+        if fid is None:
+            raise RuntimeError(f"Required map has no pCloud fileid: {remote}")
+        fileids.append(str(fid))
+
+    if len(fileids) != len(BASIC_QL_MAP_NAMES):
+        raise RuntimeError(
+            f"Resolved {len(fileids)}/{len(BASIC_QL_MAP_NAMES)} required map file IDs."
+        )
+    return fileids
+
+
+def _bulk_install_basic_maps(files, control=None, progress_callback=None):
+    # The required Singleplayer set is authoritative for the bulk ZIP.
+    # Manifest.json is allowed to contain fewer entries (currently 25/26); that
+    # must not prevent the 26th required PK3 from being installed.  Preserve the
+    # manifest spelling/hash where available and synthesize only the missing path.
+    manifest_group = selected_basic_map_files(files)
+    by_name = {PurePosixPath(norm(rel)).name.casefold(): (norm(rel), digest)
+               for rel, digest in manifest_group.items()}
+    group = {}
+    missing_manifest = []
+    for name_cf in sorted(BASIC_QL_MAP_NAMES):
+        hit = by_name.get(name_cf)
+        if hit:
+            group[hit[0]] = hit[1]
+        else:
+            rel = BASIC_QL_PREFIX + name_cf
+            group[rel] = None
+            missing_manifest.append(rel)
+
+    if missing_manifest:
+        print(
+            "[basic maps] Manifest has "
+            f"{len(manifest_group)}/{len(BASIC_QL_MAP_NAMES)} required maps; "
+            "the missing map(s) will still be included in the pCloud bulk ZIP: "
+            + ", ".join(missing_manifest),
+            flush=True,
+        )
 
     CACHE_DIR.mkdir(parents=True, exist_ok=True)
     part = BASIC_MAPS_ZIP.with_name(BASIC_MAPS_ZIP.name + ".part")
-    if part.exists():
-        part.unlink()
+    part.unlink(missing_ok=True)
 
     reuse = BASIC_MAPS_ZIP.is_file() and zipfile.is_zipfile(BASIC_MAPS_ZIP)
     if BASIC_MAPS_ZIP.exists() and not reuse:
         BASIC_MAPS_ZIP.unlink()
 
     if reuse:
+        print(f"[basic maps] Reusing cached {BASIC_MAPS_ZIP.name}")
         if progress_callback:
             progress_callback(0, None, 0.0, "Using cached Q3Elite_Basic_Maps.zip...")
-        result = str(BASIC_MAPS_ZIP)
+        archive = BASIC_MAPS_ZIP
     else:
+        print("[basic maps] Resolving 26 pCloud file IDs...")
         if progress_callback:
             progress_callback(0, None, 0.0, "Preparing Q3Elite_Basic_Maps.zip...")
-        # Resolve the 26 entries once, then ask pCloud for ONE selected-file ZIP.
-        remotes = [pcloud.remote_for(rel, is_map=True) for rel in group]
-        url = pcloud.pubzip_files_url(remotes, BASIC_MAPS_ZIP.name)
+        fileids = _resolve_basic_map_fileids(group)
+        print(f"[basic maps] Creating ONE pCloud ZIP from {len(fileids)} files...")
+        url = pcloud.pubzip_fileids_url(fileids, BASIC_MAPS_ZIP.name)
         result = downloader(
             url, str(CACHE_DIR), BASIC_MAPS_ZIP.name,
             skip=True, control=control, progress_callback=progress_callback,
             expected_size=None, use_part_file=True, timeout_value=60,
         )
         if not result:
-            raise RuntimeError("Basic Maps bulk ZIP download failed/cancelled.")
+            raise RuntimeError("Q3Elite_Basic_Maps.zip download failed/cancelled.")
+        archive = Path(result)
 
-    archive = Path(result)
     if not zipfile.is_zipfile(archive):
         raise RuntimeError("pCloud did not return a valid Q3Elite_Basic_Maps.zip.")
     if progress_callback:
-        progress_callback(0, None, 0.0, "Extracting and verifying 26 Singleplayer maps...")
+        progress_callback(0, None, 0.0, "Extracting Q3Elite_Basic_Maps.zip...")
     return _extract_basic_maps_zip(archive, group)
 
 
@@ -547,6 +584,16 @@ def install_basic(external_maps=False, music_playlist=False, autoexec_update=Fal
     version, manifest, files = remote_release()
     basic = selected_basic_files(files, autoexec_update)
 
+    # autoexec.cfg is a user-owned configuration when Autoexec Update is OFF.
+    # It may be supplied by the bulk Basic ZIP on a clean install, but it must
+    # not participate in the manifest repair pass because that would overwrite
+    # the extracted/user copy and can fail if the pCloud copy intentionally
+    # differs from Manifest.json.
+    verify_basic = {
+        rel: digest for rel, digest in basic.items()
+        if autoexec_update or classify(rel) != "autoexec"
+    }
+
     print("="*72)
     print(" Q3Elite Basic installation")
     print("="*72)
@@ -559,20 +606,23 @@ def install_basic(external_maps=False, music_playlist=False, autoexec_update=Fal
         # A first install is a transaction. Creating Q3Elite/Engines halfway through
         # must NOT turn it into an update/repair installation.
         bulk_extracted = _bulk_install_basic_core(files, control, progress_callback)
+        print("[stage] Basic ZIP extraction finished.", flush=True)
 
         # Required Singleplayer maps are a second bulk archive, never 26 individual
         # downloads on first install.
+        print("[stage] Starting required Basic Maps ZIP.", flush=True)
         _bulk_install_basic_maps(files, control, progress_callback)
+        print("[stage] Basic Maps ZIP finished.", flush=True)
 
         # One normal manifest verification pass AFTER both bulk archives are
         # extracted. This is the same proven model used by the old launcher:
         # fast ZIP extraction first, then hash/repair the installed tree once.
         if progress_callback:
             progress_callback(0, None, 0.0, "Verifying Q3Elite Basic...")
-        downloaded += _install_group(basic, control, progress_callback)
+        downloaded += _install_group(verify_basic, control, progress_callback)
     else:
         # Existing installation: normal manifest repair is appropriate.
-        downloaded += _install_group(basic, control, progress_callback)
+        downloaded += _install_group(verify_basic, control, progress_callback)
 
     if external_maps:
         downloaded += _install_group(selected_map_files(files), control, progress_callback)

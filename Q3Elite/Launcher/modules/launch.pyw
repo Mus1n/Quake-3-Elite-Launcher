@@ -1,5 +1,6 @@
 import os
 import sys
+import traceback
 import shutil
 import json
 import re
@@ -87,12 +88,31 @@ def q3elite_is_current():
 # ============================================================================
 
 def q3elite_is_installed():
-    """A usable installation requires both the Vulkan engine and the external OSP marker."""
-    engine = GAME_ROOT / "Q3Elite" / "Engines" / "XQ3E_Vulkan.x64.exe"
-    osp_marker = GAME_ROOT / "baseq3" / "mods" / "osp" / "zzzz-Mus1n-REMASTERED.pk3dir"
-    print(f"Q3Elite engine marker: {engine}")
-    print(f"Q3Elite OSP marker:    {osp_marker}")
-    return engine.is_file() and osp_marker.exists()
+    """
+    Installation marker used by the launcher.
+
+    The required QL Singleplayer maps are installed only after the Q3Elite
+    Basic archive has been extracted.  Therefore any PK3 in QLmaps is a much
+    better recovery marker than Version.json or the old engine/OSP pair:
+    metadata may be missing after an interrupted first launch, while the game
+    payload itself is already usable.
+    """
+    qlmaps = GAME_ROOT / "baseq3" / "maps" / "QLmaps"
+    try:
+        installed = qlmaps.is_dir() and any(
+            p.is_file() and p.suffix.casefold() == ".pk3"
+            for p in qlmaps.iterdir()
+        )
+    except OSError:
+        installed = False
+
+    print(f"Q3Elite QLmaps marker: {qlmaps} -> {'installed' if installed else 'missing'}")
+    return installed
+
+
+def q3elite_metadata_present():
+    """True only when the local updater metadata from a completed install exists."""
+    return (GAME_ROOT / "Q3Elite" / "Version.json").is_file()
 
 
 def config_editor_available():
@@ -606,12 +626,17 @@ class Q3EliteDownload(QtCore.QThread):
 
             self.result_ready.emit(True)
 
-        except Exception as error:
+        except BaseException as error:
             print()
-            print(
-                f"[error] Quake 3 Elite "
-                f"installation failed: {error}"
-            )
+            print(f"[error] Quake 3 Elite installation failed: {error}")
+            traceback.print_exc()
+            try:
+                crash_log = Path(os.environ.get("APPDATA", str(Path.home()))) / "Quake 3 Elite" / "Launcher" / "install_crash.log"
+                crash_log.parent.mkdir(parents=True, exist_ok=True)
+                crash_log.write_text(traceback.format_exc(), encoding="utf-8")
+                print(f"[error] Traceback saved to: {crash_log}")
+            except Exception:
+                pass
             print()
             self.result_ready.emit(False)
 
@@ -2232,6 +2257,21 @@ def start_game_checks():
         print("Existing Q3Elite installation detected.")
         print("Verifying local PAK files and checking OSP2-BE...")
         print()
+
+        # Recovery rule: the required QLmaps PK3 marker is authoritative for
+        # installation state.  If a previous first launch was interrupted after
+        # payload extraction but before Version.json was committed, do NOT send
+        # that usable installation into the normal version-update path.
+        if not q3elite_metadata_present():
+            print("[recovery] QLmaps payload exists but local Version.json is missing.")
+            print("[recovery] Treating Q3Elite as installed; skipping version check this launch.")
+            install_state["q3elite_done"] = True
+            install_state["q3elite_ok"] = True
+            install_state["q3elite_update_done"] = True
+            install_state["q3elite_update_ok"] = True
+            set_gui_checking("Checking PAKs...")
+            fdownload.start()
+            return
 
         install_state["q3elite_done"] = False
         install_state["q3elite_ok"] = False
