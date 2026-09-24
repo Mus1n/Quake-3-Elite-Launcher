@@ -65,7 +65,12 @@ import server_monitor
 from osp_updater import check_and_update as check_and_update_osp
 from q3elite_updater import check_and_update as check_and_update_q3elite
 from pak_verifier import verify_paks
-from launcher_updater import check_for_update as check_launcher_update, stage_update as stage_launcher_update, launch_apply_helper
+from launcher_updater import (
+    check_for_update as check_launcher_update,
+    check_for_repair as check_launcher_repair,
+    stage_update as stage_launcher_update,
+    launch_apply_helper,
+)
 from base_methods import *
 
 
@@ -1655,6 +1660,7 @@ DEFAULT_SETTINGS = {
     "auto_update_launcher": True,
     "auto_update_osp": True,
     "start_with_windows": False,
+    "start_minimized": False,
     "minimize_to_tray": False,
     "show_changelog_media": False,
     "cleanup_screenshots_days": 0,
@@ -2131,6 +2137,7 @@ def apply_settings():
         "auto_update_launcher": window.autoLauncherBox.isChecked(),
         "auto_update_osp": window.autoOspBox.isChecked(),
         "start_with_windows": window.startWindowsBox.isChecked(),
+        "start_minimized": window.startMinimizedBox.isChecked(),
         "minimize_to_tray": window.trayBox.isChecked(),
         # Despite the historical label, this controls ALL changelog media.
         "show_changelog_media": window.changelogMediaBox.isChecked(),
@@ -4720,9 +4727,23 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
         return page
 
     def _build_settings(self):
+        # Settings can be taller than the content area (especially at 720p).
+        # Keep natural widget sizes and scroll instead of letting Qt squeeze
+        # the controls until labels/checkboxes overlap.
         page = QtWidgets.QWidget()
-        lay = QtWidgets.QVBoxLayout(page)
-        lay.setContentsMargins(4, 4, 4, 4)
+        outer = QtWidgets.QVBoxLayout(page)
+        outer.setContentsMargins(0, 0, 0, 0)
+
+        scroll = QtWidgets.QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QtWidgets.QFrame.Shape.NoFrame)
+        scroll.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        scroll.setStyleSheet("QScrollArea { background: transparent; border: 0; } QScrollArea > QWidget > QWidget { background: transparent; }")
+
+        body = QtWidgets.QWidget()
+        body.setStyleSheet("background: transparent;")
+        lay = QtWidgets.QVBoxLayout(body)
+        lay.setContentsMargins(4, 4, 8, 4)
         title = QtWidgets.QLabel("SETTINGS")
         title.setObjectName("pageTitle")
         lay.addWidget(title)
@@ -4736,6 +4757,9 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
         self.autoLauncherBox = QtWidgets.QCheckBox("Automatically update Launcher")
         self.autoOspBox = QtWidgets.QCheckBox("Automatically update OSP2-BE")
         self.startWindowsBox = QtWidgets.QCheckBox("Start with Windows")
+        self.startMinimizedBox = QtWidgets.QCheckBox("Start minimized")
+        self.startMinimizedBox.setToolTip("When started automatically with Windows, launch directly to the system tray.")
+        self.startWindowsBox.toggled.connect(self.startMinimizedBox.setEnabled)
         self.trayBox = QtWidgets.QCheckBox("Minimize to Windows system tray")
         self.vulkanLayerBox = QtWidgets.QCheckBox("Enable ReShade for Vulkan")
 
@@ -4825,7 +4849,7 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
 
         for box in (
             self.autoQ3Box, self.autoLauncherBox, self.autoOspBox,
-            self.startWindowsBox, self.trayBox,
+            self.startWindowsBox, self.startMinimizedBox, self.trayBox,
             self.vulkanLayerBox, self.changelogMediaBox,
         ):
             c.addWidget(box)
@@ -4847,11 +4871,44 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
         open_cache = QtWidgets.QPushButton("📂")
         open_cache.setObjectName("smallButton")
         open_cache.setToolTip("Open Cache folder")
-        open_cache.setFixedWidth(48)
+        # Folder action is an icon button, not a full-width action button.
+        open_cache.setFixedSize(36, 36)
+        open_cache.setSizePolicy(
+            QtWidgets.QSizePolicy.Policy.Fixed,
+            QtWidgets.QSizePolicy.Policy.Fixed,
+        )
         open_cache.clicked.connect(self.open_cache_folder)
         cache_row.addWidget(open_cache)
         cc.addLayout(cache_row)
+
+        cache_buttons = QtWidgets.QHBoxLayout()
+        clear_cache = QtWidgets.QPushButton("CLEAR CACHE")
+        clear_cache.setObjectName("secondaryButton")
+        clear_cache.setToolTip("Clear launcher-generated cache such as changelog media and temporary files.")
+        clear_cache.clicked.connect(self.clear_launcher_cache)
+        cache_buttons.addWidget(clear_cache)
+        clear_download_cache = QtWidgets.QPushButton("CLEAR DOWNLOAD CACHE")
+        clear_download_cache.setObjectName("secondaryButton")
+        clear_download_cache.setToolTip("Delete cached downloaded archives so they will be downloaded again when needed.")
+        clear_download_cache.clicked.connect(self.clear_download_cache)
+        cache_buttons.addWidget(clear_download_cache)
+        cache_buttons.addStretch(1)
+        cc.addLayout(cache_buttons)
         lay.addWidget(cache)
+
+        maintenance = self._card("settingsCard")
+        ml = QtWidgets.QHBoxLayout(maintenance)
+        maintenance_text = QtWidgets.QVBoxLayout()
+        maintenance_title = QtWidgets.QLabel("MAINTENANCE")
+        maintenance_title.setObjectName("sectionTitle")
+        maintenance_text.addWidget(maintenance_title)
+        maintenance_text.addWidget(QtWidgets.QLabel("Verify and restore missing or damaged Launcher files."))
+        ml.addLayout(maintenance_text, 1)
+        self.repairLauncherButton = QtWidgets.QPushButton("REPAIR LAUNCHER")
+        self.repairLauncherButton.setObjectName("secondaryButton")
+        self.repairLauncherButton.clicked.connect(self.repair_launcher)
+        ml.addWidget(self.repairLauncherButton)
+        lay.addWidget(maintenance)
 
         config_card = self._card("settingsCard")
         config_l = QtWidgets.QHBoxLayout(config_card)
@@ -4876,6 +4933,9 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
         apply.setObjectName("applyButton")
         apply.clicked.connect(apply_settings)
         lay.addWidget(apply, 0, QtCore.Qt.AlignmentFlag.AlignRight)
+
+        scroll.setWidget(body)
+        outer.addWidget(scroll)
         return page
 
     # ------------------------------------------------------------------
@@ -6738,6 +6798,8 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
         self.autoLauncherBox.setChecked(launcher_settings.get("auto_update_launcher", True))
         self.autoOspBox.setChecked(launcher_settings.get("auto_update_osp", True))
         self.startWindowsBox.setChecked(launcher_settings.get("start_with_windows", False))
+        self.startMinimizedBox.setChecked(launcher_settings.get("start_minimized", False))
+        self.startMinimizedBox.setEnabled(self.startWindowsBox.isChecked())
         self.trayBox.setChecked(launcher_settings.get("minimize_to_tray", False))
         self.vulkanLayerBox.setChecked(reshade_layer_enabled())
         self.changelogMediaBox.setChecked(
@@ -6783,6 +6845,62 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
     def open_cache_folder(self):
         CACHE_DIR.mkdir(parents=True, exist_ok=True)
         QtGui.QDesktopServices.openUrl(QtCore.QUrl.fromLocalFile(str(CACHE_DIR)))
+
+    def _remove_cache_path(self, path):
+        path = Path(path)
+        if path.is_dir():
+            shutil.rmtree(path, ignore_errors=False)
+        elif path.exists():
+            path.unlink()
+
+    def clear_launcher_cache(self):
+        try:
+            # UI/media cache and disposable temporary launcher state.
+            self._remove_cache_path(CACHE_DIR / "Changelog")
+            self._remove_cache_path(TEMP_DIR)
+            TEMP_DIR.mkdir(parents=True, exist_ok=True)
+            self.settingsMessage.setText("Launcher cache cleared.")
+        except Exception as error:
+            self.settingsMessage.setText(f"Could not clear launcher cache: {error}")
+
+    def clear_download_cache(self):
+        try:
+            CACHE_DIR.mkdir(parents=True, exist_ok=True)
+            for path in list(CACHE_DIR.iterdir()):
+                if path.name.casefold() == "changelog":
+                    continue
+                self._remove_cache_path(path)
+            self.settingsMessage.setText("Download cache cleared.")
+        except Exception as error:
+            self.settingsMessage.setText(f"Could not clear download cache: {error}")
+
+    def repair_launcher(self):
+        if getattr(self, "_repair_running", False):
+            return
+        self._repair_running = True
+        self.repairLauncherButton.setEnabled(False)
+        self.settingsMessage.setText("Checking Launcher files...")
+        QtWidgets.QApplication.processEvents()
+        try:
+            repair_info = check_launcher_repair()
+            if not repair_info:
+                self.settingsMessage.setText("Launcher files are OK. No repair needed.")
+                return
+            self.settingsMessage.setText("Repairing Launcher files...")
+            QtWidgets.QApplication.processEvents()
+            stage_launcher_update(
+                repair_info,
+                control=download_control,
+                progress_callback=download_progress_callback,
+            )
+            launch_apply_helper(os.getpid())
+            self.settingsMessage.setText("Repair staged. Restarting Launcher...")
+            QtCore.QTimer.singleShot(100, QtWidgets.QApplication.instance().quit)
+        except Exception as error:
+            self.settingsMessage.setText(f"Launcher repair failed: {error}")
+        finally:
+            self._repair_running = False
+            self.repairLauncherButton.setEnabled(True)
 
     def open_config_editor(self):
         if not config_editor_available():
@@ -7154,7 +7272,8 @@ def main():
         window = ModernLauncherWindow()
 
         autostart_mode = "--autostart" in sys.argv
-        if autostart_mode and QtWidgets.QSystemTrayIcon.isSystemTrayAvailable():
+        start_minimized = launcher_settings.get("start_minimized", False)
+        if autostart_mode and start_minimized and QtWidgets.QSystemTrayIcon.isSystemTrayAvailable():
             window.trayIcon.show()
             window.hide()
         else:
