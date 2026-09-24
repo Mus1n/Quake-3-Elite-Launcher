@@ -38,12 +38,7 @@ GAME_ROOT = LAUNCHER_DIR.parent.parent
 ASSETS_DIR = LAUNCHER_DIR / "assets"
 ICONS_DIR = ASSETS_DIR / "icons"
 IMAGES_DIR = ASSETS_DIR / "images"
-APPDATA_ROOT = Path(os.environ.get("APPDATA", Path.home()))
-LAUNCHER_DATA_DIR = APPDATA_ROOT / "Quake 3 Elite" / "Launcher"
-CACHE_DIR = LAUNCHER_DATA_DIR / "cache"
-TEMP_DIR = LAUNCHER_DATA_DIR / "temp"
-DEFAULT_SERVERS_FILE = LAUNCHER_DIR / "settings" / "servers.json"
-USER_SERVERS_FILE = LAUNCHER_DATA_DIR / "servers.json"
+CACHE_DIR = Path(os.environ.get("APPDATA", Path.home())) / "Quake 3 Elite" / "Launcher" / "cache"
 BACKGROUND_IMAGE = IMAGES_DIR / "background.png"
 APP_ICON_ICO = ICONS_DIR / "favicon.ico"
 APP_ICON_PNG = ICONS_DIR / "favicon.png"
@@ -636,7 +631,7 @@ class Q3EliteDownload(QtCore.QThread):
             print(f"[error] Quake 3 Elite installation failed: {error}")
             traceback.print_exc()
             try:
-                crash_log = LAUNCHER_DATA_DIR / "install_crash.log"
+                crash_log = Path(os.environ.get("APPDATA", str(Path.home()))) / "Quake 3 Elite" / "Launcher" / "install_crash.log"
                 crash_log.parent.mkdir(parents=True, exist_ok=True)
                 crash_log.write_text(traceback.format_exc(), encoding="utf-8")
                 print(f"[error] Traceback saved to: {crash_log}")
@@ -1648,7 +1643,7 @@ def sorted_launcher_releases():
 # STEP 19 — LAUNCHER SETTINGS
 # ============================================================================
 
-SETTINGS_FILE = LAUNCHER_DATA_DIR / "settings.json"
+SETTINGS_FILE = Path(os.environ.get("APPDATA", Path.home())) / "Quake 3 Elite" / "Launcher" / "settings.json"
 
 DEFAULT_SETTINGS = {
     "auto_update_q3elite": True,
@@ -1822,17 +1817,17 @@ def _format_bytes(value):
 def toggle_download_pause():
     if download_control.paused:
         download_control.resume()
-        pause_button.setText("PAUSE")
+        window.pauseButton.setText("PAUSE")
         print("\\n[download] Resumed.")
     else:
         download_control.pause()
-        pause_button.setText("RESUME")
+        window.pauseButton.setText("RESUME")
         print("\\n[download] Paused.")
 
 
 def update_download_overlay():
     """Refresh the small download control without touching worker threads."""
-    if not pause_button.isVisible():
+    if not window.pauseButton.isVisible():
         return
 
     name = _download_progress["name"]
@@ -1851,42 +1846,24 @@ def update_download_overlay():
                 f"{name}  |  {_format_bytes(done)}"
                 f"  |  {_format_bytes(speed)}/s"
             )
-        download_info.setText(info)
+        window.downloadInfo.setText(info)
 
 
 def show_download_controls():
-    pause_button.setText("RESUME" if download_control.paused else "PAUSE")
-    pause_button.show()
-    download_info.show()
+    window.pauseButton.setText("RESUME" if download_control.paused else "PAUSE")
+    window.pauseButton.show()
+    window.downloadInfo.show()
     position_download_controls()
 
 
 def hide_download_controls():
-    pause_button.hide()
-    download_info.hide()
+    window.pauseButton.hide()
+    window.downloadInfo.hide()
 
 
 def position_download_controls():
-    """Keep controls in the lower-right corner of the current launcher window."""
-    margin = 18
-    button_w = 125
-    button_h = 36
-    info_h = 24
-    info_w = max(260, window.width() - button_w - margin * 3)
-
-    y = max(margin, window.height() - button_h - margin)
-    pause_button.setGeometry(
-        max(margin, window.width() - button_w - margin),
-        y,
-        button_w,
-        button_h
-    )
-    download_info.setGeometry(
-        margin,
-        y + (button_h - info_h) // 2,
-        info_w,
-        info_h
-    )
+    """Download controls are managed by the Qt layout."""
+    return
 
 
 def position_component_button():
@@ -3022,7 +2999,7 @@ class ChangelogImage(QtWidgets.QLabel):
         suffix = Path(urllib.parse.urlparse(self._url).path).suffix.lower()
         if suffix not in (".png", ".jpg", ".jpeg", ".webp"):
             suffix = ".img"
-        cache = CACHE_DIR / "Changelog"
+        cache = Path(os.environ.get("APPDATA", Path.home())) / "Quake 3 Elite" / "Cache" / "Changelog"
         cache.mkdir(parents=True, exist_ok=True)
         return cache / (hashlib.sha256(self._url.encode("utf-8")).hexdigest() + suffix)
 
@@ -6342,10 +6319,7 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
         nav.addStretch(1)
         root.addLayout(nav)
 
-        self.serverConfigPath = USER_SERVERS_FILE
-        if not self.serverConfigPath.is_file() and DEFAULT_SERVERS_FILE.is_file():
-            self.serverConfigPath.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(DEFAULT_SERVERS_FILE, self.serverConfigPath)
+        self.serverConfigPath = Path(os.environ.get("APPDATA", str(Path.home()))) / "Quake 3 Elite" / "Launcher" / "servers.json"
         self.serverLevelshotsDir = ASSETS_DIR / "servers" / "levelshots"
         self.serverCards = []
         self.serverQueryWorker = None
@@ -7114,7 +7088,7 @@ def main():
             app.setWindowIcon(QtGui.QIcon(str(icon_path)))
 
         # Prevent a second launcher process from starting.
-        instance_dir = LAUNCHER_DATA_DIR
+        instance_dir = Path(os.environ.get("APPDATA", str(LAUNCHER_DIR))) / "Quake 3 Elite" / "Launcher"
         instance_dir.mkdir(parents=True, exist_ok=True)
         instance_lock = QLockFile(str(instance_dir / "Q3EliteLauncher.lock"))
         instance_lock.setStaleLockTime(0)

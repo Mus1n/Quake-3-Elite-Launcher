@@ -30,7 +30,7 @@ ROOT = pcloud.ROOT
 APPDATA = Path(os.environ.get("APPDATA", Path.home()))
 STATE_FILE = APPDATA / "Quake 3 Elite" / "Launcher" / "components.json"
 CACHE_DIR = APPDATA / "Quake 3 Elite" / "Launcher" / "cache"
-TEMP_DIR = APPDATA / "Quake 3 Elite" / "Launcher" / "temp"
+TEMP_DIR = APPDATA / "Quake 3 Elite" / "Temp"
 BASIC_ZIP = CACHE_DIR / "Q3Elite_Basic.zip"
 MAPS_ZIP = CACHE_DIR / "Q3Elite_Maps.zip"
 
@@ -291,26 +291,46 @@ def _zip_member_to_managed(member_name, wanted_cf):
 
 
 def _extract_basic_zip(zip_path, group):
-    """Selectively extract ONLY files owned by the Basic manifest."""
+    """Extract the complete safe Basic payload, then verify managed files."""
     wanted_cf = {norm(rel).casefold(): norm(rel) for rel in group}
-    extracted = set()
+    verified = set()
+    payload_files = 0
 
     with zipfile.ZipFile(zip_path, "r") as zf:
         for info in zf.infolist():
             if info.is_dir():
                 continue
-            rel = _zip_member_to_managed(info.filename, wanted_cf)
+
+            raw = norm(info.filename)
+            parts = PurePosixPath(raw).parts
+            rel = None
+            for root_name in ("baseq3", "Q3Elite"):
+                for i, part in enumerate(parts):
+                    if part.casefold() == root_name.casefold():
+                        rel = norm(str(PurePosixPath(*parts[i:])))
+                        break
+                if rel:
+                    break
             if not rel:
                 continue
 
-            dest = ROOT / Path(rel)
+            # Launcher updates itself. A cached Basic archive must never
+            # overwrite/downgrade the current launcher.
+            if rel.casefold().startswith("q3elite/launcher/"):
+                continue
+
+            dest = (ROOT / Path(rel)).resolve()
+            try:
+                dest.relative_to(ROOT.resolve())
+            except ValueError:
+                raise RuntimeError(f"Unsafe path in Basic ZIP: {info.filename}")
+
             if is_user_config(rel) and dest.is_file():
                 print(f"[preserved user config] {rel}")
-                extracted.add(rel.casefold())
                 continue
+
             dest.parent.mkdir(parents=True, exist_ok=True)
             tmp = dest.with_name(dest.name + ".bulk.tmp")
-
             h = hashlib.sha256()
             try:
                 with zf.open(info, "r") as srcf, tmp.open("wb") as dstf:
@@ -321,17 +341,21 @@ def _extract_basic_zip(zip_path, group):
                         dstf.write(block)
                         h.update(block)
 
-                expected = group[rel]
-                if h.hexdigest().lower() != expected.lower():
-                    raise RuntimeError(f"SHA-256 verification failed in Basic ZIP: {rel}")
+                managed_rel = wanted_cf.get(rel.casefold())
+                if managed_rel:
+                    expected = group[managed_rel]
+                    if h.hexdigest().lower() != expected.lower():
+                        raise RuntimeError(f"SHA-256 verification failed in Basic ZIP: {managed_rel}")
+                    verified.add(managed_rel.casefold())
 
                 os.replace(tmp, dest)
-                extracted.add(rel.casefold())
+                payload_files += 1
             finally:
                 tmp.unlink(missing_ok=True)
 
-    print(f"[bulk] Extracted and SHA-256 verified: {len(extracted)} / {len(group)}")
-    return extracted
+    print(f"[bulk] Extracted payload files: {payload_files}")
+    print(f"[bulk] SHA-256 verified managed files: {len(verified)} / {len(group)}")
+    return verified
 
 
 def _bulk_install_basic_core(files, control=None, progress_callback=None):
