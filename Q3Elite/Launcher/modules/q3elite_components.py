@@ -314,29 +314,50 @@ def _zip_member_to_managed(member_name, wanted_cf):
     return None
 
 
-def _extract_basic_zip(zip_path, group):
-    """Selectively extract ONLY files owned by the Basic manifest."""
+def _extract_basic_zip(zip_path, group, control=None, progress_callback=None):
+    """Extract Basic with visible per-file/byte progress and SHA verification."""
     wanted_cf = {norm(rel).casefold(): norm(rel) for rel in group}
     extracted = set()
 
     with zipfile.ZipFile(zip_path, "r") as zf:
+        matched = []
         for info in zf.infolist():
             if info.is_dir():
                 continue
             rel = _zip_member_to_managed(info.filename, wanted_cf)
-            if not rel:
-                continue
+            if rel:
+                matched.append((info, rel))
 
+        if not matched:
+            sample = [i.filename for i in zf.infolist() if not i.is_dir()][:12]
+            raise RuntimeError(
+                "Q3Elite_Basic.zip contains no files matching Manifest.json. "
+                "Archive sample: " + ", ".join(sample)
+            )
+
+        total_bytes = sum(max(0, info.file_size) for info, _ in matched)
+        done_bytes = 0
+        total_files = len(matched)
+        print(f"[bulk] ZIP opened: {total_files} Basic file(s), {human(total_bytes)} unpacked")
+
+        for index, (info, rel) in enumerate(matched, 1):
             dest = ROOT / Path(rel)
             if is_user_config(rel) and dest.is_file():
                 print(f"[preserved user config] {rel}")
                 extracted.add(rel.casefold())
+                done_bytes += max(0, info.file_size)
                 continue
+
             dest.parent.mkdir(parents=True, exist_ok=True)
             tmp = dest.with_name(dest.name + ".bulk.tmp")
+            message = f"Extracting Basic {index}/{total_files}: {rel}"
+            print(f"[bulk] {message} ({human(info.file_size)})")
+            if progress_callback:
+                progress_callback(done_bytes, total_bytes or None, 0.0, message)
 
             h = hashlib.sha256()
             try:
+                file_done = 0
                 with zf.open(info, "r") as srcf, tmp.open("wb") as dstf:
                     while True:
                         block = srcf.read(4 * 1024 * 1024)
@@ -344,6 +365,14 @@ def _extract_basic_zip(zip_path, group):
                             break
                         dstf.write(block)
                         h.update(block)
+                        file_done += len(block)
+                        if progress_callback:
+                            progress_callback(
+                                done_bytes + file_done,
+                                total_bytes or None,
+                                0.0,
+                                message,
+                            )
 
                 expected = group[rel]
                 if h.hexdigest().lower() != expected.lower():
@@ -351,10 +380,14 @@ def _extract_basic_zip(zip_path, group):
 
                 os.replace(tmp, dest)
                 extracted.add(rel.casefold())
+                done_bytes += max(0, info.file_size)
+                print(f"[bulk verified] {rel}")
             finally:
                 tmp.unlink(missing_ok=True)
 
     print(f"[bulk] Extracted and SHA-256 verified: {len(extracted)} / {len(group)}")
+    if progress_callback:
+        progress_callback(total_bytes, total_bytes or None, 0.0, "Q3Elite Basic extracted and verified.")
     return extracted
 
 
@@ -436,7 +469,7 @@ def _bulk_install_basic_core(files, control=None, progress_callback=None):
         )
 
     try:
-        extracted = _extract_basic_zip(archive, group)
+        extracted = _extract_basic_zip(archive, group, control, progress_callback)
     except zipfile.BadZipFile as exc:
         # Preserve a bad archive only as .bad for diagnosis; fallback below can
         # still repair/download individual files.
