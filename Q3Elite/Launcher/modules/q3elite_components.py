@@ -30,7 +30,7 @@ ROOT = pcloud.ROOT
 APPDATA = Path(os.environ.get("APPDATA", Path.home()))
 STATE_FILE = APPDATA / "Quake 3 Elite" / "Launcher" / "components.json"
 CACHE_DIR = APPDATA / "Quake 3 Elite" / "Launcher" / "cache"
-TEMP_DIR = APPDATA / "Quake 3 Elite" / "Temp"
+TEMP_DIR = APPDATA / "Quake 3 Elite" / "Launcher" / "temp"
 BASIC_ZIP = CACHE_DIR / "Q3Elite_Basic.zip"
 MAPS_ZIP = CACHE_DIR / "Q3Elite_Maps.zip"
 
@@ -54,10 +54,21 @@ def is_user_config(rel):
     return norm(rel).casefold() == USER_CONFIG.casefold()
 
 
-def sha256_file(path, chunk=4 * 1024 * 1024):
+def _cooperate(control):
+    if control is None:
+        return
+    if not control.wait_if_paused():
+        raise RuntimeError("Operation cancelled.")
+
+
+def sha256_file(path, chunk=4 * 1024 * 1024, control=None):
     h = hashlib.sha256()
     with Path(path).open("rb") as f:
-        for block in iter(lambda: f.read(chunk), b""):
+        while True:
+            _cooperate(control)
+            block = f.read(chunk)
+            if not block:
+                break
             h.update(block)
     return h.hexdigest()
 
@@ -219,7 +230,7 @@ def _download_managed(rel, digest, control=None, progress_callback=None):
     if is_user_config(rel) and dest.is_file():
         print(f"[preserved user config] {rel}")
         return False
-    if dest.is_file() and sha256_file(dest).lower() == digest.lower():
+    if dest.is_file() and sha256_file(dest, control=control).lower() == digest.lower():
         print(f"[current] {rel}")
         return False
     info = pcloud.resolve(pcloud.remote_for(rel, is_map=classify(rel)=="maps"))
@@ -232,7 +243,7 @@ def _download_managed(rel, digest, control=None, progress_callback=None):
     )
     if not result:
         raise RuntimeError(f"Download failed/cancelled: {rel}")
-    if sha256_file(dest).lower() != digest.lower():
+    if sha256_file(dest, control=control).lower() != digest.lower():
         raise RuntimeError(f"SHA-256 verification failed: {rel}")
     print(f"[verified] {rel}")
     return True
@@ -242,6 +253,7 @@ def _install_group(group, control=None, progress_callback=None):
     downloaded=0
     total=len(group)
     for i,(rel,digest) in enumerate(group.items(),1):
+        _cooperate(control)
         print(f"\n--- [{i}/{total}] {rel} ---")
         if _download_managed(rel,digest,control,progress_callback):
             downloaded+=1
@@ -290,7 +302,7 @@ def _zip_member_to_managed(member_name, wanted_cf):
     return None
 
 
-def _extract_basic_zip(zip_path, group):
+def _extract_basic_zip(zip_path, group, control=None):
     """Extract the complete safe Basic payload, then verify managed files."""
     wanted_cf = {norm(rel).casefold(): norm(rel) for rel in group}
     verified = set()
@@ -298,6 +310,7 @@ def _extract_basic_zip(zip_path, group):
 
     with zipfile.ZipFile(zip_path, "r") as zf:
         for info in zf.infolist():
+            _cooperate(control)
             if info.is_dir():
                 continue
 
@@ -335,6 +348,7 @@ def _extract_basic_zip(zip_path, group):
             try:
                 with zf.open(info, "r") as srcf, tmp.open("wb") as dstf:
                     while True:
+                        _cooperate(control)
                         block = srcf.read(4 * 1024 * 1024)
                         if not block:
                             break
@@ -435,7 +449,7 @@ def _bulk_install_basic_core(files, control=None, progress_callback=None):
         )
 
     try:
-        extracted = _extract_basic_zip(archive, group)
+        extracted = _extract_basic_zip(archive, group, control)
     except zipfile.BadZipFile as exc:
         # Preserve a bad archive only as .bad for diagnosis; fallback below can
         # still repair/download individual files.
@@ -450,6 +464,45 @@ def _bulk_install_basic_core(files, control=None, progress_callback=None):
     else:
         print(f"[bulk cache] Kept: {BASIC_ZIP}")
         return len(extracted)
+
+
+def _restore_required_engines(control=None, progress_callback=None):
+    """Restore Q3Elite/Engines directly from the CORE tree when it is not manifest-managed."""
+    engines = ROOT / "Q3Elite" / "Engines"
+    if engines.is_dir() and any(engines.iterdir()):
+        return 0
+
+    remote_dir = f"{pcloud.CORE}/Q3Elite/Engines"
+    print("[recovery] Q3Elite/Engines is missing; restoring it from pCloud CORE...")
+    entries = pcloud.list_folder(remote_dir, recursive=True)
+    if not entries:
+        raise RuntimeError(f"Remote Engines folder is empty or unavailable: {remote_dir}")
+
+    restored = 0
+    total = len(entries)
+    for i, entry in enumerate(entries, 1):
+        _cooperate(control)
+        rel = norm(entry["relative"])
+        dest = engines / Path(rel)
+        expected_size = int(entry.get("size", 0))
+        if dest.is_file() and (not expected_size or dest.stat().st_size == expected_size):
+            continue
+        info = pcloud.resolve_entry(entry)
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        print(f"[engine {i}/{total}] {rel}")
+        result = downloader(
+            info["url"], str(dest.parent), dest.name,
+            skip=True, control=control, progress_callback=progress_callback,
+            expected_size=expected_size or None, use_part_file=True, timeout_value=30,
+        )
+        if not result:
+            raise RuntimeError(f"Engine download failed/cancelled: {rel}")
+        restored += 1
+
+    if not engines.is_dir() or not any(engines.iterdir()):
+        raise RuntimeError("Q3Elite/Engines recovery finished, but the folder is still missing.")
+    print(f"[recovery] Engines ready. Restored files: {restored}")
+    return restored
 
 
 def install_basic(external_maps=False, music_playlist=False, autoexec_update=False,
@@ -504,6 +557,10 @@ def install_basic(external_maps=False, music_playlist=False, autoexec_update=Fal
 
     if external_maps:
         downloaded += _install_group(selected_map_files(files), control, progress_callback)
+
+    # Engines may intentionally be outside Manifest.json. A clean install must
+    # still restore them from the Basic payload/source before it can be committed.
+    _restore_required_engines(control, progress_callback)
 
     # Commit release metadata only after required payload is valid.
     atomic_json(LOCAL_MANIFEST, manifest)

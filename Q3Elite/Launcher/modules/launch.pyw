@@ -1,4 +1,5 @@
 import os
+import html as _html
 import sys
 import traceback
 import shutil
