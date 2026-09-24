@@ -18,7 +18,7 @@ def root():
     return Path(__file__).resolve().parents[3]
 ROOT=root()
 MANIFEST=ROOT/"Q3Elite"/"Manifest.json"
-PCLOUD_DCONF=ROOT/"Q3Elite"/"Launcher"/"download_confs"/"Quake 3 Elite pcloud.dconf"
+PCLOUD_DCONF=Path(__file__).resolve().parent/"download_confs"/"Quake 3 Elite pcloud.dconf"
 
 def load_pcloud_code():
     """Read pCloud public-link code from Quake 3 Elite pcloud.dconf."""
