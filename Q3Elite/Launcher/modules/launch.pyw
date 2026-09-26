@@ -10,6 +10,7 @@ import re
 import urllib.parse
 import ssl
 import urllib.request
+import http.cookiejar
 import zipfile
 import time
 import uuid
@@ -63,7 +64,8 @@ MAP_LEVELSHOTS_DIR = LAUNCHER_DIR / "servers" / "levelshots"
 MAP_DISCOVERED_LEVELSHOTS_DIR = LAUNCHER_DATA_DIR / "levelshots"
 MAP_UNKNOWN_LEVELSHOT = ASSETS_DIR / "server" / "levelshots" / "unknownmap.png"
 ONLINE_MAP_CACHE_DIR = LAUNCHER_DATA_DIR / "online_maps"
-DOWNLOADED_MAPS_DIR = GAME_ROOT / "baseq3" / "mods" / "osp" / "baseq3"
+ONLINE_MAPS_INSTALLED_FILE = LAUNCHER_DATA_DIR / "online_maps_installed.json"
+DOWNLOADED_MAPS_DIR = GAME_ROOT / "baseq3" / "mods" / "baseq3"
 WORLDSPAWN_BASE = "https://ws.q3df.org"
 LVLWORLD_BASE = "https://lvlworld.com"
 
@@ -4695,7 +4697,7 @@ def _worldspawn_row_to_item(row, cols):
         "author":val("Author"),
         "pak":filename,
         "size":size,
-        "gametype":gt or "DeFRaG",
+        "gametype":"",
         "released":val("Releasedate"),
         "detail_url":detail,
         "download_url":("https://dl.defrag.racing/downloads/maps/"+urllib.parse.quote(filename)) if filename else "",
@@ -4856,18 +4858,430 @@ class DefragThumbnailWorker(QtCore.QThread):
         self.ready.emit(self.row,_defrag_public_thumbnail(self.mapname))
 
 
+
+def _lvlworld_abs(url):
+    return urllib.parse.urljoin("https://lvlworld.com/", html.unescape(str(url or "")).strip())
+
+def _lvlworld_id_from_href(href):
+    m=re.search(r'/review/(?:id(?::|%3A))?(\d+)',str(href),re.I)
+    return m.group(1) if m else ""
+
+def _lvlworld_parse_map_links(page,limit=15):
+    found=[]; seen=set()
+    # Search and Latest use ordinary map links. Accept both id:123 and id%3A123.
+    pat=r'<a\b([^>]*?)href=["\']([^"\']*/review/(?:id(?::|%3A))?\d+[^"\']*)["\']([^>]*)>(.*?)</a>'
+    for m in re.finditer(pat,page,re.I|re.S):
+        href=html.unescape(m.group(2)); mid=_lvlworld_id_from_href(href)
+        if not mid or mid in seen: continue
+        title=_plain(m.group(4)).strip()
+        if not title or title.casefold() in {"review","download","comments","votes","media","overview"}:continue
+        tail=page[m.end():m.end()+700]
+        am=re.search(r'Author:\s*(?:<[^>]+>\s*)*([^<\r\n]+)',tail,re.I)
+        author=html.unescape(am.group(1)).strip() if am else ""
+        found.append({"source":"LvLWorld","lvl_id":mid,"name":title,"map":"",
+            "author":author,"pak":"","size":"","gametype":"","released":"",
+            "detail_url":f"https://lvlworld.com/review/id:{mid}",
+            "download_page":f"https://lvlworld.com/download/id:{mid}",
+            "download_url":"","levelshot_url":"","locked":False})
+        seen.add(mid)
+        if len(found)>=limit:break
+    return found
+
+def _online_map_key(item):
+    source=str(item.get("source") or "")
+    if source=="LvLWorld":
+        return "lvlworld:"+str(item.get("lvl_id") or item.get("map") or "").casefold()
+    return source.casefold()+":"+str(item.get("pak") or item.get("map") or "").casefold()
+
+def _online_installed_registry():
+    try:
+        data=json.loads(ONLINE_MAPS_INSTALLED_FILE.read_text(encoding="utf-8"))
+        return data if isinstance(data,dict) else {}
+    except Exception:
+        return {}
+
+def _online_installed_files(item):
+    names=_online_installed_registry().get(_online_map_key(item),[])
+    if not isinstance(names,list): return []
+    return [str(x) for x in names if (DOWNLOADED_MAPS_DIR/Path(str(x)).name).is_file()]
+
+def _remember_online_install(item,names):
+    data=_online_installed_registry()
+    data[_online_map_key(item)]=[Path(str(x)).name for x in names]
+    ONLINE_MAPS_INSTALLED_FILE.parent.mkdir(parents=True,exist_ok=True)
+    ONLINE_MAPS_INSTALLED_FILE.write_text(json.dumps(data,ensure_ascii=False,indent=2),encoding="utf-8")
+
+def _forget_online_install(item):
+    data=_online_installed_registry()
+    data.pop(_online_map_key(item),None)
+    ONLINE_MAPS_INSTALLED_FILE.parent.mkdir(parents=True,exist_ok=True)
+    ONLINE_MAPS_INSTALLED_FILE.write_text(json.dumps(data,ensure_ascii=False,indent=2),encoding="utf-8")
+
+
+def _lvlworld_filter_tokens(page):
+    # /filter embeds the same two security values pattern used by /download.
+    patterns=[
+        r'\btk\s*:\s*\[\s*["\']([0-9a-f]{16,})["\']\s*,\s*["\']([0-9a-f]{16,})["\']\s*\]',
+        r'\bs\s*:\s*["\']([0-9a-f]{16,})["\'][\s\S]{0,300}?\bh\s*:\s*["\']([0-9a-f]{16,})["\']',
+    ]
+    for pat in patterns:
+        m=re.search(pat,page,re.I)
+        if m:return m.group(1),m.group(2)
+    raise RuntimeError("LvLWorld /filter did not expose its request tokens.")
+
+def _lvlworld_filter_request(criteria, jar=None, opener=None):
+    import uuid
+    page_url="https://lvlworld.com/filter"
+    browser_ua="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/136.0 Safari/537.36"
+    if jar is None: jar=http.cookiejar.CookieJar()
+    if opener is None:
+        ctx=ssl._create_unverified_context()
+        opener=urllib.request.build_opener(
+            urllib.request.HTTPCookieProcessor(jar),
+            urllib.request.HTTPSHandler(context=ctx),
+        )
+    req=urllib.request.Request(page_url,headers={
+        "User-Agent":browser_ua,"Accept":"text/html,application/xhtml+xml",
+        "Accept-Language":"en-US,en;q=0.9",
+    })
+    with opener.open(req,timeout=20) as response:
+        page=response.read().decode(response.headers.get_content_charset() or "utf-8",errors="replace")
+    token_s,token_h=_lvlworld_filter_tokens(page)
+    boundary="----WebKitFormBoundary"+uuid.uuid4().hex[:16]
+    fields={"q":json.dumps(criteria,separators=(",",":")),"s":token_s,"h":token_h}
+    body=bytearray()
+    for key,value in fields.items():
+        body.extend(("--"+boundary+"\r\n").encode())
+        body.extend((f'Content-Disposition: form-data; name="{key}"\r\n\r\n').encode())
+        body.extend(str(value).encode("utf-8")); body.extend(b"\r\n")
+    body.extend(("--"+boundary+"--\r\n").encode())
+    req=urllib.request.Request(page_url,data=bytes(body),headers={
+        "User-Agent":browser_ua,"Accept":"*/*",
+        "Content-Type":"multipart/form-data; boundary="+boundary,
+        "Origin":"https://lvlworld.com","Referer":page_url,
+    },method="POST")
+    with opener.open(req,timeout=20) as response:
+        result=json.loads(response.read().decode("utf-8",errors="replace"))
+    if not isinstance(result,dict) or not result.get("success"):
+        raise RuntimeError("LvLWorld /filter rejected the map request.")
+    return result
+
+def _lvlworld_latest(limit=12):
+    # LvLWorld returns 50 rows per page. Fetch only as many pages as required,
+    # then expose 12/24/36/... rows to the UI.
+    limit=max(1,int(limit))
+    rows=[]; page_no=0; total=0
+    while len(rows)<limit:
+        result=_lvlworld_filter_request({
+            "m":"Show all","s":"Date","o":"A to Z / Latest / Highest","p":page_no
+        })
+        total=int(result.get("total") or total)
+        batch=result.get("data") or []
+        if not batch: break
+        for rec in batch:
+            if not isinstance(rec,dict): continue
+            mid=str(rec.get("i") or "").strip(); title=str(rec.get("t") or "").strip()
+            stem=str(rec.get("f") or "").strip(); author=str(rec.get("a") or "").strip()
+            if not mid or not title: continue
+            qstem=urllib.parse.quote(stem,safe="._-!()+") if stem else ""
+            rows.append({
+                "source":"LvLWorld","lvl_id":mid,"name":title,"map":stem,
+                "author":author,"pak":(stem+".zip") if stem else "",
+                "size":"","gametype":"","released":"",
+                "detail_url":f"https://lvlworld.com/review/id:{mid}",
+                "download_page":f"https://lvlworld.com/download/id:{mid}",
+                "download_url":"",
+                "levelshot_url":f"https://lvlworld.com/levels/{qstem}/{qstem}320x240.jpg" if qstem else "",
+                "locked":False,
+            })
+            if len(rows)>=limit: break
+        page_no+=1
+        if total and page_no * len(batch) >= total: break
+    return rows,{"total":total or len(rows)}
+
+def _lvlworld_search(query,limit=12):
+    q=str(query or "").strip()
+    if not q:
+        return [],{"total":0}
+
+    # LvLWorld's /search/<query> page contains the actual search result cards in
+    # <div id="srchResults">. Do not locally substring-filter these results:
+    # LvLWorld itself ranks fuzzy/related matches (so valid results do not
+    # necessarily contain the literal query).
+    url="https://lvlworld.com/search/"+urllib.parse.quote(q,safe="")
+    page=_net_text(url)
+
+    box=re.search(
+        r'<div\b[^>]*\bid=["\']srchResults["\'][^>]*>([\s\S]*?)(?=<div\b[^>]*\bid=["\']srchHist["\']|</div>\s*</div>\s*$)',
+        page,re.I
+    )
+    fragment=box.group(1) if box else page
+
+    rows=[]; seen=set()
+    pat=(
+        r'<a\b([^>]*?)href=["\']([^"\']*/review/id(?::|%3A)\d+[^"\']*)["\']'
+        r'([^>]*)>([\s\S]*?)</a>'
+    )
+    for m in re.finditer(pat,fragment,re.I):
+        attrs=(m.group(1) or "")+" "+(m.group(3) or "")
+        href=html.unescape(m.group(2))
+        mid=_lvlworld_id_from_href(href)
+        if not mid or mid in seen:
+            continue
+
+        title_attr=re.search(r'\btitle=["\']([^"\']+)["\']',attrs,re.I)
+        title_text=html.unescape(title_attr.group(1)).strip() if title_attr else ""
+        name=""; author=""
+        if title_text:
+            parts=re.split(r'\s+by\s+',title_text,maxsplit=1,flags=re.I)
+            name=html.unescape(parts[0]).strip()
+            if len(parts)>1:
+                author=html.unescape(parts[1]).strip()
+
+        inner=m.group(4)
+        if not name:
+            divm=re.search(r'<div[^>]*>([\s\S]*?)</div>',inner,re.I)
+            if divm:
+                raw=divm.group(1)
+                name=_plain(re.split(r'<br\s*/?>',raw,maxsplit=1,flags=re.I)[0]).strip()
+                im=re.search(r'<i[^>]*>([\s\S]*?)</i>',raw,re.I)
+                if im:
+                    author=_plain(im.group(1)).strip()
+
+        imgm=re.search(r'<img\b[^>]*\bsrc=["\']([^"\']+)["\']',inner,re.I)
+        shot=urllib.parse.urljoin(url,html.unescape(imgm.group(1))) if imgm else ""
+
+        # The image path exposes the LvLWorld file/map slug:
+        # /levels/overkill/overkillsm.jpg -> overkill
+        stem=""
+        if shot:
+            pm=re.search(r'/levels/([^/]+)/',urllib.parse.urlparse(shot).path,re.I)
+            if pm:
+                stem=urllib.parse.unquote(pm.group(1))
+
+        rows.append({
+            "source":"LvLWorld",
+            "lvl_id":mid,
+            "name":name or f"LvLWorld map {mid}",
+            "map":stem,
+            "author":author,
+            "pak":"",
+            "size":"",
+            "gametype":"",
+            "released":"",
+            "detail_url":f"https://lvlworld.com/review/id:{mid}",
+            "download_page":f"https://lvlworld.com/download/id:{mid}",
+            "download_url":"",
+            "levelshot_url":shot,
+            "locked":False,
+        })
+        seen.add(mid)
+        if len(rows)>=max(1,int(limit)):
+            break
+
+    return rows,{"total":len(rows)}
+
+
+def _lvlworld_resolve_download(item):
+    """
+    Reproduce LvLWorld's own download-page JavaScript:
+      GET /download/id:<id>
+      -> z = ZIP basename and dl.tk = [s, h]
+      POST /dload with z,s,h,d=lvl
+      -> {success,l,p,t,z}
+      -> <l>/<p>/<z>?<t>
+    Keep one cookie jar/opener for both requests because tokens may be session-bound.
+    """
+    page_url=item.get("download_page") or ("https://lvlworld.com/download/id:"+str(item.get("lvl_id") or ""))
+    jar=http.cookiejar.CookieJar()
+    ctx=ssl._create_unverified_context()
+    opener=urllib.request.build_opener(
+        urllib.request.HTTPCookieProcessor(jar),
+        urllib.request.HTTPSHandler(context=ctx),
+    )
+    headers={
+        "User-Agent":"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/136.0 Safari/537.36",
+        "Accept":"text/html,application/xhtml+xml,application/json,*/*",
+        "Referer":str(page_url),
+    }
+    req=urllib.request.Request(str(page_url),headers=headers)
+    with opener.open(req,timeout=20) as response:
+        page=response.read().decode(response.headers.get_content_charset() or "utf-8",errors="replace")
+
+    zm=re.search(r'f\.append\(["\']z["\']\s*,\s*["\']([^"\']+)["\']\)',page,re.I)
+    if not zm:
+        # Fallback to the visible metadata line: foo.zip, 2.24 MiB
+        plain=_plain(page)
+        fm=re.search(r'([A-Za-z0-9_.!+()\- ]+)\.zip\b',plain,re.I)
+        if not fm: raise RuntimeError("LvLWorld page did not expose the ZIP name.")
+        zip_base=fm.group(1).strip()
+    else:
+        zip_base=html.unescape(zm.group(1)).strip()
+
+    tm=re.search(r'\btk\s*:\s*\[\s*["\']([0-9a-f]+)["\']\s*,\s*["\']([0-9a-f]+)["\']\s*\]',page,re.I)
+    if not tm: raise RuntimeError("LvLWorld page did not expose download tokens.")
+    token_s,token_h=tm.group(1),tm.group(2)
+
+    import uuid
+    boundary="----WebKitFormBoundary"+uuid.uuid4().hex[:16]
+    body=bytearray()
+    for key,value in {"z":zip_base,"s":token_s,"h":token_h,"d":"lvl"}.items():
+        body.extend(("--"+boundary+"\r\n").encode())
+        body.extend((f'Content-Disposition: form-data; name="{key}"\r\n\r\n').encode())
+        body.extend(str(value).encode("utf-8"))
+        body.extend(b"\r\n")
+    body.extend(("--"+boundary+"--\r\n").encode())
+    req=urllib.request.Request(
+        "https://lvlworld.com/dload",
+        data=bytes(body),
+        headers={
+            "User-Agent":headers["User-Agent"],
+            "Accept":"*/*",
+            "Content-Type":"multipart/form-data; boundary="+boundary,
+            "Origin":"https://lvlworld.com",
+            "Referer":str(page_url),
+        },
+        method="POST",
+    )
+    with opener.open(req,timeout=20) as response:
+        raw=response.read().decode("utf-8",errors="replace")
+    try:
+        result=json.loads(raw)
+    except Exception:
+        raise RuntimeError("LvLWorld returned an invalid download-token response.")
+    if not isinstance(result,dict) or not result.get("success"):
+        raise RuntimeError("LvLWorld was unable to issue a download token.")
+
+    base=str(result.get("l") or "").rstrip("/")
+    sub=str(result.get("p") or "").strip("/")
+    filename=Path(str(result.get("z") or (zip_base+".zip")).replace("\\","/")).name
+    token=str(result.get("t") or "").strip()
+    if not base or not filename or not token:
+        raise RuntimeError("LvLWorld returned incomplete download information.")
+    final=base+"/"+(sub+"/" if sub else "")+urllib.parse.quote(filename,safe="._-!()+") + "?" + urllib.parse.quote(token,safe="")
+    return final,filename
+
+
+
+def _lvlworld_review_metadata(lvl_id):
+    url="https://lvlworld.com/review/id:"+str(lvl_id)
+    req=urllib.request.Request(url,headers={
+        "User-Agent":"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/136.0 Safari/537.36",
+        "Accept":"text/html,application/xhtml+xml",
+        "Referer":"https://lvlworld.com/filter",
+    })
+    ctx=ssl._create_unverified_context()
+    with urllib.request.urlopen(req,timeout=20,context=ctx) as response:
+        page=response.read().decode(response.headers.get_content_charset() or "utf-8",errors="replace")
+    plain=_plain(page)
+
+    size=""
+    m=re.search(r'\bFile:\s*[^,\n]+,\s*([0-9]+(?:\.[0-9]+)?\s*(?:KiB|MiB|GiB|KB|MB|GB))',plain,re.I)
+    if m:size=m.group(1).replace("\xa0"," ")
+
+    released=""
+    m=re.search(r'\bAdded:\s*([0-9]{1,2}\s+[A-Za-z]{3,9}\s+[0-9]{4})',plain,re.I)
+    if m:released=m.group(1)
+
+    # The compact heading before Review contains LvLWorld's supported modes,
+    # e.g. "2-8 playersDMTeam DM".
+    head=plain.split("Review",1)[0][:1200]
+    modes=[]
+    checks=(("Team DM",r'\bTeam\s*DM\b'),("CTF",r'\bCTF\b'),
+            ("Tourney",r'\bTourney\b'),("DM",r'(?<!Team )\bDM\b'))
+    for label,pat in checks:
+        if re.search(pat,head,re.I):modes.append(label)
+    gametype=" / ".join(modes)
+
+    levelshot=""
+    m=re.search(r'<img[^>]+src=["\']([^"\']+320x240\.(?:jpg|jpeg|png|webp))["\']',page,re.I)
+    if m:levelshot=urllib.parse.urljoin(url,html.unescape(m.group(1)))
+
+    pak=""
+    try:
+        durl="https://lvlworld.com/download/id:"+str(lvl_id)
+        dreq=urllib.request.Request(durl,headers={
+            "User-Agent":"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/136.0 Safari/537.36",
+            "Accept":"text/html,application/xhtml+xml","Referer":url,
+        })
+        with urllib.request.urlopen(dreq,timeout=20,context=ctx) as response:
+            dpage=response.read().decode(response.headers.get_content_charset() or "utf-8",errors="replace")
+        zm=re.search(r'f\.append\(["\']z["\']\s*,\s*["\']([^"\']+)["\']\)',dpage,re.I)
+        if zm:pak=html.unescape(zm.group(1)).strip()+".zip"
+    except Exception:
+        pass
+    return {"size":size,"released":released,"gametype":gametype,"pak":pak,"levelshot_url":levelshot}
+
+class LvLWorldMetadataWorker(QtCore.QThread):
+    ready=pyqtSignal(int,object,int)
+    def __init__(self,row,lvl_id,generation,parent=None):
+        super().__init__(parent); self.row=row; self.lvl_id=lvl_id; self.generation=generation
+    def run(self):
+        try:self.ready.emit(self.row,_lvlworld_review_metadata(self.lvl_id),self.generation)
+        except Exception as error:
+            print(f"[online maps] LvLWorld metadata {self.lvl_id}: {type(error).__name__}: {error}")
+            self.ready.emit(self.row,{},self.generation)
+
+
+class LvLWorldImageWorker(QtCore.QThread):
+    ready=pyqtSignal(int,object,int)
+    def __init__(self,row,url,generation,parent=None):
+        super().__init__(parent); self.row=row; self.url=url; self.generation=generation
+    def run(self):
+        try:
+            req=urllib.request.Request(self.url,headers={
+                "User-Agent":"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/136.0 Safari/537.36",
+                "Accept":"image/avif,image/webp,image/apng,image/*,*/*;q=0.8",
+                "Referer":"https://lvlworld.com/filter",
+            })
+            ctx=ssl._create_unverified_context()
+            with urllib.request.urlopen(req,timeout=20,context=ctx) as response:
+                self.ready.emit(self.row,response.read(),self.generation)
+        except Exception as error:
+            print(f"[online maps] LvLWorld levelshot: {self.url} -> {type(error).__name__}: {error}")
+            self.ready.emit(self.row,b"",self.generation)
+
+
+class SourceFaviconWorker(QtCore.QThread):
+    ready=pyqtSignal(str,object)
+    def __init__(self,source,parent=None):
+        super().__init__(parent); self.source=source
+    def run(self):
+        url="https://lvlworld.com/favicon.ico" if self.source=="LvLWorld" else "https://ws.q3df.org/favicon.ico"
+        try:
+            req=urllib.request.Request(url,headers={"User-Agent":"Mozilla/5.0","Accept":"image/*,*/*;q=0.8"})
+            ctx=ssl._create_unverified_context() if self.source=="LvLWorld" else ssl.create_default_context()
+            with urllib.request.urlopen(req,timeout=15,context=ctx) as response:
+                self.ready.emit(self.source,response.read())
+        except Exception as error:
+            print(f"[online maps] favicon {self.source}: {type(error).__name__}: {error}")
+            self.ready.emit(self.source,b"")
+
+
 class OnlineMapsWorker(QtCore.QThread):
     ready = pyqtSignal(object, str, object)
     failed = pyqtSignal(str)
-    def __init__(self, mode, query="", page=1, parent=None):
-        super().__init__(parent); self.mode=mode; self.query=query; self.page=page
+    def __init__(self, mode, query="", page=1, parent=None, limit=12):
+        super().__init__(parent); self.mode=mode; self.query=query; self.page=page; self.limit=limit
     def run(self):
         try:
             if self.mode=="search":
-                data,meta=_worldspawn_index_search(self.query,50,False)
+                ws,wm=_worldspawn_index_search(self.query,15,False)
+                try: lv,lm=_lvlworld_search(self.query,12)
+                except Exception as error:
+                    print(f"[online maps] LvLWorld search: {type(error).__name__}: {error}")
+                    lv,lm=[],{"total":0}
+                # Interleave sources so neither site monopolizes the first screen.
+                data=[]
+                for i in range(max(len(ws),len(lv))):
+                    if i<len(lv):data.append(lv[i])
+                    if i<len(ws):data.append(ws[i])
+                self.ready.emit(data,"LvLWorld + Worldspawn",{
+                    "total":int((lm or {}).get("total") or len(lv))+int((wm or {}).get("total") or len(ws))
+                })
             else:
-                data,meta=_worldspawn_index_search("",50,True)
-            self.ready.emit(data,"Worldspawn Index",meta)
+                data,meta=_lvlworld_latest(self.limit)
+                self.ready.emit(data,"LvLWorld",meta)
         except Exception as error:
             self.failed.emit(str(error))
 
@@ -4936,15 +5350,19 @@ class OnlineMapDownloadWorker(QtCore.QThread):
     def run(self):
         try:
             url=self.item.get("download_url","")
+            resolved_name=""
+            if self.item.get("source")=="LvLWorld":
+                url,resolved_name=_lvlworld_resolve_download(self.item)
             if not url: raise RuntimeError("No downloadable package is exposed by this source.")
             DOWNLOADED_MAPS_DIR.mkdir(parents=True,exist_ok=True); TEMP_DIR.mkdir(parents=True,exist_ok=True)
-            name=Path(str(self.item.get("pak") or Path(urllib.parse.urlparse(url).path).name or "online_map.pk3").replace("\\","/")).name
+            name=Path(str(resolved_name or self.item.get("pak") or Path(urllib.parse.urlparse(url).path).name or "online_map.pk3").replace("\\","/")).name
             if not name.casefold().endswith((".pk3", ".zip")):
                 name = (self.item.get("map") or "online_map") + ".pk3"
             tmp=TEMP_DIR/("online_"+name)
             host=(urllib.parse.urlparse(url).hostname or "").casefold()
             context=ssl._create_unverified_context() if (host=="lvlworld.com" or host.endswith(".lvlworld.com")) else None
             response_name = name
+            keep_resolved_name=bool(resolved_name)
 
             req=urllib.request.Request(url,headers={"User-Agent":"Quake3EliteLauncher/0.1"})
             response=urllib.request.urlopen(req,timeout=30,context=context)
@@ -4952,10 +5370,10 @@ class OnlineMapDownloadWorker(QtCore.QThread):
             with response as r,tmp.open("wb") as f:
                 cd = r.headers.get("Content-Disposition", "")
                 m = re.search(r'filename\*?=(?:UTF-8\'\')?["\']?([^;"\']+)', cd, re.I)
-                if m:
+                if m and not keep_resolved_name:
                     response_name = Path(urllib.parse.unquote(m.group(1).strip())).name
                 final_url_name = Path(urllib.parse.urlparse(r.geturl()).path).name
-                if final_url_name.casefold().endswith((".pk3", ".zip")):
+                if not keep_resolved_name and final_url_name.casefold().endswith((".pk3", ".zip")):
                     response_name = urllib.parse.unquote(final_url_name)
                 total=int(r.headers.get("Content-Length","0") or 0); done=0
                 while True:
@@ -4972,6 +5390,7 @@ class OnlineMapDownloadWorker(QtCore.QThread):
                 if target.exists():
                     target.unlink()
                 tmp.replace(target)
+                _remember_online_install(self.item,[target.name])
                 self.ready.emit(target.name)
             elif response_name.casefold().endswith(".zip"):
                 installed=[]
@@ -4986,6 +5405,7 @@ class OnlineMapDownloadWorker(QtCore.QThread):
                 tmp.unlink(missing_ok=True)
                 if not installed:
                     raise RuntimeError("ZIP archive contains no PK3.")
+                _remember_online_install(self.item,installed)
                 self.ready.emit(", ".join(installed))
             else:
                 raise RuntimeError("Download did not return a PK3 or ZIP package.")
@@ -5040,6 +5460,7 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
         QtWidgets.QMainWindow.__init__(self)
         self._mapNetwork = QtNetwork.QNetworkAccessManager(self)
         self._worldspawnShotWorkers = []
+        self._onlineThumbGeneration = 0
 
         self.setObjectName("launcherWindow")
         self.setWindowTitle("Quake 3 Elite Launcher")
@@ -7535,14 +7956,16 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
         ll.addWidget(self.mapsTable,1); self.mapsStack.addWidget(local)
 
         online=QtWidgets.QWidget(); ol=QtWidgets.QVBoxLayout(online); ol.setContentsMargins(0,0,0,0); ol.setSpacing(8)
-        self.onlineMapsSearch=QtWidgets.QLineEdit(); self.onlineMapsSearch.setObjectName("mapsSearch"); self.onlineMapsSearch.setPlaceholderText("Search Worldspawn map index…   Ctrl+F"); self.onlineMapsSearch.setClearButtonEnabled(True); ol.addWidget(self.onlineMapsSearch)
-        self.onlineMapsHeading=QtWidgets.QLabel("LATEST MAPS — Worldspawn Index"); self.onlineMapsHeading.setObjectName("onlineMapsHeading"); ol.addWidget(self.onlineMapsHeading)
-        self.onlineMapsTable=QtWidgets.QTableWidget(0,7); self.onlineMapsTable.setObjectName("mapsTable"); self.onlineMapsTable.setHorizontalHeaderLabels(["LEVELSHOT","MAP","PAK / AUTHOR","SIZE","GAMETYPE","RELEASED",""])
-        self.onlineMapsTable.verticalHeader().setVisible(False); self.onlineMapsTable.setShowGrid(False); self.onlineMapsTable.setEditTriggers(QtWidgets.QAbstractItemView.EditTrigger.NoEditTriggers); self.onlineMapsTable.setIconSize(QtCore.QSize(144,81))
-        h=self.onlineMapsTable.horizontalHeader(); h.setSectionResizeMode(0,QtWidgets.QHeaderView.ResizeMode.Fixed); h.resizeSection(0,164); h.setSectionResizeMode(1,QtWidgets.QHeaderView.ResizeMode.Stretch); h.setSectionResizeMode(2,QtWidgets.QHeaderView.ResizeMode.Stretch); h.setSectionResizeMode(3,QtWidgets.QHeaderView.ResizeMode.Fixed); h.resizeSection(3,82); h.setSectionResizeMode(4,QtWidgets.QHeaderView.ResizeMode.ResizeToContents); h.setSectionResizeMode(5,QtWidgets.QHeaderView.ResizeMode.Fixed); h.resizeSection(5,105); h.setSectionResizeMode(6,QtWidgets.QHeaderView.ResizeMode.Fixed); h.resizeSection(6,112)
-        ol.addWidget(self.onlineMapsTable,1); self.mapsStack.addWidget(online)
+        self.onlineMapsSearch=QtWidgets.QLineEdit(); self.onlineMapsSearch.setObjectName("mapsSearch"); self.onlineMapsSearch.setPlaceholderText("Search LvLWorld + Worldspawn maps…   Ctrl+F"); self.onlineMapsSearch.setClearButtonEnabled(True); ol.addWidget(self.onlineMapsSearch)
+        self.onlineMapsHeading=QtWidgets.QLabel("LATEST MAPS — LvLWorld"); self.onlineMapsHeading.setObjectName("onlineMapsHeading"); ol.addWidget(self.onlineMapsHeading)
+        self.onlineMapsTable=QtWidgets.QTableWidget(0,8); self.onlineMapsTable.setObjectName("mapsTable"); self.onlineMapsTable.setHorizontalHeaderLabels(["LEVELSHOT","MAP","PAKNAME","SIZE","GAMETYPE","RELEASED","SOURCE",""])
+        self.onlineMapsTable.verticalHeader().setVisible(False); self.onlineMapsTable.setShowGrid(False); self.onlineMapsTable.setSelectionBehavior(QtWidgets.QAbstractItemView.SelectionBehavior.SelectRows); self.onlineMapsTable.setSelectionMode(QtWidgets.QAbstractItemView.SelectionMode.SingleSelection); self.onlineMapsTable.setEditTriggers(QtWidgets.QAbstractItemView.EditTrigger.NoEditTriggers); self.onlineMapsTable.setIconSize(QtCore.QSize(144,81)); self.onlineMapsTable.setMouseTracking(True); self.onlineMapsTable.viewport().setMouseTracking(True); self.onlineMapsTable.setItemDelegate(MapRowHoverDelegate(self.onlineMapsTable))
+        h=self.onlineMapsTable.horizontalHeader(); h.setSectionResizeMode(0,QtWidgets.QHeaderView.ResizeMode.Fixed); h.resizeSection(0,164); h.setSectionResizeMode(1,QtWidgets.QHeaderView.ResizeMode.Stretch); h.setSectionResizeMode(2,QtWidgets.QHeaderView.ResizeMode.Stretch); h.setSectionResizeMode(3,QtWidgets.QHeaderView.ResizeMode.Fixed); h.resizeSection(3,82); h.setSectionResizeMode(4,QtWidgets.QHeaderView.ResizeMode.ResizeToContents); h.setSectionResizeMode(5,QtWidgets.QHeaderView.ResizeMode.Fixed); h.resizeSection(5,105); h.setSectionResizeMode(6,QtWidgets.QHeaderView.ResizeMode.Fixed); h.resizeSection(6,74); h.setSectionResizeMode(7,QtWidgets.QHeaderView.ResizeMode.Fixed); h.resizeSection(7,112)
+        ol.addWidget(self.onlineMapsTable,1)
+        self.onlineLoadMore=GlowButton("LOAD MORE"); self.onlineLoadMore.setObjectName("mapToolbarButton"); self.onlineLoadMore.clicked.connect(self._load_more_online_maps); ol.addWidget(self.onlineLoadMore,0,QtCore.Qt.AlignmentFlag.AlignHCenter)
+        self.mapsStack.addWidget(online)
 
-        self.localMaps=[]; self.mapCatalogWorker=None; self.onlineMapsWorker=None; self.onlineDownloadWorkers=[]; self.mapsGametypeSort=0; self.mapsLocationFilter="All"; self.mapsMode="local"; self.onlineLatestLoaded=False; self.onlineSearchSerial=0
+        self.localMaps=[]; self.mapCatalogWorker=None; self.onlineMapsWorker=None; self.onlineDownloadWorkers=[]; self.mapsGametypeSort=0; self.mapsLocationFilter="All"; self.mapsMode="local"; self.onlineLatestLoaded=False; self.onlineSearchSerial=0; self.onlineLatestLimit=12; self._sourceFavicons={}; self._sourceFaviconWorkers=[]
         self.onlineSearchTimer=QtCore.QTimer(self); self.onlineSearchTimer.setSingleShot(True); self.onlineSearchTimer.setInterval(450); self.onlineSearchTimer.timeout.connect(self._run_online_search); self.onlineMapsSearch.textChanged.connect(self._online_search_changed)
         self.mapShortcuts=[]
         def shortcut(key,fn):
@@ -7561,20 +7984,28 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
 
     def _online_search_changed(self,text):
         q=text.strip(); self.onlineSearchTimer.stop()
-        if not q:self.onlineMapsHeading.setText("LATEST MAPS — Worldspawn Index"); self._start_online_worker("latest","")
-        else:self.onlineMapsHeading.setText("SEARCH RESULTS — Worldspawn Index"); self.onlineMapsTable.setRowCount(0); self.onlineSearchTimer.start()
+        self._onlineThumbGeneration += 1
+        if not q:
+            self.onlineMapsHeading.setText("LATEST MAPS — LvLWorld"); self.onlineLatestLimit=12; self.onlineLoadMore.show(); self._start_online_worker("latest","")
+        else:
+            self.onlineMapsHeading.setText("SEARCH RESULTS — LvLWorld + Worldspawn"); self.onlineLoadMore.hide(); self.onlineMapsTable.setRowCount(0); self.onlineSearchTimer.start()
 
     def _run_online_search(self):
         q=self.onlineMapsSearch.text().strip()
         if q:self._start_online_worker("search",q)
 
-    def _start_online_worker(self,mode,q):
-        self.onlineSearchSerial+=1; serial=self.onlineSearchSerial; self.mapsStatus.setText("Searching Worldspawn index…" if mode=="search" else "Loading Worldspawn map index…")
-        w = OnlineMapsWorker(mode, q, 1, self)
+    def _start_online_worker(self,mode,q,append=False):
+        self.onlineSearchSerial+=1; serial=self.onlineSearchSerial; self.mapsStatus.setText("Searching LvLWorld + Worldspawn…" if mode=="search" else "Loading latest LvLWorld maps…")
+        w = OnlineMapsWorker(mode, q, 1, self, self.onlineLatestLimit)
         self.onlineMapsWorker = w
-        w.ready.connect(lambda data, src, meta, n=serial: self._online_ready(n, data, src, meta))
+        w.ready.connect(lambda data, src, meta, n=serial, a=append: self._online_ready(n, data, src, meta, a))
         w.failed.connect(lambda e, n=serial: self._online_failed(n, e))
         w.start()
+
+    def _load_more_online_maps(self):
+        if self.onlineMapsSearch.text().strip():return
+        self.onlineLatestLimit += 12
+        self._start_online_worker("latest","",append=True)
 
     def _online_failed(self, serial, error):
         if serial != self.onlineSearchSerial:
@@ -7586,37 +8017,146 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
         self.mapsStatus.setText(f"Online error: {short}")
         self.onlineMapsTable.setRowCount(0)
 
-    def _online_ready(self, serial, items, source, meta=None):
+    def _online_ready(self, serial, items, source, meta=None, append=False):
         if serial != self.onlineSearchSerial: return
-        if source == "Worldspawn Index": self.onlineLatestLoaded = True
+        # Do not invalidate already loaded thumbnail workers when merely appending.
+        if not append:self._onlineThumbGeneration += 1
+        thumb_generation = self._onlineThumbGeneration
+        if source in ("Worldspawn Index","LvLWorld"): self.onlineLatestLoaded = True
         total = int((meta or {}).get("total") or len(items))
-        self.mapsStatus.setText(f"{len(items)} shown • {total} indexed map(s) • {source}" if items else f"No results • {source}")
-        t=self.onlineMapsTable; t.setRowCount(0)
+        t=self.onlineMapsTable
+        scroll_value=t.verticalScrollBar().value()
+        if append:
+            existing={_online_map_key(t.item(row,0).data(QtCore.Qt.ItemDataRole.UserRole))
+                      for row in range(t.rowCount()) if t.item(row,0) is not None}
+            items=[x for x in items if _online_map_key(x) not in existing]
+        else:
+            t.setRowCount(0)
         for data in items:
+            row_source=str(data.get("source") or "")
             r=t.rowCount(); t.insertRow(r); t.setRowHeight(r,82)
             shot=QtWidgets.QTableWidgetItem(); shot.setData(QtCore.Qt.ItemDataRole.UserRole,data); t.setItem(r,0,shot)
-            for col,val in ((1,data.get("name","")),(2,data.get("pak") or data.get("author") or "—"),(3,data.get("size") or "—"),(4,data.get("gametype") or "—"),(5,data.get("released") or "—")):
+            for col,val in ((1,data.get("name","")),(2,data.get("pak") or "—"),(3,data.get("size") or "—"),(4,data.get("gametype") or "—"),(5,data.get("released") or "—")):
                 t.setItem(r,col,QtWidgets.QTableWidgetItem(str(val)))
-            button=QtWidgets.QPushButton("LOCKED" if data.get("locked") else "DOWNLOAD")
-            button.setObjectName("mapDownloadButton"); button.setEnabled(not data.get("locked"))
-            button.clicked.connect(lambda checked=False,x=dict(data):self.download_online_map(x)); t.setCellWidget(r,6,button)
+            source_item=QtWidgets.QTableWidgetItem("")
+            source_item.setTextAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
+            source_item.setData(QtCore.Qt.ItemDataRole.UserRole,str(data.get("source") or ""))
+            source_item.setToolTip(str(data.get("source") or ""))
+            t.setItem(r,6,source_item)
+            self._ensure_source_favicon(str(data.get("source") or ""))
+            installed=_online_installed_files(data)
+            button=QtWidgets.QPushButton("DELETE" if installed else ("LOCKED" if data.get("locked") else "DOWNLOAD"))
+            button.setObjectName("mapDeleteButton" if installed else "mapDownloadButton")
+            button.setEnabled(bool(installed) or not data.get("locked"))
+            if installed:
+                button.clicked.connect(lambda checked=False,x=dict(data):self.delete_online_map(x))
+            else:
+                button.clicked.connect(lambda checked=False,x=dict(data):self.download_online_map(x))
+            t.setCellWidget(r,7,button)
+            if row_source=="LvLWorld" and data.get("lvl_id"):
+                meta_worker=LvLWorldMetadataWorker(r,str(data.get("lvl_id")),thumb_generation,self)
+                self._worldspawnShotWorkers.append(meta_worker)
+                meta_worker.ready.connect(self._lvlworld_metadata_ready)
+                previous_meta=None
+                for candidate in reversed(self._worldspawnShotWorkers[:-1]):
+                    if isinstance(candidate,LvLWorldMetadataWorker) and candidate.isRunning():
+                        previous_meta=candidate; break
+                if previous_meta is not None: previous_meta.finished.connect(meta_worker.start)
+                else: meta_worker.start()
+                meta_worker.finished.connect(lambda w=meta_worker:self._worldspawn_shot_worker_done(w))
             thumb=str(data.get("levelshot_url") or "")
-            if thumb and source=="Worldspawn Index":
+            if thumb and row_source=="Worldspawn Index":
                 worker=WorldspawnImageWorker(r,thumb,self)
                 self._worldspawnShotWorkers.append(worker)
                 worker.ready.connect(self._worldspawn_levelshot_url_ready)
                 worker.finished.connect(lambda w=worker:self._worldspawn_shot_worker_done(w))
                 worker.start()
+            elif thumb and row_source=="LvLWorld":
+                worker=LvLWorldImageWorker(r,thumb,thumb_generation,self)
+                self._worldspawnShotWorkers.append(worker)
+                worker.ready.connect(self._lvlworld_levelshot_ready)
+                # Start LvLWorld images one-by-one: the server was refusing
+                # simultaneous Qt HTTP/2 streams.
+                previous=None
+                for candidate in reversed(self._worldspawnShotWorkers[:-1]):
+                    if isinstance(candidate,LvLWorldImageWorker) and candidate.isRunning():
+                        previous=candidate; break
+                if previous is not None:
+                    previous.finished.connect(worker.start)
+                else:
+                    worker.start()
+                worker.finished.connect(lambda w=worker:self._worldspawn_shot_worker_done(w))
             elif thumb:
                 reply=self._mapNetwork.get(QtNetwork.QNetworkRequest(QtCore.QUrl(thumb)))
                 reply.setProperty("online_map_row",r)
+                reply.setProperty("online_map_generation",thumb_generation)
                 reply.finished.connect(lambda rep=reply:self._online_levelshot_ready(rep))
-            elif source=="Worldspawn Index" and data.get("defrag_map_name"):
+            elif row_source=="Worldspawn Index" and data.get("defrag_map_name"):
                 worker=DefragThumbnailWorker(r,str(data.get("defrag_map_name")),self)
+                worker.resultGeneration=thumb_generation
                 self._worldspawnShotWorkers.append(worker)
-                worker.ready.connect(self._defrag_thumbnail_url_ready)
+                worker.ready.connect(lambda row,url,w=worker:self._defrag_thumbnail_url_ready(row,url,getattr(w,"resultGeneration",-1)))
                 worker.finished.connect(lambda w=worker:self._worldspawn_shot_worker_done(w))
                 worker.start()
+        shown=t.rowCount()
+        self.mapsStatus.setText(f"{shown} shown • {total} indexed map(s) • {source}" if shown else f"No results • {source}")
+        if hasattr(self,"onlineLoadMore"):
+            self.onlineLoadMore.setVisible(not self.onlineMapsSearch.text().strip() and shown<total)
+        if append:
+            t.verticalScrollBar().setValue(scroll_value)
+
+    def _ensure_source_favicon(self,source):
+        if source not in ("LvLWorld","Worldspawn Index"):return
+        if source in self._sourceFavicons:
+            self._apply_source_favicon(source); return
+        if any(getattr(w,"source","")==source for w in self._sourceFaviconWorkers):return
+        w=SourceFaviconWorker(source,self); self._sourceFaviconWorkers.append(w)
+        w.ready.connect(self._source_favicon_ready)
+        w.finished.connect(lambda x=w:self._source_favicon_done(x))
+        w.start()
+
+    def _source_favicon_ready(self,source,data):
+        pix=QtGui.QPixmap()
+        if data and pix.loadFromData(bytes(data)):
+            self._sourceFavicons[source]=QtGui.QIcon(pix)
+            self._apply_source_favicon(source)
+
+    def _apply_source_favicon(self,source):
+        icon=self._sourceFavicons.get(source)
+        if icon is None:return
+        for row in range(self.onlineMapsTable.rowCount()):
+            item=self.onlineMapsTable.item(row,6)
+            if item is not None and str(item.data(QtCore.Qt.ItemDataRole.UserRole) or "")==source:
+                item.setIcon(icon)
+
+    def _source_favicon_done(self,w):
+        try:self._sourceFaviconWorkers.remove(w)
+        except ValueError:pass
+        w.deleteLater()
+
+    def _lvlworld_metadata_ready(self,row,meta,generation):
+        if generation != self._onlineThumbGeneration:return
+        if not isinstance(meta,dict) or not (0 <= row < self.onlineMapsTable.rowCount()):return
+        for col,key in ((2,"pak"),(3,"size"),(4,"gametype"),(5,"released")):
+            value=str(meta.get(key) or "").strip()
+            if value:
+                item=self.onlineMapsTable.item(row,col)
+                if item is not None:item.setText(value)
+        shot=str(meta.get("levelshot_url") or "").strip()
+        if shot:
+            worker=LvLWorldImageWorker(row,shot,generation,self)
+            self._worldspawnShotWorkers.append(worker)
+            worker.ready.connect(self._lvlworld_levelshot_ready)
+            worker.finished.connect(lambda w=worker:self._worldspawn_shot_worker_done(w))
+            worker.start()
+
+    def _lvlworld_levelshot_ready(self,row,data,generation):
+        if generation != self._onlineThumbGeneration:return
+        if not data or not (0 <= row < self.onlineMapsTable.rowCount()):return
+        pix=QtGui.QPixmap()
+        if not pix.loadFromData(bytes(data)):return
+        item=self.onlineMapsTable.item(row,0)
+        if item is not None:item.setIcon(QtGui.QIcon(pix))
 
     def _worldspawn_shot_worker_done(self, worker):
         try:self._worldspawnShotWorkers.remove(worker)
@@ -7631,15 +8171,19 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
         if label:
             label.setPixmap(pix.scaled(150,80,QtCore.Qt.AspectRatioMode.KeepAspectRatioByExpanding,QtCore.Qt.TransformationMode.SmoothTransformation))
 
-    def _defrag_thumbnail_url_ready(self,row,url):
+    def _defrag_thumbnail_url_ready(self,row,url,generation=None):
+        if generation is not None and generation != self._onlineThumbGeneration:return
         if not url or not (0 <= row < self.onlineMapsTable.rowCount()):return
         req=QtNetwork.QNetworkRequest(QtCore.QUrl(url))
         reply=self._mapNetwork.get(req)
         reply.setProperty("online_map_row",row)
+        reply.setProperty("online_map_generation",self._onlineThumbGeneration if generation is None else generation)
         reply.finished.connect(lambda rep=reply:self._online_levelshot_ready(rep))
 
     def _online_levelshot_ready(self, reply):
         try:
+            generation=reply.property("online_map_generation")
+            if generation is not None and int(generation) != self._onlineThumbGeneration:return
             row=int(reply.property("online_map_row")); raw=bytes(reply.readAll()); pix=QtGui.QPixmap()
             if raw and pix.loadFromData(raw) and 0 <= row < self.onlineMapsTable.rowCount():
                 item=self.onlineMapsTable.item(row,0)
@@ -7648,13 +8192,33 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
             reply.deleteLater()
 
     def download_online_map(self,item):
-        w=OnlineMapDownloadWorker(item,self); self.onlineDownloadWorkers.append(w); w.progress.connect(lambda p:self.mapsStatus.setText(f"Downloading… {p}%")); w.ready.connect(self._online_download_ready); w.failed.connect(lambda e:self.mapsStatus.setText(f"Download failed: {e}")); w.finished.connect(lambda x=w:self._online_download_done(x)); w.start()
+        w=OnlineMapDownloadWorker(item,self); self.onlineDownloadWorkers.append(w); w.progress.connect(lambda p:self.mapsStatus.setText(f"Downloading… {p}%")); w.ready.connect(lambda name,x=dict(item):self._online_download_ready(name,x)); w.failed.connect(lambda e:self.mapsStatus.setText(f"Download failed: {e}")); w.finished.connect(lambda x=w:self._online_download_done(x)); w.start()
+
+    def delete_online_map(self,item):
+        names=_online_installed_files(item)
+        deleted=[]
+        for name in names:
+            path=DOWNLOADED_MAPS_DIR/Path(name).name
+            try:
+                if path.is_file():
+                    path.unlink(); deleted.append(path.name)
+            except OSError as error:
+                self.mapsStatus.setText(f"Delete failed: {error}")
+                return
+        _forget_online_install(item)
+        self.mapsStatus.setText("Deleted "+(", ".join(deleted) if deleted else "downloaded map"))
+        self.refresh_maps(force=False)
+        q=self.onlineMapsSearch.text().strip()
+        self._start_online_worker("search" if q else "latest",q)
+
 
     def _online_download_done(self,w):
         if w in self.onlineDownloadWorkers:self.onlineDownloadWorkers.remove(w)
 
-    def _online_download_ready(self,name):
+    def _online_download_ready(self,name,item=None):
         self.mapsStatus.setText(f"Downloaded {name}"); self.refresh_maps(force=False)
+        q=self.onlineMapsSearch.text().strip()
+        self._start_online_worker("search" if q else "latest",q)
 
 
     def _map_levelshot_pixmap(self, item):
