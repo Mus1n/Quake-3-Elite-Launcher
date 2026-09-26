@@ -1,14 +1,19 @@
 import os
+import sqlite3
+from concurrent.futures import ThreadPoolExecutor
 import sys
 import traceback
 import shutil
 import json
+import html
 import re
 import urllib.parse
+import ssl
 import urllib.request
 import zipfile
 import time
 import uuid
+import subprocess
 
 from pathlib import Path
 
@@ -48,11 +53,49 @@ APPDATA_ROOT = Path(os.environ.get("APPDATA", Path.home()))
 LAUNCHER_DATA_DIR = APPDATA_ROOT / "Quake 3 Elite" / "Launcher"
 CACHE_DIR = LAUNCHER_DATA_DIR / "cache"
 TEMP_DIR = LAUNCHER_DATA_DIR / "temp"
+ONLINE_MAPS_DIR = LAUNCHER_DATA_DIR / "online_maps"
+ONLINE_MAPS_DB = ONLINE_MAPS_DIR / "MapData.db"
+ONLINE_MAPS_DB_URL = "https://dl.netquick.ch/MapData.db"
 DEFAULT_SERVERS_FILE = LAUNCHER_DIR / "settings" / "servers.json"
 USER_SERVERS_FILE = LAUNCHER_DATA_DIR / "servers.json"
-MAPS_MANIFEST_FILE = LAUNCHER_DATA_DIR / "maps_manifest.json"
+MAPS_MANIFEST_FILE = LAUNCHER_DIR / "maps_manifest"
 MAP_LEVELSHOTS_DIR = LAUNCHER_DIR / "servers" / "levelshots"
+MAP_DISCOVERED_LEVELSHOTS_DIR = LAUNCHER_DATA_DIR / "levelshots"
 MAP_UNKNOWN_LEVELSHOT = ASSETS_DIR / "server" / "levelshots" / "unknownmap.png"
+ONLINE_MAP_CACHE_DIR = LAUNCHER_DATA_DIR / "online_maps"
+DOWNLOADED_MAPS_DIR = GAME_ROOT / "baseq3" / "mods" / "osp" / "baseq3"
+WORLDSPAWN_BASE = "https://ws.q3df.org"
+LVLWORLD_BASE = "https://lvlworld.com"
+
+PROTECTED_MAP_PAKS = {
+    *(f"pak{i}.pk3" for i in range(9)),
+    "arenagate.pk3",
+    "spillway.pk3",
+    "hearth.pk3",
+    "powerstation.pk3",
+    "eviscerated.pk3",
+    "forgotten.pk3",
+    "campgrounds.pk3",
+    "provinggrounds.pk3",
+    "retribution.pk3",
+    "brimstoneabbey.pk3",
+    "heroskeep.pk3",
+    "hellsgate.pk3",
+    "namelessplace.pk3",
+    "chemicalreaction.pk3",
+    "dredwerkz.pk3",
+    "verticalvengeance.pk3",
+    "lostworld.pk3",
+    "grimdungeons.pk3",
+    "demonkeep.pk3",
+    "fatalinstinct.pk3",
+    "cobaltstation.pk3",
+    "longestyard.pk3",
+    "spacechamber.pk3",
+    "terminalheights.pk3",
+    "theepicenter.pk3",
+    "beyondreality.pk3",
+}
 BACKGROUND_IMAGE = IMAGES_DIR / "background.png"
 APP_ICON_ICO = ICONS_DIR / "favicon.ico"
 APP_ICON_PNG = ICONS_DIR / "favicon.png"
@@ -4167,14 +4210,33 @@ class ServerCard(QtWidgets.QFrame):
 
     def _set_levelshot(self, mapname):
         safe = str(mapname or "").strip()
-        candidates = []
-        if safe:
-            for ext in (".png", ".jpg", ".jpeg", ".webp", ".tga"):
-                candidates.append(self.levelshots_dir / (safe + ext))
-                candidates.append(self.levelshots_dir / (safe.lower() + ext))
-                # Compatibility with levelshots shipped in the current assets tree.
-                candidates.append(ASSETS_DIR / "servers" / "levelshots" / (safe + ext))
-                candidates.append(ASSETS_DIR / "servers" / "levelshots" / (safe.lower() + ext))
+        wanted = safe.casefold()
+        supported = {".png", ".jpg", ".jpeg", ".webp", ".tga"}
+
+        def matching(directory):
+            priority, normal = [], []
+            if not directory.is_dir() or not wanted:
+                return priority, normal
+            try:
+                for path in directory.iterdir():
+                    if not path.is_file() or path.suffix.casefold() not in supported:
+                        continue
+                    stem = path.stem
+                    important = stem.startswith("!")
+                    if important:
+                        stem = stem[1:]
+                    aliases = [part.strip().casefold() for part in stem.split("&") if part.strip()]
+                    if wanted in aliases:
+                        (priority if important else normal).append(path)
+            except OSError:
+                pass
+            priority.sort(key=lambda p: p.name.casefold())
+            normal.sort(key=lambda p: p.name.casefold())
+            return priority, normal
+
+        managed_priority, managed_normal = matching(self.levelshots_dir)
+        local_priority, local_normal = matching(MAP_DISCOVERED_LEVELSHOTS_DIR)
+        candidates = managed_priority + local_priority + managed_normal + local_normal
         candidates.extend([
             self.levelshots_dir / "unknownmap.png",
             MAP_UNKNOWN_LEVELSHOT,
@@ -4335,14 +4397,18 @@ class FullscreenScreenshotWheelFilter(QtCore.QObject):
 # ============================================================================
 
 def _map_pk3_candidates():
-    """Return supported local PK3 paths without recursively walking all baseq3."""
+    """Return map PK3s from supported Q3Elite/preinstalled/downloaded locations."""
     baseq3 = GAME_ROOT / "baseq3"
     found = set()
     patterns = (
-        "maps/*/*.pk3",
-        "maps/*/*/*.pk3",
-        "*.pk3",
-        "mods/baseq3/*.pk3",
+        "maps/*/*.pk3",                 # legacy/preinstalled layout
+        "maps/*/*/*.pk3",               # legacy/preinstalled layout, 2 levels
+        "mods/maps/*/*.pk3",            # preinstalled maps
+        "mods/maps/*/*/*.pk3",          # preinstalled maps, 2 levels
+        "mods/osp/baseq3/*.pk3",         # maps downloaded by OSP
+        "mods/osp/baseq3/*/*.pk3",       # tolerate one grouping folder
+        "*.pk3",                         # external PK3s in baseq3 root
+        "mods/baseq3/*.pk3",             # external baseq3 mod path
     )
     for pattern in patterns:
         for path in baseq3.glob(pattern):
@@ -4354,21 +4420,38 @@ def _map_pk3_candidates():
     return sorted(found, key=lambda p: str(p).casefold())
 
 
+def _map_location(pk3_path):
+    """Map a PK3 path to the browser's location filter."""
+    try:
+        rel = pk3_path.resolve().relative_to((GAME_ROOT / "baseq3").resolve())
+        cf = rel.as_posix().casefold()
+    except Exception:
+        return "External"
+    if cf.startswith("mods/osp/baseq3/"):
+        return "Downloaded"
+    if cf.startswith("mods/maps/") or cf.startswith("maps/"):
+        return "Preinstalled"
+    return "External"
+
+
 def _parse_arena_blocks(raw_text):
-    """Parse Quake 3 { key value } arena metadata."""
+    """Parse mixed quoted/unquoted Quake 3 arena key/value syntax."""
     raw_text = re.sub(r"//.*?$", "", raw_text, flags=re.MULTILINE)
     arenas = {}
     for block in re.findall(r"\{(.*?)\}", raw_text, flags=re.DOTALL):
         values = {}
-        # Quoted key/value pairs are standard. The fallback also accepts unquoted pairs.
-        quoted = re.findall(r'"([^"]*)"', block)
-        if len(quoted) >= 2:
-            for i in range(0, len(quoted) - 1, 2):
-                values[quoted[i].strip().casefold()] = quoted[i + 1].strip()
-        else:
-            flat = block.split()
-            for i in range(0, len(flat) - 1, 2):
-                values[flat[i].strip().casefold()] = flat[i + 1].strip().strip('"')
+        # Keys are commonly unquoted while values are quoted:
+        # map "q3dm6" / longname "The Camping Grounds" / type "ffa team tourney".
+        pair_re = re.compile(
+            r'(?:"([^"\\]*(?:\\.[^"\\]*)*)"|([^\s{}]+))'
+            r'\s+'
+            r'(?:"([^"\\]*(?:\\.[^"\\]*)*)"|([^\s{}]+))'
+        )
+        for match in pair_re.finditer(block):
+            key = (match.group(1) if match.group(1) is not None else match.group(2) or "").strip().casefold()
+            value = (match.group(3) if match.group(3) is not None else match.group(4) or "").strip()
+            if key:
+                values[key] = value
         map_name = values.get("map", "").strip().casefold()
         if map_name:
             arenas[map_name] = values
@@ -4378,7 +4461,8 @@ def _parse_arena_blocks(raw_text):
 def _arena_gametypes(arena):
     if not arena:
         return "Unknown"
-    raw = str(arena.get("type", "") or "").casefold().split()
+    # Arena type can be quoted whitespace text and occasionally comma separated.
+    raw = re.split(r"[\s,;/]+", str(arena.get("type", "") or "").casefold())
     labels = []
     for token, label in (("ffa", "FFA"), ("team", "TDM"), ("tourney", "Duel"), ("ctf", "CTF")):
         if token in raw and label not in labels:
@@ -4394,14 +4478,14 @@ def _safe_levelshot_name(map_name, suffix):
 def _scan_map_pk3(pk3_path, extract_levelshots=True):
     """Read BSP/arena metadata from one PK3 and extract matching levelshots."""
     result = []
-    MAP_LEVELSHOTS_DIR.mkdir(parents=True, exist_ok=True)
+    MAP_DISCOVERED_LEVELSHOTS_DIR.mkdir(parents=True, exist_ok=True)
     with zipfile.ZipFile(pk3_path, "r") as zf:
         names = zf.namelist()
         lower_to_real = {n.casefold(): n for n in names}
         arenas = {}
         for name in names:
             low = name.casefold()
-            if low.startswith("scripts/") and low.endswith(".arena"):
+            if low.endswith(".arena") or low.endswith("/arenas.txt"):
                 try:
                     arenas.update(_parse_arena_blocks(
                         zf.read(name).decode("utf-8", errors="ignore")
@@ -4423,7 +4507,7 @@ def _scan_map_pk3(pk3_path, extract_levelshots=True):
                 real = lower_to_real.get(f"levelshots/{bsp_name}{ext}".casefold())
                 if not real:
                     continue
-                dest = MAP_LEVELSHOTS_DIR / _safe_levelshot_name(bsp_name, ext)
+                dest = MAP_DISCOVERED_LEVELSHOTS_DIR / _safe_levelshot_name(bsp_name, ext)
                 levelshot_file = str(dest)
                 if extract_levelshots:
                     try:
@@ -4437,6 +4521,8 @@ def _scan_map_pk3(pk3_path, extract_levelshots=True):
                 "name": long_name,
                 "pak": pk3_path.name,
                 "pak_path": str(pk3_path),
+                "pak_size": int(pk3_path.stat().st_size),
+                "location": _map_location(pk3_path),
                 "gametype": gametype,
                 "levelshot": levelshot_file,
             })
@@ -4448,7 +4534,7 @@ def build_local_map_catalog():
     MAPS_MANIFEST_FILE.parent.mkdir(parents=True, exist_ok=True)
     try:
         manifest = json.loads(MAPS_MANIFEST_FILE.read_text(encoding="utf-8"))
-        cached = manifest.get("paks", {}) if isinstance(manifest, dict) else {}
+        cached = manifest.get("paks", {}) if isinstance(manifest, dict) and manifest.get("version") == 3 else {}
     except Exception:
         cached = {}
 
@@ -4473,7 +4559,7 @@ def build_local_map_catalog():
                 maps = []
         updated[key] = {"signature": signature, "maps": maps}
 
-    payload = {"version": 1, "paks": updated}
+    payload = {"version": 4, "paks": updated}
     tmp = MAPS_MANIFEST_FILE.with_suffix(".tmp")
     tmp.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
     tmp.replace(MAPS_MANIFEST_FILE)
@@ -4488,6 +4574,423 @@ def build_local_map_catalog():
     return all_maps, changed_paks
 
 
+def _human_file_size(value):
+    try:
+        size = float(value)
+    except (TypeError, ValueError):
+        return "—"
+    for unit in ("B", "KB", "MB", "GB"):
+        if size < 1024.0 or unit == "GB":
+            if unit == "B":
+                return f"{int(size)} {unit}"
+            return f"{size:.2f} {unit}"
+        size /= 1024.0
+    return "—"
+
+
+
+def _net_text(url, timeout=15):
+    headers = {
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/136.0.0.0 Safari/537.36"
+        ),
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.9",
+        "Accept-Encoding": "identity",
+        "Connection": "close",
+    }
+    req = urllib.request.Request(url, headers=headers)
+    try:
+        parsed_host = (urllib.parse.urlparse(url).hostname or "").casefold()
+        context = None
+        if parsed_host == "lvlworld.com" or parsed_host.endswith(".lvlworld.com"):
+            # LvLWorld currently serves an expired TLS certificate.
+            # Keep this exception strictly scoped to LvLWorld; every other
+            # launcher/update/download connection still verifies TLS normally.
+            context = ssl._create_unverified_context()
+        with urllib.request.urlopen(req, timeout=timeout, context=context) as response:
+            raw = response.read()
+            charset = response.headers.get_content_charset() or "utf-8"
+            return raw.decode(charset, errors="ignore")
+    except Exception as error:
+        raise RuntimeError(f"{url} -> {type(error).__name__}: {error}") from error
+
+def _plain(html):
+    t=re.sub(r"<[^>]+>"," ",html)
+    t=t.replace("&amp;","&").replace("&quot;",'"').replace("&#39;","'").replace("&nbsp;"," ")
+    return re.sub(r"\s+"," ",t).strip()
+
+def _ensure_worldspawn_index(progress=None):
+    """Download DeFRaG Helper's public Worldspawn SQLite index once."""
+    ONLINE_MAPS_DIR.mkdir(parents=True, exist_ok=True)
+    if ONLINE_MAPS_DB.is_file() and ONLINE_MAPS_DB.stat().st_size > 64 * 1024:
+        try:
+            with sqlite3.connect(str(ONLINE_MAPS_DB)) as con:
+                con.execute("SELECT 1 FROM Maps LIMIT 1").fetchone()
+            return ONLINE_MAPS_DB
+        except sqlite3.Error:
+            try: ONLINE_MAPS_DB.unlink()
+            except OSError: pass
+
+    part = ONLINE_MAPS_DB.with_suffix(".db.part")
+    if part.exists():
+        try: part.unlink()
+        except OSError: pass
+    req = urllib.request.Request(
+        ONLINE_MAPS_DB_URL,
+        headers={"User-Agent":"Mozilla/5.0 (Windows NT 10.0; Win64; x64) Q3Elite/1.0"}
+    )
+    with urllib.request.urlopen(req, timeout=45) as response, part.open("wb") as out:
+        total=int(response.headers.get("Content-Length","0") or 0); done=0
+        while True:
+            chunk=response.read(256*1024)
+            if not chunk: break
+            out.write(chunk); done += len(chunk)
+            if progress: progress(done,total)
+    if part.stat().st_size < 64*1024:
+        raise RuntimeError("Worldspawn map index download is unexpectedly small.")
+    part.replace(ONLINE_MAPS_DB)
+    with sqlite3.connect(str(ONLINE_MAPS_DB)) as con:
+        con.execute("SELECT 1 FROM Maps LIMIT 1").fetchone()
+    return ONLINE_MAPS_DB
+
+
+def _worldspawn_columns(con):
+    return {str(r[1]).casefold():str(r[1]) for r in con.execute("PRAGMA table_info(Maps)")}
+
+
+def _worldspawn_row_to_item(row, cols):
+    d={cols[i].casefold():row[i] for i in range(len(cols))}
+    def val(*names):
+        for name in names:
+            v=d.get(name.casefold())
+            if v not in (None,""): return str(v)
+        return ""
+    filename=Path(val("Filename").replace("\\","/")).name
+    mapname=val("Mapname")
+    if mapname.casefold().endswith(".bsp"): mapname=mapname[:-4]
+    # MapData.db contains legacy detail links in some rows. Worldspawn's
+    # current public detail route is /map/<bsp-name>/.
+    detail=("https://ws.q3df.org/map/" + urllib.parse.quote(mapname, safe="._-") + "/") if mapname else val("LinkDetailpage")
+    level=val("Levelshot","Screenshot")
+    if level and not level.startswith(("http://","https://")):
+        level=urllib.parse.urljoin("https://ws.q3df.org/",level)
+    size=val("Size")
+    try:
+        n=float(size)
+        # DeFRaG Helper stores the site's numeric size; retain unit if present,
+        # otherwise present a compact MB value only for plausible byte counts.
+        if n > 1024*1024: size=f"{n/(1024*1024):.1f} MB"
+        elif n > 1024: size=f"{n/1024:.1f} KB"
+    except Exception: pass
+    # DeFRaG Helper stores the Worldspawn "Modification" value in Maps.Mod.
+    # Style and Physics are separate DeFRaG properties, not gametypes.
+    gt=val("Mod")
+    return {
+        "source":"Worldspawn Index",
+        "name":val("Name") or mapname or filename,
+        "map":mapname or val("Name"),
+        "author":val("Author"),
+        "pak":filename,
+        "size":size,
+        "gametype":gt or "DeFRaG",
+        "released":val("Releasedate"),
+        "detail_url":detail,
+        "download_url":("https://dl.defrag.racing/downloads/maps/"+urllib.parse.quote(filename)) if filename else "",
+        # Search metadata comes from the local Worldspawn index, but images
+        # are served through defrag.racing just like its official launcher.
+        "levelshot_url":"",
+        "defrag_map_name":mapname,
+        "locked":not bool(filename),
+    }
+
+
+
+def _worldspawn_opener():
+    # Worldspawn currently applies request/session checks to map assets.
+    # Keep cookies from the detail-page request and reuse them for the image/PK3.
+    import http.cookiejar
+    jar=http.cookiejar.CookieJar()
+    return urllib.request.build_opener(urllib.request.HTTPCookieProcessor(jar))
+
+
+def _worldspawn_headers(referer="https://ws.q3df.org/maps/"):
+    return {
+        "User-Agent":"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36",
+        "Accept":"text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+        "Accept-Language":"en-US,en;q=0.9",
+        "Accept-Encoding":"identity",
+        "Referer":referer,
+        "Connection":"close",
+    }
+
+
+def _worldspawn_fetch_levelshot(detail_url):
+    if not detail_url:
+        return b""
+    if detail_url.startswith("/"):
+        detail_url=urllib.parse.urljoin("https://ws.q3df.org/",detail_url)
+    opener=_worldspawn_opener()
+    req=urllib.request.Request(detail_url,headers=_worldspawn_headers("https://ws.q3df.org/maps/"))
+    with opener.open(req,timeout=12) as response:
+        html=response.read().decode(response.headers.get_content_charset() or "utf-8",errors="ignore")
+
+    # Same element used by DeFRaG Helper. Keep this deliberately tolerant of
+    # attribute order because Worldspawn has changed its markup over time.
+    tag=re.search(r'<img\b[^>]*\bid=["\']mapdetails_levelshot["\'][^>]*>',html,re.I|re.S)
+    if not tag:
+        return b""
+    m=re.search(r'\bsrc=["\']([^"\']+)["\']',tag.group(0),re.I)
+    if not m:
+        return b""
+    image_url=urllib.parse.urljoin(detail_url,m.group(1))
+    image_req=urllib.request.Request(image_url,headers=_worldspawn_headers(detail_url))
+    with opener.open(image_req,timeout=12) as response:
+        return response.read()
+
+
+class WorldspawnLevelshotWorker(QtCore.QThread):
+    ready=pyqtSignal(int,object)
+    def __init__(self,row,detail_url,parent=None):
+        super().__init__(parent); self.row=row; self.detail_url=detail_url
+    def run(self):
+        try:self.ready.emit(self.row,_worldspawn_fetch_levelshot(self.detail_url))
+        except Exception as error:
+            print(f"[online maps] levelshot: {self.detail_url} -> {type(error).__name__}: {error}")
+            self.ready.emit(self.row,b"")
+
+def _worldspawn_index_search(query="", limit=50, latest=False):
+    db=_ensure_worldspawn_index()
+    with sqlite3.connect(str(db)) as con:
+        con.row_factory=None
+        cmap=_worldspawn_columns(con)
+        # Only ask for columns that really exist in this database version.
+        wanted=["Name","Mapname","Filename","Releasedate","Author","Mod","Size",
+                "Physics","LinkDetailpage","Style","Levelshot","Screenshot"]
+        cols=[cmap[x.casefold()] for x in wanted if x.casefold() in cmap]
+        if not cols: raise RuntimeError("Worldspawn index has no recognized Maps columns.")
+        select=", ".join('"' + c.replace('"','""') + '"' for c in cols)
+        if latest or not str(query).strip():
+            order=cmap.get("releasedate","")
+            sql=f"SELECT {select} FROM Maps"
+            if order: sql += f' ORDER BY "{order}" DESC'
+            sql += " LIMIT ?"
+            rows=con.execute(sql,(int(limit),)).fetchall()
+            total=con.execute("SELECT COUNT(*) FROM Maps").fetchone()[0]
+        else:
+            q="%"+str(query).strip()+"%"
+            search_cols=[cmap[x] for x in ("name","mapname","filename","author") if x in cmap]
+            where=" OR ".join(f'"{c}" LIKE ? COLLATE NOCASE' for c in search_cols)
+            sql=f"SELECT {select} FROM Maps WHERE {where} LIMIT ?"
+            rows=con.execute(sql, tuple([q]*len(search_cols)+[int(limit)])).fetchall()
+            total=con.execute(f"SELECT COUNT(*) FROM Maps WHERE {where}",tuple([q]*len(search_cols))).fetchone()[0]
+        return [_worldspawn_row_to_item(r,cols) for r in rows], {"total":int(total)}
+
+
+
+
+class WorldspawnImageWorker(QtCore.QThread):
+    ready=pyqtSignal(int,object)
+    def __init__(self,row,url,parent=None):
+        super().__init__(parent); self.row=row; self.url=url
+    def run(self):
+        temp=TEMP_DIR/f"ws_levelshot_{self.row}_{abs(hash(self.url))}.jpg"
+        try:
+            _download_worldspawn_dotnet(self.url,temp)
+            self.ready.emit(self.row,temp.read_bytes())
+        except Exception as error:
+            print(f"[online maps] levelshot fallback: {self.url} -> {type(error).__name__}: {error}")
+            self.ready.emit(self.row,b"")
+        finally:
+            try: temp.unlink()
+            except OSError: pass
+
+
+
+def _defrag_public_thumbnail(mapname):
+    """
+    Read the public map page exactly as a browser does. Do NOT send X-Inertia:
+    Inertia returns HTTP 409 when the client asset version does not match the
+    site's current version. The normal HTML page embeds the same props in the
+    #app data-page attribute, including map.thumbnail.
+    """
+    if not mapname:
+        return ""
+    candidates=[str(mapname)]
+    lower=str(mapname).casefold()
+    if lower not in candidates:
+        candidates.append(lower)
+
+    for candidate in candidates:
+        url="https://defrag.racing/maps/"+urllib.parse.quote(candidate,safe="._-")
+        req=urllib.request.Request(url,headers={
+            "User-Agent":"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/136.0 Safari/537.36",
+            "Accept":"text/html,application/xhtml+xml",
+            "Accept-Language":"en-US,en;q=0.9",
+        })
+        try:
+            with urllib.request.urlopen(req,timeout=15) as response:
+                text=response.read().decode(response.headers.get_content_charset() or "utf-8",errors="replace")
+
+            m=re.search(r'\bdata-page=(["\'])(.*?)\1',text,re.I|re.S)
+            if not m:
+                continue
+            payload=json.loads(html.unescape(m.group(2)))
+            props=payload.get("props",{}) if isinstance(payload,dict) else {}
+            row=props.get("map",{}) if isinstance(props,dict) else {}
+            thumb=str(row.get("thumbnail") or "").strip() if isinstance(row,dict) else ""
+            if thumb:
+                return thumb if thumb.startswith(("http://","https://")) else "https://defrag.racing/storage/"+thumb.lstrip("/")
+        except Exception as error:
+            print(f"[online maps] defrag thumbnail metadata: {candidate} -> {type(error).__name__}: {error}")
+    return ""
+
+
+class DefragThumbnailWorker(QtCore.QThread):
+    ready=pyqtSignal(int,str)
+    def __init__(self,row,mapname,parent=None):
+        super().__init__(parent); self.row=row; self.mapname=mapname
+    def run(self):
+        self.ready.emit(self.row,_defrag_public_thumbnail(self.mapname))
+
+
+class OnlineMapsWorker(QtCore.QThread):
+    ready = pyqtSignal(object, str, object)
+    failed = pyqtSignal(str)
+    def __init__(self, mode, query="", page=1, parent=None):
+        super().__init__(parent); self.mode=mode; self.query=query; self.page=page
+    def run(self):
+        try:
+            if self.mode=="search":
+                data,meta=_worldspawn_index_search(self.query,50,False)
+            else:
+                data,meta=_worldspawn_index_search("",50,True)
+            self.ready.emit(data,"Worldspawn Index",meta)
+        except Exception as error:
+            self.failed.emit(str(error))
+
+
+
+def _download_worldspawn_dotnet(url, target, progress_callback=None):
+    """
+    Worldspawn accepts the .NET HttpClient used by DeFRaG Helper while rejecting
+    Python urllib requests. Use PowerShell/.NET HttpClient for this host.
+    """
+    target=Path(target)
+    target.parent.mkdir(parents=True,exist_ok=True)
+    ps = r"""
+$ErrorActionPreference = 'Stop'
+[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+Add-Type -AssemblyName System.Net.Http
+$url = $env:Q3ELITE_WS_URL
+$out = $env:Q3ELITE_WS_OUT
+if ([string]::IsNullOrWhiteSpace($url)) { throw "Q3ELITE_WS_URL is empty" }
+if ([string]::IsNullOrWhiteSpace($out)) { throw "Q3ELITE_WS_OUT is empty" }
+$uri = New-Object System.Uri($url, [System.UriKind]::Absolute)
+$handler = New-Object System.Net.Http.HttpClientHandler
+$client = New-Object System.Net.Http.HttpClient($handler)
+try {
+    $response = $client.GetAsync($uri, [System.Net.Http.HttpCompletionOption]::ResponseHeadersRead).GetAwaiter().GetResult()
+    $response.EnsureSuccessStatusCode() | Out-Null
+    $inputStream = $response.Content.ReadAsStreamAsync().GetAwaiter().GetResult()
+    $outputStream = [System.IO.File]::Open($out, [System.IO.FileMode]::Create, [System.IO.FileAccess]::Write, [System.IO.FileShare]::None)
+    try {
+        $buffer = New-Object byte[] 262144
+        while (($read = $inputStream.Read($buffer, 0, $buffer.Length)) -gt 0) {
+            $outputStream.Write($buffer, 0, $read)
+        }
+    } finally {
+        $outputStream.Dispose()
+        $inputStream.Dispose()
+    }
+} finally {
+    $client.Dispose()
+    $handler.Dispose()
+}
+"""
+    cmd=[
+        "powershell.exe","-NoProfile","-NonInteractive","-ExecutionPolicy","Bypass",
+        "-Command", ps
+    ]
+    creationflags=getattr(subprocess,"CREATE_NO_WINDOW",0)
+    child_env=os.environ.copy()
+    child_env["Q3ELITE_WS_URL"]=str(url)
+    child_env["Q3ELITE_WS_OUT"]=str(target)
+    result=subprocess.run(
+        cmd,capture_output=True,text=True,creationflags=creationflags,env=child_env
+    )
+    if result.returncode:
+        message=(result.stderr or result.stdout or "PowerShell HttpClient failed").strip()
+        raise RuntimeError(message)
+    if not target.is_file() or target.stat().st_size <= 0:
+        raise RuntimeError("Worldspawn returned an empty download.")
+    return target
+
+
+class OnlineMapDownloadWorker(QtCore.QThread):
+    ready=pyqtSignal(str); failed=pyqtSignal(str); progress=pyqtSignal(int)
+    def __init__(self,item,parent=None):
+        super().__init__(parent); self.item=dict(item)
+    def run(self):
+        try:
+            url=self.item.get("download_url","")
+            if not url: raise RuntimeError("No downloadable package is exposed by this source.")
+            DOWNLOADED_MAPS_DIR.mkdir(parents=True,exist_ok=True); TEMP_DIR.mkdir(parents=True,exist_ok=True)
+            name=Path(str(self.item.get("pak") or Path(urllib.parse.urlparse(url).path).name or "online_map.pk3").replace("\\","/")).name
+            if not name.casefold().endswith((".pk3", ".zip")):
+                name = (self.item.get("map") or "online_map") + ".pk3"
+            tmp=TEMP_DIR/("online_"+name)
+            host=(urllib.parse.urlparse(url).hostname or "").casefold()
+            context=ssl._create_unverified_context() if (host=="lvlworld.com" or host.endswith(".lvlworld.com")) else None
+            response_name = name
+
+            req=urllib.request.Request(url,headers={"User-Agent":"Quake3EliteLauncher/0.1"})
+            response=urllib.request.urlopen(req,timeout=30,context=context)
+
+            with response as r,tmp.open("wb") as f:
+                cd = r.headers.get("Content-Disposition", "")
+                m = re.search(r'filename\*?=(?:UTF-8\'\')?["\']?([^;"\']+)', cd, re.I)
+                if m:
+                    response_name = Path(urllib.parse.unquote(m.group(1).strip())).name
+                final_url_name = Path(urllib.parse.urlparse(r.geturl()).path).name
+                if final_url_name.casefold().endswith((".pk3", ".zip")):
+                    response_name = urllib.parse.unquote(final_url_name)
+                total=int(r.headers.get("Content-Length","0") or 0); done=0
+                while True:
+                    b=r.read(262144)
+                    if not b: break
+                    f.write(b); done+=len(b)
+                    if total:self.progress.emit(min(100,int(done*100/total)))
+            # PK3 uses the ZIP container format, so zipfile.is_zipfile(tmp) is
+            # also True for a perfectly valid direct PK3 download. Decide from
+            # the canonical response filename first.
+            response_name=Path(str(response_name).replace("\\","/")).name
+            if response_name.casefold().endswith(".pk3"):
+                target=DOWNLOADED_MAPS_DIR/response_name
+                if target.exists():
+                    target.unlink()
+                tmp.replace(target)
+                self.ready.emit(target.name)
+            elif response_name.casefold().endswith(".zip"):
+                installed=[]
+                with zipfile.ZipFile(tmp) as z:
+                    for info in z.infolist():
+                        if info.is_dir() or not info.filename.casefold().endswith(".pk3"):
+                            continue
+                        target=DOWNLOADED_MAPS_DIR/Path(info.filename).name
+                        with z.open(info) as a,target.open("wb") as b:
+                            shutil.copyfileobj(a,b)
+                        installed.append(target.name)
+                tmp.unlink(missing_ok=True)
+                if not installed:
+                    raise RuntimeError("ZIP archive contains no PK3.")
+                self.ready.emit(", ".join(installed))
+            else:
+                raise RuntimeError("Download did not return a PK3 or ZIP package.")
+        except Exception as e:self.failed.emit(str(e))
+
 class MapCatalogWorker(QtCore.QThread):
     ready = pyqtSignal(object, int)
     failed = pyqtSignal(str)
@@ -4500,11 +5003,43 @@ class MapCatalogWorker(QtCore.QThread):
             self.failed.emit(str(error))
 
 
+class MapRowHoverDelegate(QtWidgets.QStyledItemDelegate):
+    """Paint hover across the full logical row instead of one table cell."""
+
+    def __init__(self, table):
+        super().__init__(table)
+        self.table = table
+        self.hover_row = -1
+        table.viewport().installEventFilter(self)
+
+    def eventFilter(self, obj, event):
+        if obj is self.table.viewport():
+            if event.type() == QtCore.QEvent.Type.MouseMove:
+                index = self.table.indexAt(event.position().toPoint())
+                row = index.row() if index.isValid() else -1
+                if row != self.hover_row:
+                    self.hover_row = row
+                    self.table.viewport().update()
+            elif event.type() == QtCore.QEvent.Type.Leave:
+                if self.hover_row != -1:
+                    self.hover_row = -1
+                    self.table.viewport().update()
+        return super().eventFilter(obj, event)
+
+    def paint(self, painter, option, index):
+        if index.row() == self.hover_row and not (option.state & QtWidgets.QStyle.StateFlag.State_Selected):
+            option = QtWidgets.QStyleOptionViewItem(option)
+            option.backgroundBrush = QtGui.QBrush(QtGui.QColor(72, 17, 13, 88))
+        super().paint(painter, option, index)
+
+
 class ModernLauncherWindow(QtWidgets.QMainWindow):
     """1368x768 frameless Q3Elite launcher. Backend stays in launch.pyw."""
 
     def __init__(self):
         QtWidgets.QMainWindow.__init__(self)
+        self._mapNetwork = QtNetwork.QNetworkAccessManager(self)
+        self._worldspawnShotWorkers = []
 
         self.setObjectName("launcherWindow")
         self.setWindowTitle("Quake 3 Elite Launcher")
@@ -5598,6 +6133,11 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
         if page is getattr(self, "demosPage", None):
             self.demoSearch.setFocus()
             self.demoSearch.selectAll()
+            return True
+        if page is getattr(self, "mapsPage", None):
+            target = self.onlineMapsSearch if getattr(self, "mapsMode", "local") == "online" else self.mapsSearch
+            target.setFocus(QtCore.Qt.FocusReason.ShortcutFocusReason)
+            target.selectAll()
             return True
         return False
 
@@ -6968,64 +7508,191 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
             e["status"].setStyleSheet(f"color: {rule.get('color','#3b82f6')};" if matched else "")
 
     def _build_maps(self):
-        page = QtWidgets.QWidget()
-        root = QtWidgets.QVBoxLayout(page)
-        root.setContentsMargins(4, 4, 4, 4)
-        root.setSpacing(10)
-
-        header = QtWidgets.QHBoxLayout()
-        title = QtWidgets.QLabel("MAPS")
-        title.setObjectName("pageTitle")
-        header.addWidget(title)
-        header.addStretch(1)
-        self.mapsStatus = QtWidgets.QLabel("Local map catalog")
-        self.mapsStatus.setObjectName("muted")
-        header.addWidget(self.mapsStatus)
-        self.mapsRefreshButton = GlowButton("↻  REFRESH MAPS")
-        self.mapsRefreshButton.setObjectName("serverToolbarButton")
-        self.mapsRefreshButton.clicked.connect(lambda: self.refresh_maps(force=True))
-        header.addWidget(self.mapsRefreshButton)
+        page=QtWidgets.QWidget(); page.setObjectName("mapsPage")
+        root=QtWidgets.QVBoxLayout(page); root.setContentsMargins(4,4,4,4); root.setSpacing(9)
+        header=QtWidgets.QHBoxLayout()
+        title=QtWidgets.QLabel("MAPS"); title.setObjectName("pageTitle"); header.addWidget(title)
+        self.mapsLocalTab=GlowButton("LOCAL"); self.mapsLocalTab.setObjectName("mapModeButton"); self.mapsLocalTab.setProperty("active",True)
+        self.mapsOnlineTab=GlowButton("ONLINE"); self.mapsOnlineTab.setObjectName("mapModeButton"); self.mapsOnlineTab.setProperty("active",False)
+        self.mapsLocalTab.clicked.connect(lambda:self.set_maps_mode("local")); self.mapsOnlineTab.clicked.connect(lambda:self.set_maps_mode("online"))
+        header.addWidget(self.mapsLocalTab); header.addWidget(self.mapsOnlineTab); header.addStretch(1)
+        self.mapsStatus=QtWidgets.QLabel("Local map catalog"); self.mapsStatus.setObjectName("muted"); header.addWidget(self.mapsStatus)
+        self.mapsRefreshButton=GlowButton("↻  REFRESH MAPS"); self.mapsRefreshButton.setObjectName("mapToolbarButton")
+        self.mapsRefreshButton.clicked.connect(lambda:self.refresh_maps(force=True)); header.addWidget(self.mapsRefreshButton)
         root.addLayout(header)
+        self.mapsStack=QtWidgets.QStackedWidget(); root.addWidget(self.mapsStack,1)
 
-        self.mapsSearch = QtWidgets.QLineEdit()
-        self.mapsSearch.setPlaceholderText("Search map name, BSP, PAK or gametype…")
-        self.mapsSearch.setClearButtonEnabled(True)
-        self.mapsSearch.textChanged.connect(self._filter_maps_table)
-        root.addWidget(self.mapsSearch)
+        local=QtWidgets.QWidget(); ll=QtWidgets.QVBoxLayout(local); ll.setContentsMargins(0,0,0,0); ll.setSpacing(8)
+        c=QtWidgets.QHBoxLayout(); self.mapsSearch=QtWidgets.QLineEdit(); self.mapsSearch.setObjectName("mapsSearch")
+        self.mapsSearch.setPlaceholderText("Search local maps…   Ctrl+F"); self.mapsSearch.setClearButtonEnabled(True); self.mapsSearch.textChanged.connect(self._filter_maps_table); c.addWidget(self.mapsSearch,1)
+        self.mapsSortButton=GlowButton("F3  SORT: NAME"); self.mapsSortButton.setObjectName("mapToolbarButton"); self.mapsSortButton.setProperty("active",False); self.mapsSortButton.clicked.connect(self.cycle_maps_gametype_sort); c.addWidget(self.mapsSortButton)
+        self.mapsLocationButton=GlowButton("F4  ALL"); self.mapsLocationButton.setObjectName("mapToolbarButton"); self.mapsLocationButton.clicked.connect(self.cycle_maps_location_filter); c.addWidget(self.mapsLocationButton); ll.addLayout(c)
+        self.mapsHint=QtWidgets.QLabel("F1 Shortcuts   ↑↓ Select   O Select PAK   Ctrl+F Search   Enter Play   Del Delete"); self.mapsHint.setObjectName("mapsHint"); ll.addWidget(self.mapsHint)
+        self.mapsKeys=QtWidgets.QLabel("KEY BINDS\n↑ / ↓ : Navigation\nEnter : Play\nO : Select PAK\nDel : Delete PAK\nCtrl+F : Search\nF3 : Sort\nF4 : Location\nF1 : Show/Hide"); self.mapsKeys.setObjectName("keyBindsLegend"); self.mapsKeys.hide(); ll.addWidget(self.mapsKeys)
+        self.mapsTable=QtWidgets.QTableWidget(0,7); self.mapsTable.setObjectName("mapsTable"); self.mapsTable.setHorizontalHeaderLabels(["LEVELSHOT","MAP","PAK","SIZE","GAMETYPE","",""])
+        self.mapsTable.verticalHeader().setVisible(False); self.mapsTable.setShowGrid(False); self.mapsTable.setSelectionBehavior(QtWidgets.QAbstractItemView.SelectionBehavior.SelectRows); self.mapsTable.setEditTriggers(QtWidgets.QAbstractItemView.EditTrigger.NoEditTriggers); self.mapsTable.setIconSize(QtCore.QSize(144,81)); self.mapsTable.setMouseTracking(True); self.mapsTable.viewport().setMouseTracking(True); self.mapsTable.setItemDelegate(MapRowHoverDelegate(self.mapsTable))
+        h=self.mapsTable.horizontalHeader(); h.setSectionResizeMode(0,QtWidgets.QHeaderView.ResizeMode.Fixed); h.resizeSection(0,164); h.setSectionResizeMode(1,QtWidgets.QHeaderView.ResizeMode.Stretch); h.setSectionResizeMode(2,QtWidgets.QHeaderView.ResizeMode.Stretch); h.setSectionResizeMode(3,QtWidgets.QHeaderView.ResizeMode.Fixed); h.resizeSection(3,82); h.setSectionResizeMode(4,QtWidgets.QHeaderView.ResizeMode.ResizeToContents); h.setSectionResizeMode(5,QtWidgets.QHeaderView.ResizeMode.Fixed); h.resizeSection(5,90); h.setSectionResizeMode(6,QtWidgets.QHeaderView.ResizeMode.Fixed); h.resizeSection(6,90)
+        ll.addWidget(self.mapsTable,1); self.mapsStack.addWidget(local)
 
-        self.mapsTable = QtWidgets.QTableWidget(0, 5)
-        self.mapsTable.setObjectName("mapsTable")
-        self.mapsTable.setHorizontalHeaderLabels(["LEVELSHOT", "MAP", "PAK", "GAMETYPE", ""])
-        self.mapsTable.verticalHeader().setVisible(False)
-        self.mapsTable.setShowGrid(False)
-        self.mapsTable.setSelectionBehavior(QtWidgets.QAbstractItemView.SelectionBehavior.SelectRows)
-        self.mapsTable.setSelectionMode(QtWidgets.QAbstractItemView.SelectionMode.SingleSelection)
-        self.mapsTable.setEditTriggers(QtWidgets.QAbstractItemView.EditTrigger.NoEditTriggers)
-        self.mapsTable.setAlternatingRowColors(True)
-        self.mapsTable.setIconSize(QtCore.QSize(142, 80))
-        self.mapsTable.setWordWrap(False)
-        hv = self.mapsTable.horizontalHeader()
-        hv.setSectionResizeMode(0, QtWidgets.QHeaderView.ResizeMode.Fixed)
-        hv.resizeSection(0, 165)
-        hv.setSectionResizeMode(1, QtWidgets.QHeaderView.ResizeMode.Stretch)
-        hv.setSectionResizeMode(2, QtWidgets.QHeaderView.ResizeMode.Stretch)
-        hv.setSectionResizeMode(3, QtWidgets.QHeaderView.ResizeMode.ResizeToContents)
-        hv.setSectionResizeMode(4, QtWidgets.QHeaderView.ResizeMode.Fixed)
-        hv.resizeSection(4, 105)
-        root.addWidget(self.mapsTable, 1)
+        online=QtWidgets.QWidget(); ol=QtWidgets.QVBoxLayout(online); ol.setContentsMargins(0,0,0,0); ol.setSpacing(8)
+        self.onlineMapsSearch=QtWidgets.QLineEdit(); self.onlineMapsSearch.setObjectName("mapsSearch"); self.onlineMapsSearch.setPlaceholderText("Search Worldspawn map index…   Ctrl+F"); self.onlineMapsSearch.setClearButtonEnabled(True); ol.addWidget(self.onlineMapsSearch)
+        self.onlineMapsHeading=QtWidgets.QLabel("LATEST MAPS — Worldspawn Index"); self.onlineMapsHeading.setObjectName("onlineMapsHeading"); ol.addWidget(self.onlineMapsHeading)
+        self.onlineMapsTable=QtWidgets.QTableWidget(0,7); self.onlineMapsTable.setObjectName("mapsTable"); self.onlineMapsTable.setHorizontalHeaderLabels(["LEVELSHOT","MAP","PAK / AUTHOR","SIZE","GAMETYPE","RELEASED",""])
+        self.onlineMapsTable.verticalHeader().setVisible(False); self.onlineMapsTable.setShowGrid(False); self.onlineMapsTable.setEditTriggers(QtWidgets.QAbstractItemView.EditTrigger.NoEditTriggers); self.onlineMapsTable.setIconSize(QtCore.QSize(144,81))
+        h=self.onlineMapsTable.horizontalHeader(); h.setSectionResizeMode(0,QtWidgets.QHeaderView.ResizeMode.Fixed); h.resizeSection(0,164); h.setSectionResizeMode(1,QtWidgets.QHeaderView.ResizeMode.Stretch); h.setSectionResizeMode(2,QtWidgets.QHeaderView.ResizeMode.Stretch); h.setSectionResizeMode(3,QtWidgets.QHeaderView.ResizeMode.Fixed); h.resizeSection(3,82); h.setSectionResizeMode(4,QtWidgets.QHeaderView.ResizeMode.ResizeToContents); h.setSectionResizeMode(5,QtWidgets.QHeaderView.ResizeMode.Fixed); h.resizeSection(5,105); h.setSectionResizeMode(6,QtWidgets.QHeaderView.ResizeMode.Fixed); h.resizeSection(6,112)
+        ol.addWidget(self.onlineMapsTable,1); self.mapsStack.addWidget(online)
 
-        self.localMaps = []
-        self.mapCatalogWorker = None
+        self.localMaps=[]; self.mapCatalogWorker=None; self.onlineMapsWorker=None; self.onlineDownloadWorkers=[]; self.mapsGametypeSort=0; self.mapsLocationFilter="All"; self.mapsMode="local"; self.onlineLatestLoaded=False; self.onlineSearchSerial=0
+        self.onlineSearchTimer=QtCore.QTimer(self); self.onlineSearchTimer.setSingleShot(True); self.onlineSearchTimer.setInterval(450); self.onlineSearchTimer.timeout.connect(self._run_online_search); self.onlineMapsSearch.textChanged.connect(self._online_search_changed)
+        self.mapShortcuts=[]
+        def shortcut(key,fn):
+            q=QtGui.QShortcut(QtGui.QKeySequence(key),self); q.setContext(QtCore.Qt.ShortcutContext.WindowShortcut); q.activated.connect(fn); q.setEnabled(False); self.mapShortcuts.append(q)
+        shortcut("F1",lambda:self.mapsKeys.setVisible(not self.mapsKeys.isVisible()) if self.mapsMode=="local" else None); shortcut("Up",lambda:self._step_map(-1) if self.mapsMode=="local" else None); shortcut("Down",lambda:self._step_map(1) if self.mapsMode=="local" else None); shortcut("Return",lambda:self.play_selected_map() if self.mapsMode=="local" else None); shortcut("O",lambda:self.open_selected_map_location() if self.mapsMode=="local" else None); shortcut("Delete",lambda:self.delete_selected_map_pak() if self.mapsMode=="local" else None); shortcut("F3",lambda:self.cycle_maps_gametype_sort() if self.mapsMode=="local" else None); shortcut("F4",lambda:self.cycle_maps_location_filter() if self.mapsMode=="local" else None)
+        self.mapsTable.itemDoubleClicked.connect(lambda _:self.play_selected_map())
         return page
 
+    def set_maps_mode(self,mode):
+        self.mapsMode="online" if mode=="online" else "local"; online=self.mapsMode=="online"; self.mapsStack.setCurrentIndex(1 if online else 0); self.mapsRefreshButton.setVisible(not online)
+        for b,a in ((self.mapsLocalTab,not online),(self.mapsOnlineTab,online)):
+            b.setProperty("active",a); b.style().unpolish(b); b.style().polish(b)
+        if online:
+            if not self.onlineLatestLoaded and not self.onlineMapsSearch.text().strip(): self._start_online_worker("latest","")
+        else:self.mapsStatus.setText(f"{len(self.localMaps)} local map(s)")
+
+    def _online_search_changed(self,text):
+        q=text.strip(); self.onlineSearchTimer.stop()
+        if not q:self.onlineMapsHeading.setText("LATEST MAPS — Worldspawn Index"); self._start_online_worker("latest","")
+        else:self.onlineMapsHeading.setText("SEARCH RESULTS — Worldspawn Index"); self.onlineMapsTable.setRowCount(0); self.onlineSearchTimer.start()
+
+    def _run_online_search(self):
+        q=self.onlineMapsSearch.text().strip()
+        if q:self._start_online_worker("search",q)
+
+    def _start_online_worker(self,mode,q):
+        self.onlineSearchSerial+=1; serial=self.onlineSearchSerial; self.mapsStatus.setText("Searching Worldspawn index…" if mode=="search" else "Loading Worldspawn map index…")
+        w = OnlineMapsWorker(mode, q, 1, self)
+        self.onlineMapsWorker = w
+        w.ready.connect(lambda data, src, meta, n=serial: self._online_ready(n, data, src, meta))
+        w.failed.connect(lambda e, n=serial: self._online_failed(n, e))
+        w.start()
+
+    def _online_failed(self, serial, error):
+        if serial != self.onlineSearchSerial:
+            return
+        print(f"[online maps] ERROR: {error}")
+        short = str(error).replace("\\n", " ").strip()
+        if len(short) > 150:
+            short = short[:147] + "..."
+        self.mapsStatus.setText(f"Online error: {short}")
+        self.onlineMapsTable.setRowCount(0)
+
+    def _online_ready(self, serial, items, source, meta=None):
+        if serial != self.onlineSearchSerial: return
+        if source == "Worldspawn Index": self.onlineLatestLoaded = True
+        total = int((meta or {}).get("total") or len(items))
+        self.mapsStatus.setText(f"{len(items)} shown • {total} indexed map(s) • {source}" if items else f"No results • {source}")
+        t=self.onlineMapsTable; t.setRowCount(0)
+        for data in items:
+            r=t.rowCount(); t.insertRow(r); t.setRowHeight(r,82)
+            shot=QtWidgets.QTableWidgetItem(); shot.setData(QtCore.Qt.ItemDataRole.UserRole,data); t.setItem(r,0,shot)
+            for col,val in ((1,data.get("name","")),(2,data.get("pak") or data.get("author") or "—"),(3,data.get("size") or "—"),(4,data.get("gametype") or "—"),(5,data.get("released") or "—")):
+                t.setItem(r,col,QtWidgets.QTableWidgetItem(str(val)))
+            button=QtWidgets.QPushButton("LOCKED" if data.get("locked") else "DOWNLOAD")
+            button.setObjectName("mapDownloadButton"); button.setEnabled(not data.get("locked"))
+            button.clicked.connect(lambda checked=False,x=dict(data):self.download_online_map(x)); t.setCellWidget(r,6,button)
+            thumb=str(data.get("levelshot_url") or "")
+            if thumb and source=="Worldspawn Index":
+                worker=WorldspawnImageWorker(r,thumb,self)
+                self._worldspawnShotWorkers.append(worker)
+                worker.ready.connect(self._worldspawn_levelshot_url_ready)
+                worker.finished.connect(lambda w=worker:self._worldspawn_shot_worker_done(w))
+                worker.start()
+            elif thumb:
+                reply=self._mapNetwork.get(QtNetwork.QNetworkRequest(QtCore.QUrl(thumb)))
+                reply.setProperty("online_map_row",r)
+                reply.finished.connect(lambda rep=reply:self._online_levelshot_ready(rep))
+            elif source=="Worldspawn Index" and data.get("defrag_map_name"):
+                worker=DefragThumbnailWorker(r,str(data.get("defrag_map_name")),self)
+                self._worldspawnShotWorkers.append(worker)
+                worker.ready.connect(self._defrag_thumbnail_url_ready)
+                worker.finished.connect(lambda w=worker:self._worldspawn_shot_worker_done(w))
+                worker.start()
+
+    def _worldspawn_shot_worker_done(self, worker):
+        try:self._worldspawnShotWorkers.remove(worker)
+        except ValueError:pass
+        worker.deleteLater()
+
+    def _worldspawn_levelshot_url_ready(self,row,data):
+        if not data or not (0 <= row < self.onlineMapsTable.rowCount()):return
+        pix=QtGui.QPixmap()
+        if not pix.loadFromData(bytes(data)):return
+        label=self.onlineMapsTable.cellWidget(row,0)
+        if label:
+            label.setPixmap(pix.scaled(150,80,QtCore.Qt.AspectRatioMode.KeepAspectRatioByExpanding,QtCore.Qt.TransformationMode.SmoothTransformation))
+
+    def _defrag_thumbnail_url_ready(self,row,url):
+        if not url or not (0 <= row < self.onlineMapsTable.rowCount()):return
+        req=QtNetwork.QNetworkRequest(QtCore.QUrl(url))
+        reply=self._mapNetwork.get(req)
+        reply.setProperty("online_map_row",row)
+        reply.finished.connect(lambda rep=reply:self._online_levelshot_ready(rep))
+
+    def _online_levelshot_ready(self, reply):
+        try:
+            row=int(reply.property("online_map_row")); raw=bytes(reply.readAll()); pix=QtGui.QPixmap()
+            if raw and pix.loadFromData(raw) and 0 <= row < self.onlineMapsTable.rowCount():
+                item=self.onlineMapsTable.item(row,0)
+                if item is not None:item.setIcon(QtGui.QIcon(pix))
+        finally:
+            reply.deleteLater()
+
+    def download_online_map(self,item):
+        w=OnlineMapDownloadWorker(item,self); self.onlineDownloadWorkers.append(w); w.progress.connect(lambda p:self.mapsStatus.setText(f"Downloading… {p}%")); w.ready.connect(self._online_download_ready); w.failed.connect(lambda e:self.mapsStatus.setText(f"Download failed: {e}")); w.finished.connect(lambda x=w:self._online_download_done(x)); w.start()
+
+    def _online_download_done(self,w):
+        if w in self.onlineDownloadWorkers:self.onlineDownloadWorkers.remove(w)
+
+    def _online_download_ready(self,name):
+        self.mapsStatus.setText(f"Downloaded {name}"); self.refresh_maps(force=False)
+
+
     def _map_levelshot_pixmap(self, item):
-        candidates = []
+        """Resolve curated + persistent levelshots with & aliases and ! priority."""
+        bsp = str(item.get("map", "") or "").strip().casefold()
+        supported = {".jpg", ".jpeg", ".png", ".webp", ".tga"}
+
+        def matches(directory):
+            priority, normal = [], []
+            if not directory.is_dir() or not bsp:
+                return priority, normal
+            try:
+                for path in directory.iterdir():
+                    if not path.is_file() or path.suffix.casefold() not in supported:
+                        continue
+                    stem = path.stem
+                    important = stem.startswith("!")
+                    if important:
+                        stem = stem[1:]
+                    aliases = [part.strip().casefold() for part in stem.split("&") if part.strip()]
+                    if bsp in aliases:
+                        (priority if important else normal).append(path)
+            except OSError:
+                pass
+            priority.sort(key=lambda p: p.name.casefold())
+            normal.sort(key=lambda p: p.name.casefold())
+            return priority, normal
+
+        managed_priority, managed_normal = matches(MAP_LEVELSHOTS_DIR)
+        local_priority, local_normal = matches(MAP_DISCOVERED_LEVELSHOTS_DIR)
+
+        # Any ! override wins. Launcher-managed overrides are deterministic first.
+        candidates = managed_priority + local_priority + managed_normal + local_normal
+
         levelshot = str(item.get("levelshot", "") or "")
         if levelshot:
             candidates.append(Path(levelshot))
-        bsp = str(item.get("map", "") or "")
-        for ext in (".jpg", ".jpeg", ".png", ".webp", ".tga"):
-            candidates.append(MAP_LEVELSHOTS_DIR / _safe_levelshot_name(bsp, ext))
+
         candidates.extend([
             MAP_UNKNOWN_LEVELSHOT,
             ASSETS_DIR / "servers" / "levelshots" / "unknownmap.png",
@@ -7065,15 +7732,33 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
         self.mapsStatus.setText(f"{len(self.localMaps)} local map(s){suffix}")
         self._populate_maps_table()
 
+    @staticmethod
+    def _map_gametype_sort_key(item):
+        order = {"FFA": 0, "TDM": 1, "Duel": 2, "CTF": 3, "Unknown": 9}
+        gt = str(item.get("gametype", "Unknown") or "Unknown")
+        first = gt.split(" / ", 1)[0]
+        return (order.get(first, 8), gt.casefold(), str(item.get("name", "")).casefold())
+
+    def _visible_maps(self):
+        items = list(self.localMaps)
+        if self.mapsLocationFilter != "All":
+            items = [x for x in items if x.get("location") == self.mapsLocationFilter]
+        if self.mapsGametypeSort == 1:
+            items.sort(key=self._map_gametype_sort_key)
+        elif self.mapsGametypeSort == 2:
+            items.sort(key=self._map_gametype_sort_key, reverse=True)
+        else:
+            items.sort(key=lambda x: (str(x.get("name", "")).casefold(), str(x.get("pak", "")).casefold()))
+        return items
+
     def _populate_maps_table(self):
         table = self.mapsTable
         table.setUpdatesEnabled(False)
         table.setRowCount(0)
-        for item in self.localMaps:
+        for item in self._visible_maps():
             row = table.rowCount()
             table.insertRow(row)
-            table.setRowHeight(row, 92)
-
+            table.setRowHeight(row, 94)
             shot_item = QtWidgets.QTableWidgetItem()
             pix = self._map_levelshot_pixmap(item)
             if not pix.isNull():
@@ -7082,23 +7767,41 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
             table.setItem(row, 0, shot_item)
 
             map_item = QtWidgets.QTableWidgetItem(str(item.get("name") or item.get("map") or "Unknown"))
-            map_item.setToolTip(f"BSP: {item.get('map', '')}")
+            map_item.setToolTip(f"BSP: {item.get('map', '')}\nLocation: {item.get('location', 'External')}")
             table.setItem(row, 1, map_item)
             pak_item = QtWidgets.QTableWidgetItem(str(item.get("pak", "")))
             pak_item.setToolTip(str(item.get("pak_path", "")))
             table.setItem(row, 2, pak_item)
-            table.setItem(row, 3, QtWidgets.QTableWidgetItem(str(item.get("gametype", "Unknown"))))
+            size_item = QtWidgets.QTableWidgetItem(_human_file_size(item.get("pak_size")))
+            size_item.setTextAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
+            table.setItem(row, 3, size_item)
+            table.setItem(row, 4, QtWidgets.QTableWidgetItem(str(item.get("gametype", "Unknown"))))
 
             play = GlowButton("PLAY")
-            play.setObjectName("serverToolbarButton")
+            play.setObjectName("mapPlayButton")
             play.setProperty("bsp", str(item.get("map", "")))
-            play.clicked.connect(
-                lambda checked=False, b=play:
-                self.play_local_map(str(b.property("bsp") or ""))
+            play.clicked.connect(lambda checked=False, b=play: self.play_local_map(str(b.property("bsp") or "")))
+            table.setCellWidget(row, 5, play)
+
+            delete = QtWidgets.QPushButton("DELETE")
+            delete.setObjectName("mapDeleteButton")
+            delete.setProperty("pak_path", str(item.get("pak_path", "")))
+            protected = self._map_pak_is_protected(Path(str(item.get("pak_path", "") or "")))
+            delete.setEnabled(not protected)
+            delete.setToolTip(
+                "Protected Q3/Q3Elite content cannot be deleted."
+                if protected else
+                "Delete this PK3 from disk. Extracted levelshots are kept."
             )
-            table.setCellWidget(row, 4, play)
+            delete.clicked.connect(
+                lambda checked=False, b=delete:
+                self.delete_map_pak(Path(str(b.property("pak_path") or "")))
+            )
+            table.setCellWidget(row, 6, delete)
         table.setUpdatesEnabled(True)
         self._filter_maps_table(self.mapsSearch.text())
+        if table.rowCount() and table.currentRow() < 0:
+            table.selectRow(0)
 
     def _filter_maps_table(self, query):
         if not hasattr(self, "mapsTable"):
@@ -7107,10 +7810,114 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
         for row in range(self.mapsTable.rowCount()):
             data_item = self.mapsTable.item(row, 0)
             data = data_item.data(QtCore.Qt.ItemDataRole.UserRole) if data_item else {}
-            haystack = " ".join(
-                str(data.get(k, "")) for k in ("name", "map", "pak", "gametype")
-            ).casefold()
-            self.mapsTable.setRowHidden(row, bool(q and q not in haystack))
+            haystack = " ".join(str(data.get(k, "")) for k in ("name", "map", "pak", "gametype", "location")).casefold()
+            search_hidden = bool(q and q not in haystack)
+            location_hidden = (
+                self.mapsLocationFilter != "All"
+                and data.get("location") != self.mapsLocationFilter
+            )
+            self.mapsTable.setRowHidden(row, search_hidden or location_hidden)
+
+    def focus_maps_search(self):
+        self.mapsSearch.setFocus()
+        self.mapsSearch.selectAll()
+
+    def cycle_maps_gametype_sort(self):
+        self.mapsGametypeSort = (self.mapsGametypeSort + 1) % 3
+        labels = {0: "F3  SORT: NAME", 1: "F3  GAMETYPE ↑", 2: "F3  GAMETYPE ↓"}
+        self.mapsSortButton.setText(labels[self.mapsGametypeSort])
+        self.mapsSortButton.setProperty("active", self.mapsGametypeSort != 0)
+        self.mapsSortButton.style().unpolish(self.mapsSortButton)
+        self.mapsSortButton.style().polish(self.mapsSortButton)
+        self._populate_maps_table()
+
+    def cycle_maps_location_filter(self):
+        modes = ("All", "Preinstalled", "Downloaded")
+        try:
+            index = modes.index(self.mapsLocationFilter)
+        except ValueError:
+            index = 0
+        self.mapsLocationFilter = modes[(index + 1) % len(modes)]
+        self.mapsLocationButton.setText(f"F4  {self.mapsLocationFilter.upper()}")
+        self.mapsLocationButton.setProperty("active", self.mapsLocationFilter != "All")
+        self.mapsLocationButton.style().unpolish(self.mapsLocationButton)
+        self.mapsLocationButton.style().polish(self.mapsLocationButton)
+        # Instant filter: do not rebuild rows or reload levelshots.
+        self._filter_maps_table(self.mapsSearch.text())
+
+    def _selected_map_data(self):
+        row = self.mapsTable.currentRow()
+        if row < 0:
+            return None
+        item = self.mapsTable.item(row, 0)
+        data = item.data(QtCore.Qt.ItemDataRole.UserRole) if item else None
+        return data if isinstance(data, dict) else None
+
+    def _step_map(self, direction):
+        if not hasattr(self, "mapsTable") or self.mapsTable.rowCount() <= 0:
+            return
+        visible = [row for row in range(self.mapsTable.rowCount()) if not self.mapsTable.isRowHidden(row)]
+        if not visible:
+            return
+        current = self.mapsTable.currentRow()
+        try:
+            pos = visible.index(current)
+            pos = (pos + int(direction)) % len(visible)
+        except ValueError:
+            pos = 0 if direction >= 0 else len(visible) - 1
+        row = visible[pos]
+        self.mapsTable.selectRow(row)
+        self.mapsTable.scrollToItem(
+            self.mapsTable.item(row, 1),
+            QtWidgets.QAbstractItemView.ScrollHint.PositionAtCenter,
+        )
+
+    @staticmethod
+    def _map_pak_is_protected(pak_path):
+        return Path(pak_path).name.casefold() in PROTECTED_MAP_PAKS
+
+    def delete_selected_map_pak(self):
+        data = self._selected_map_data()
+        if data:
+            self.delete_map_pak(Path(str(data.get("pak_path", "") or "")))
+
+    def delete_map_pak(self, pak):
+        pak = Path(pak)
+        if not pak.is_file():
+            return
+        if self._map_pak_is_protected(pak):
+            self.mapsStatus.setText(f"Protected: {pak.name}")
+            return
+
+        try:
+            pak.unlink()
+        except OSError as error:
+            self.qerror(f"Could not delete map PAK:\n{error}")
+            return
+
+        # Del is intentionally immediate. Persistent AppData levelshots stay cached.
+        self.mapsStatus.setText(f"Deleted {pak.name}")
+        self.refresh_maps(force=False)
+
+    def play_selected_map(self):
+        data = self._selected_map_data()
+        if data:
+            self.play_local_map(data.get("map", ""))
+
+    def open_selected_map_location(self):
+        data = self._selected_map_data()
+        if not data:
+            return
+        pak = Path(str(data.get("pak_path", "") or ""))
+        if not pak.is_file():
+            return
+        try:
+            if sys.platform.startswith("win"):
+                subprocess.Popen(["explorer.exe", "/select,", str(pak)])
+            else:
+                QtGui.QDesktopServices.openUrl(QtCore.QUrl.fromLocalFile(str(pak.parent)))
+        except Exception:
+            QtGui.QDesktopServices.openUrl(QtCore.QUrl.fromLocalFile(str(pak.parent)))
 
     def play_local_map(self, bsp_name):
         bsp_name = str(bsp_name or "").strip()
@@ -7125,8 +7932,6 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
             return
         try:
             import subprocess
-            # The existing BAT forwards %*, so this launches:
-            # XQ3E_Vulkan.x64.exe ... +devmap <BSP name>
             subprocess.Popen(
                 [str(launcher_bat), "+devmap", bsp_name],
                 cwd=str(launcher_bat.parent),
@@ -7515,10 +8320,13 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
     def _sync_media_shortcuts(self, page):
         screenshots_active = page == "screenshots"
         demos_active = page == "demos"
+        maps_active = page == "maps"
         for shortcut in getattr(self, "screenshotShortcuts", []):
             shortcut.setEnabled(screenshots_active)
         for shortcut in getattr(self, "demoShortcuts", []):
             shortcut.setEnabled(demos_active)
+        for shortcut in getattr(self, "mapShortcuts", []):
+            shortcut.setEnabled(maps_active)
 
     def show_page(self, page):
         self._sync_media_shortcuts(page)
@@ -8054,7 +8862,8 @@ def main():
         # External stylesheet is now the single source of visual styling.
         style_path = LAUNCHER_DIR / "modules" / "style.css"
         if style_path.is_file():
-            app.setStyleSheet(style_path.read_text(encoding="utf-8"))
+            stylesheet = style_path.read_text(encoding="utf-8")
+            app.setStyleSheet(stylesheet)
         else:
             print(f"[warning] UI stylesheet not found: {style_path}")
 

@@ -923,3 +923,119 @@ QFrame#mediaPreviewFrame,
 QListWidget#mediaList {
     min-height: 0px;
 }
+
+/* ==========================================================================
+   MAPS
+   ========================================================================== */
+QWidget#mapsPage { background: transparent; }
+
+QLineEdit#mapsSearch {
+    min-height: 35px; padding: 0 12px;
+    color: #ded8d1; background: rgba(4,5,7,205);
+    border: 1px solid rgba(155,145,135,52); border-radius: 7px;
+    selection-background-color: rgba(145,28,18,205);
+}
+QLineEdit#mapsSearch:hover { border-color: rgba(190,120,55,100); }
+QLineEdit#mapsSearch:focus {
+    color: #fff; background: rgba(9,7,8,225);
+    border-color: rgba(215,145,55,185);
+}
+
+QLabel#mapsHint {
+    color: rgba(185,180,173,135);
+    padding: 0 3px 2px 3px; font-size: 10px;
+}
+
+QPushButton#mapToolbarButton {
+    min-height: 35px; padding: 0 13px;
+    color: #b9b3ac; background: rgba(7,7,9,185);
+    border: 1px solid rgba(155,145,135,50); border-radius: 7px;
+}
+QPushButton#mapToolbarButton:hover {
+    color: #f3eee8; background: rgba(53,10,9,180);
+    border-color: rgba(180,70,38,125);
+}
+QPushButton#mapToolbarButton[active="true"] {
+    color: #efbd69; background: rgba(82,15,10,195);
+    border-color: rgba(210,110,48,165);
+}
+
+QTableWidget#mapsTable {
+    color: #ddd8d2; background: rgba(2,4,6,158);
+    alternate-background-color: transparent;
+    border: 1px solid rgba(145,135,125,42); border-radius: 8px;
+    gridline-color: transparent; outline: none;
+}
+QTableWidget#mapsTable::item {
+    padding: 4px 10px; background: rgba(4,6,8,128);
+    border: none; border-bottom: 1px solid rgba(150,145,138,25);
+}
+QTableWidget#mapsTable::item:selected {
+    color: #fff0d4; background: rgba(105,22,14,118);
+    border-bottom: 1px solid rgba(190,85,40,85);
+}
+QTableWidget#mapsTable QHeaderView::section {
+    min-height: 31px; padding: 0 10px;
+    color: #d8d0c7; background: rgba(13,10,10,232);
+    border: none; border-right: 1px solid rgba(150,140,130,22);
+    border-bottom: 1px solid rgba(190,125,35,105);
+    font-size: 10px; font-weight: 700; letter-spacing: 1px;
+}
+QTableWidget#mapsTable QTableCornerButton::section {
+    background: rgba(13,10,10,232); border: none;
+}
+QTableWidget#mapsTable QScrollBar:vertical {
+    width: 8px; background: rgba(0,0,0,100); margin: 0;
+}
+QTableWidget#mapsTable QScrollBar::handle:vertical {
+    min-height: 34px; border-radius: 4px; background: rgba(145,35,22,175);
+}
+QTableWidget#mapsTable QScrollBar::handle:vertical:hover {
+    background: rgba(190,65,30,205);
+}
+QTableWidget#mapsTable QScrollBar::add-line:vertical,
+QTableWidget#mapsTable QScrollBar::sub-line:vertical { height: 0; }
+
+QPushButton#mapPlayButton,
+QPushButton#mapDeleteButton {
+    min-height: 34px; margin: 24px 6px;
+    padding: 0 8px; border-radius: 7px; font-weight: 700;
+}
+QPushButton#mapPlayButton {
+    color: #e6d9c5; background: rgba(37,18,5,178);
+    border: 1px solid rgba(195,128,35,125);
+}
+QPushButton#mapPlayButton:hover {
+    color: #ffd98c; background: rgba(85,28,8,205);
+    border-color: rgba(225,157,28,205);
+}
+QPushButton#mapDeleteButton {
+    color: #b99f9b; background: rgba(24,7,8,145);
+    border: 1px solid rgba(145,45,45,80);
+}
+QPushButton#mapDeleteButton:hover {
+    color: #f2b7b2; background: rgba(92,10,14,190);
+    border-color: rgba(190,45,45,160);
+}
+QPushButton#mapDeleteButton:disabled {
+    color: rgba(165,155,150,50); background: rgba(10,10,11,80);
+    border-color: rgba(130,120,115,25);
+}
+
+/* Maps v4.1 compact action columns */
+QPushButton#mapPlayButton, QPushButton#mapDeleteButton {
+    margin: 25px 5px; padding: 0 4px; min-width: 0; font-size: 9px;
+}
+QPushButton#mapDeleteButton { font-size: 8px; }
+
+/* Maps Local / Online mode */
+QPushButton#mapModeButton { min-width:72px; min-height:31px; padding:0 13px; color:rgba(220,214,205,145); background:rgba(7,7,9,120); border:1px solid rgba(145,135,125,34); border-radius:6px; font-weight:700; }
+QPushButton#mapModeButton:hover { color:#f0e6d8; border-color:rgba(195,105,45,115); }
+QPushButton#mapModeButton[active="true"] { color:#f0b54f; background:rgba(82,15,10,175); border-color:rgba(210,110,48,155); }
+QLabel#onlineMapsHeading { color:#d99b34; padding:3px 4px; font-weight:700; letter-spacing:1px; }
+QPushButton#mapDownloadButton { min-height:34px; margin:17px 5px; padding:0 7px; color:#e4d7c4; background:rgba(34,17,5,178); border:1px solid rgba(195,128,35,120); border-radius:7px; font-weight:700; }
+QPushButton#mapDownloadButton:hover { color:#ffd98c; background:rgba(85,28,8,205); border-color:rgba(225,157,28,205); }
+QPushButton#mapDownloadButton:disabled { color:rgba(165,155,150,55); background:rgba(10,10,11,80); border-color:rgba(130,120,115,25); }
+
+QLineEdit#settingsTokenEdit { min-height:34px; padding:0 10px; color:#ded8d1; background:rgba(4,5,7,205); border:1px solid rgba(155,145,135,52); border-radius:6px; }
+QLineEdit#settingsTokenEdit:focus { color:#fff; border-color:rgba(215,145,55,185); background:rgba(9,7,8,225); }
