@@ -15,6 +15,8 @@ import zipfile
 import time
 import uuid
 import subprocess
+import base64
+import datetime
 
 from pathlib import Path
 
@@ -1725,6 +1727,7 @@ DEFAULT_SETTINGS = {
     "pause_server_refresh_unfocused": False,
     "screenshot_source": "reshade",
     "suppress_startup_notification_sound": True,
+    "statistics_profile_url": "",
 }
 
 
@@ -1778,6 +1781,8 @@ def load_launcher_settings():
                         elif key == "screenshot_source":
                             value = str(raw[key]).lower()
                             data[key] = value if value in ("reshade", "osp", "both") else "reshade"
+                        elif key == "statistics_profile_url":
+                            data[key] = str(raw[key] or "").strip()
                         else:
                             data[key] = bool(raw[key])
 
@@ -4429,7 +4434,7 @@ def _map_location(pk3_path):
         cf = rel.as_posix().casefold()
     except Exception:
         return "External"
-    if cf.startswith("mods/osp/baseq3/"):
+    if cf.startswith("mods/osp/baseq3/") or cf.startswith("mods/baseq3/"):
         return "Downloaded"
     if cf.startswith("mods/maps/") or cf.startswith("maps/"):
         return "Preinstalled"
@@ -4893,6 +4898,13 @@ def _online_map_key(item):
         return "lvlworld:"+str(item.get("lvl_id") or item.get("map") or "").casefold()
     return source.casefold()+":"+str(item.get("pak") or item.get("map") or "").casefold()
 
+def _online_partial_path(item):
+    """Stable transport cache path; never masquerades as an installable PK3."""
+    key=_online_map_key(item)
+    safe=re.sub(r'[^A-Za-z0-9._-]+',"_",key).strip("._") or "online_map"
+    return DOWNLOADED_MAPS_DIR/(safe+".download.part")
+
+
 def _online_installed_registry():
     try:
         data=json.loads(ONLINE_MAPS_INSTALLED_FILE.read_text(encoding="utf-8"))
@@ -5326,72 +5338,111 @@ try {
 
 
 class OnlineMapDownloadWorker(QtCore.QThread):
-    ready=pyqtSignal(str); failed=pyqtSignal(str); progress=pyqtSignal(int)
+    ready=pyqtSignal(str); failed=pyqtSignal(str); progress=pyqtSignal(int); paused=pyqtSignal()
+
     def __init__(self,item,parent=None):
-        super().__init__(parent); self.item=dict(item)
+        super().__init__(parent)
+        self.item=dict(item)
+        self._pause_requested=False
+
+    def request_pause(self):
+        self._pause_requested=True
+
     def run(self):
+        part=_online_partial_path(self.item)
         try:
             url=self.item.get("download_url","")
             resolved_name=""
             if self.item.get("source")=="LvLWorld":
                 url,resolved_name=_lvlworld_resolve_download(self.item)
-            if not url: raise RuntimeError("No downloadable package is exposed by this source.")
-            DOWNLOADED_MAPS_DIR.mkdir(parents=True,exist_ok=True); TEMP_DIR.mkdir(parents=True,exist_ok=True)
-            name=Path(str(resolved_name or self.item.get("pak") or Path(urllib.parse.urlparse(url).path).name or "online_map.pk3").replace("\\","/")).name
-            if not name.casefold().endswith((".pk3", ".zip")):
-                name = (self.item.get("map") or "online_map") + ".pk3"
-            tmp=TEMP_DIR/("online_"+name)
+            if not url:
+                raise RuntimeError("No downloadable package is exposed by this source.")
+
+            DOWNLOADED_MAPS_DIR.mkdir(parents=True,exist_ok=True)
+            response_name=Path(str(resolved_name or self.item.get("pak") or Path(urllib.parse.urlparse(url).path).name or "online_map").replace("\\","/")).name
             host=(urllib.parse.urlparse(url).hostname or "").casefold()
             context=ssl._create_unverified_context() if (host=="lvlworld.com" or host.endswith(".lvlworld.com")) else None
-            response_name = name
-            keep_resolved_name=bool(resolved_name)
 
-            req=urllib.request.Request(url,headers={"User-Agent":"Quake3EliteLauncher/0.1"})
-            response=urllib.request.urlopen(req,timeout=30,context=context)
+            existing=part.stat().st_size if part.is_file() else 0
+            headers={"User-Agent":"Quake3EliteLauncher/0.1"}
+            if existing:
+                headers["Range"]=f"bytes={existing}-"
+            req=urllib.request.Request(url,headers=headers)
 
-            with response as r,tmp.open("wb") as f:
-                cd = r.headers.get("Content-Disposition", "")
-                m = re.search(r'filename\*?=(?:UTF-8\'\')?["\']?([^;"\']+)', cd, re.I)
-                if m and not keep_resolved_name:
-                    response_name = Path(urllib.parse.unquote(m.group(1).strip())).name
-                final_url_name = Path(urllib.parse.urlparse(r.geturl()).path).name
-                if not keep_resolved_name and final_url_name.casefold().endswith((".pk3", ".zip")):
-                    response_name = urllib.parse.unquote(final_url_name)
-                total=int(r.headers.get("Content-Length","0") or 0); done=0
-                while True:
-                    b=r.read(262144)
-                    if not b: break
-                    f.write(b); done+=len(b)
-                    if total:self.progress.emit(min(100,int(done*100/total)))
-            # PK3 uses the ZIP container format, so zipfile.is_zipfile(tmp) is
-            # also True for a perfectly valid direct PK3 download. Decide from
-            # the canonical response filename first.
-            response_name=Path(str(response_name).replace("\\","/")).name
-            if response_name.casefold().endswith(".pk3"):
-                target=DOWNLOADED_MAPS_DIR/response_name
-                if target.exists():
-                    target.unlink()
-                tmp.replace(target)
-                _remember_online_install(self.item,[target.name])
-                self.ready.emit(target.name)
-            elif response_name.casefold().endswith(".zip"):
-                installed=[]
-                with zipfile.ZipFile(tmp) as z:
-                    for info in z.infolist():
-                        if info.is_dir() or not info.filename.casefold().endswith(".pk3"):
-                            continue
+            with urllib.request.urlopen(req,timeout=30,context=context) as r:
+                status=int(getattr(r,"status",None) or r.getcode())
+                cd=r.headers.get("Content-Disposition","")
+                m=re.search(r'filename\*?=(?:UTF-8\'\')?["\']?([^;"\']+)',cd,re.I)
+                if m:
+                    response_name=Path(urllib.parse.unquote(m.group(1).strip())).name
+                final_url_name=Path(urllib.parse.urlparse(r.geturl()).path).name
+                if final_url_name.casefold().endswith((".pk3",".zip")):
+                    response_name=urllib.parse.unquote(final_url_name)
+
+                resumed=bool(existing and status==206)
+                if existing and not resumed:
+                    existing=0
+                content_len=int(r.headers.get("Content-Length","0") or 0)
+                total=existing+content_len if content_len else 0
+                done=existing
+
+                with part.open("ab" if resumed else "wb") as f:
+                    # Emit after the file is open and the request is established,
+                    # so the UI definitely switches DOWNLOAD -> PAUSE.
+                    if total:self.progress.emit(min(99,int(done*100/total)))
+                    else:self.progress.emit(0)
+                    while True:
+                        if self._pause_requested:
+                            f.flush()
+                            self.paused.emit()
+                            return
+                        chunk=r.read(262144)
+                        if not chunk:break
+                        f.write(chunk); done+=len(chunk)
+                        if total:self.progress.emit(min(99,int(done*100/total)))
+
+            if not zipfile.is_zipfile(part):
+                raise RuntimeError("Downloaded package is incomplete or is not a valid ZIP/PK3.")
+
+            # Do not trust the URL/name extension. A LvLWorld .zip may contain
+            # one or more PK3s; a direct Worldspawn PK3 is itself a ZIP archive.
+            with zipfile.ZipFile(part,"r") as z:
+                bad=z.testzip()
+                if bad:raise RuntimeError(f"Archive verification failed at {bad}.")
+                infos=[x for x in z.infolist() if not x.is_dir()]
+                nested=[x for x in infos if x.filename.casefold().endswith(".pk3")]
+                direct_bsp=any(x.filename.casefold().startswith("maps/") and x.filename.casefold().endswith(".bsp") for x in infos)
+
+            installed=[]
+            if nested:
+                with zipfile.ZipFile(part,"r") as z:
+                    for info in nested:
                         target=DOWNLOADED_MAPS_DIR/Path(info.filename).name
-                        with z.open(info) as a,target.open("wb") as b:
-                            shutil.copyfileobj(a,b)
+                        with z.open(info) as source,target.open("wb") as dest:
+                            shutil.copyfileobj(source,dest)
+                        if not zipfile.is_zipfile(target):
+                            target.unlink(missing_ok=True)
+                            raise RuntimeError(f"Extracted {target.name} is not a valid PK3.")
                         installed.append(target.name)
-                tmp.unlink(missing_ok=True)
-                if not installed:
-                    raise RuntimeError("ZIP archive contains no PK3.")
-                _remember_online_install(self.item,installed)
-                self.ready.emit(", ".join(installed))
+            elif direct_bsp:
+                # Direct PK3: force a .pk3 final name even if the transport URL
+                # or metadata supplied an incorrect/ambiguous extension.
+                final_name=Path(response_name).name
+                if not final_name.casefold().endswith(".pk3"):
+                    final_name=Path(str(self.item.get("pak") or self.item.get("map") or "online_map")).stem+".pk3"
+                target=DOWNLOADED_MAPS_DIR/final_name
+                if target.exists():target.unlink()
+                shutil.copy2(part,target)
+                installed.append(target.name)
             else:
-                raise RuntimeError("Download did not return a PK3 or ZIP package.")
-        except Exception as e:self.failed.emit(str(e))
+                raise RuntimeError("Archive contains no PK3 and is not a direct Quake 3 PK3.")
+
+            part.unlink(missing_ok=True)
+            _remember_online_install(self.item,installed)
+            self.progress.emit(100)
+            self.ready.emit(", ".join(installed))
+        except Exception as e:
+            self.failed.emit(str(e))
 
 class MapCatalogWorker(QtCore.QThread):
     ready = pyqtSignal(object, int)
@@ -6105,7 +6156,7 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
         return page
 
     # ------------------------------------------------------------------
-    # STATISTICS — experimental UI / API adapter
+    # STATISTICS — freekill.ru player statistics
     # ------------------------------------------------------------------
     def _build_statistics(self):
         page = QtWidgets.QWidget()
@@ -6118,7 +6169,7 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
         title.setObjectName("pageTitle")
         header.addWidget(title)
         header.addStretch(1)
-        hint = QtWidgets.QLabel("Q3MSK  •  PLAYER LOOKUP  •  EXPERIMENTAL")
+        hint = QtWidgets.QLabel("FREEKILL.RU  •  WEEK / MONTH")
         hint.setObjectName("muted")
         header.addWidget(hint)
         root.addLayout(header)
@@ -6129,16 +6180,13 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
         search_l.setContentsMargins(18, 15, 18, 15)
         search_l.setSpacing(9)
 
-        search_title = QtWidgets.QLabel("FIND PLAYER")
-        search_title.setObjectName("sectionTitle")
-        search_l.addWidget(search_title)
-
         search_row = QtWidgets.QHBoxLayout()
         search_row.setSpacing(10)
         self.statisticsNickname = QtWidgets.QLineEdit()
         self.statisticsNickname.setObjectName("statisticsNickname")
-        self.statisticsNickname.setPlaceholderText("Enter nickname — e.g. Mus1n")
+        self.statisticsNickname.setPlaceholderText("freekill.ru profile URL")
         self.statisticsNickname.setClearButtonEnabled(True)
+        self.statisticsNickname.setText(str(launcher_settings.get("statistics_profile_url", "") or ""))
         self.statisticsNickname.returnPressed.connect(self.lookup_statistics)
         search_row.addWidget(self.statisticsNickname, 1)
 
@@ -6149,10 +6197,7 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
         search_row.addWidget(self.statisticsSearchButton)
         search_l.addLayout(search_row)
 
-        self.statisticsMessage = QtWidgets.QLabel(
-            "Nickname search is ready for the upcoming statistics API. "
-            "Mus1n currently loads local preview data so the launcher UI can be tested."
-        )
+        self.statisticsMessage = QtWidgets.QLabel("Link your freekill.ru profile once; it will be saved by the launcher.")
         self.statisticsMessage.setObjectName("statisticsMessage")
         self.statisticsMessage.setWordWrap(True)
         search_l.addWidget(self.statisticsMessage)
@@ -6163,7 +6208,6 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
         self.statisticsResults.setWidgetResizable(True)
         self.statisticsResults.setFrameShape(QtWidgets.QFrame.Shape.NoFrame)
         self.statisticsResults.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-
         self.statisticsContent = QtWidgets.QWidget()
         self.statisticsContent.setObjectName("statisticsContent")
         self.statisticsLayout = QtWidgets.QVBoxLayout(self.statisticsContent)
@@ -6172,50 +6216,139 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
         self.statisticsResults.setWidget(self.statisticsContent)
         root.addWidget(self.statisticsResults, 1)
 
+        self._statistics_payload = None
+        self._statistics_period = "week"
+        self._statistics_worker = None
+        self.statisticsFilterShortcut = QtGui.QShortcut(QtGui.QKeySequence("F4"), self)
+        self.statisticsFilterShortcut.setContext(QtCore.Qt.ShortcutContext.WindowShortcut)
+        self.statisticsFilterShortcut.activated.connect(self._statistics_cycle_period)
+        self.statisticsFilterShortcut.setEnabled(False)
         self._show_statistics_empty()
         return page
 
     @staticmethod
-    def _statistics_clean_nickname(value):
-        # Quake 3 color sequences are not part of the searchable nickname.
-        return re.sub(r"\^[0-9A-Za-z]", "", str(value or "")).strip()
+    def _statistics_player_id(value):
+        value = str(value or "").strip()
+        if not value:
+            raise ValueError("Enter a nickname or freekill.ru profile URL.")
+        if "://" in value:
+            parsed = urllib.parse.urlparse(value)
+            if not parsed.netloc.lower().endswith("freekill.ru"):
+                raise ValueError("Only freekill.ru profile URLs are supported.")
+            encoded = urllib.parse.parse_qs(parsed.query).get("name", [""])[0].strip()
+            if not encoded:
+                raise ValueError("This freekill.ru URL does not contain a player name.")
+            return encoded
+        return base64.b64encode(value.encode("utf-8")).decode("ascii")
 
     @staticmethod
-    def _statistics_preview_payload(nickname):
-        """Temporary local payload. Replace only this adapter when the API is ready."""
-        clean = ModernLauncherWindow._statistics_clean_nickname(nickname)
-        if not clean.casefold().startswith("mus1n"):
-            return None
+    def _statistics_find_current(value):
+        if isinstance(value, dict):
+            if value.get("player") == "current" and isinstance(value.get("stat"), list):
+                return value
+            for child in value.values():
+                found = ModernLauncherWindow._statistics_find_current(child)
+                if found is not None:
+                    return found
+        elif isinstance(value, list):
+            for child in value:
+                found = ModernLauncherWindow._statistics_find_current(child)
+                if found is not None:
+                    return found
+        return None
+
+    @staticmethod
+    def _statistics_normalize_record(record, fallback_name=""):
+        stat = list(record.get("stat") or [])
+        weapon_data = list(record.get("data") or [])
+        if len(stat) < 20:
+            raise ValueError("freekill.ru returned an incomplete player record.")
+        names = ["Gauntlet", "Machinegun", "Shotgun", "Grenade Launcher", "Rocket Launcher", "Lightning Gun", "Railgun", "Plasma Gun"]
+        weapons = []
+        for i, name in enumerate(names):
+            row = weapon_data[i] if i < len(weapon_data) and isinstance(weapon_data[i], list) else []
+            vals = list(row) + [0, 0, 0, 0]
+            weapons.append({"weapon": name, "hits": vals[0], "shots": vals[1], "frags": vals[2], "deaths": vals[3]})
+        deaths = int(stat[4] or 0)
+        dr = int(stat[1] or 0)
         return {
-            "nickname": clean or "Mus1n",
-            "matches": 576,
-            "kills": 10994,
-            "deaths": 5624,
-            "kd": 1.955,
-            "thaws": 4252,
-            "unfreezes": 1946,
-            "suicides": 166,
-            "damage_given": 3311148,
-            "damage_received": 2230404,
-            "armor": 283730,
-            "health": 249380,
-            "yellow_armor": 2474,
-            "red_armor": 1412,
-            "mega": 1208,
-            # Experimental weapon preview. The real API will replace these rows.
-            # Keep the schema simple: hits / attempts / kills / deaths.
-            "weapons": [
-                {"weapon": "Gauntlet", "hits": 0, "attempts": 0, "kills": 44, "deaths": 17},
-                {"weapon": "Machinegun", "hits": 4821, "attempts": 14852, "kills": 423, "deaths": 212},
-                {"weapon": "Shotgun", "hits": 6842, "attempts": 16731, "kills": 1256, "deaths": 593},
-                {"weapon": "Grenade Launcher", "hits": 1158, "attempts": 5126, "kills": 304, "deaths": 132},
-                {"weapon": "Rocket Launcher", "hits": 12574, "attempts": 28942, "kills": 3558, "deaths": 1867},
-                {"weapon": "Lightning Gun", "hits": 52761, "attempts": 173984, "kills": 2491, "deaths": 1204},
-                {"weapon": "Railgun", "hits": 9318, "attempts": 21706, "kills": 2045, "deaths": 1098},
-                {"weapon": "Plasma Gun", "hits": 15933, "attempts": 61218, "kills": 647, "deaths": 328},
-                {"weapon": "BFG", "hits": 86, "attempts": 241, "kills": 72, "deaths": 31},
-                {"weapon": "Grappling Hook", "hits": 0, "attempts": 0, "kills": 0, "deaths": 0},
-            ],
+            "nickname": record.get("player") if record.get("player") != "current" else fallback_name,
+            "elo": int(stat[19] or 0),
+            "games": int(stat[12] or 0) + int(stat[13] or 0),
+            "online_ms": int(stat[7] or 0),
+            "kills": int(stat[2] or 0),
+            "deaths": deaths,
+            "kd": (float(stat[2]) / deaths) if deaths else 0.0,
+            "damage_given": int(stat[0] or 0),
+            "damage_received": dr,
+            "damage_ratio": (float(stat[0]) / dr) if dr else 0.0,
+            "thaws": int(stat[3] or 0),
+            "unfreezes": int(stat[5] or 0),
+            "suicides": int(stat[6] or 0),
+            "weapons": weapons,
+        }
+
+    @staticmethod
+    def _statistics_fetch(value):
+        player_id = ModernLauncherWindow._statistics_player_id(value)
+        try:
+            decoded_name = base64.b64decode(player_id + "=" * (-len(player_id) % 4)).decode("utf-8", errors="replace")
+        except Exception:
+            decoded_name = value
+
+        # freekill frontend sends Moscow offset relative to the browser's local UTC offset.
+        local_offset = datetime.datetime.now().astimezone().utcoffset() or datetime.timedelta(0)
+        local_hours = local_offset.total_seconds() / 3600.0
+        msk_shift = local_hours - 3
+        if float(msk_shift).is_integer():
+            msk_shift = int(msk_shift)
+        user = int(time.time() * 1000)
+        request_text = f"shift={msk_shift}\tuser={user}\tname={player_id}\t"
+        token = base64.b64encode(request_text.encode("utf-8")).decode("ascii")
+        url = "https://freekill.ru/fcgi/" + token
+        req = urllib.request.Request(url, headers={
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/136.0 Safari/537.36",
+            "Accept": "*/*",
+            "Referer": "https://freekill.ru/index.html?name=" + urllib.parse.quote(player_id),
+        })
+        with urllib.request.urlopen(req, timeout=20) as response:
+            payload = json.loads(response.read().decode("utf-8", errors="replace"))
+        objects = payload.get("object") or []
+        if len(objects) < 4:
+            raise ValueError("freekill.ru returned an unexpected response.")
+        week_obj, month_obj = objects[-4], objects[-3]
+        week = None
+        if isinstance(week_obj, dict):
+            for group_name in ("stats_g", "stats_r", "stats_b"):
+                for player in week_obj.get(group_name, []) or []:
+                    if isinstance(player, dict) and player.get("base64") == player_id:
+                        week = player
+                        break
+                if week is not None:
+                    break
+        # MONTH (tc7) is also a leaderboard. Prefer the requested player's
+        # own entry by Base64 ID, just like WEEK. Some profiles do not expose
+        # a nested `player == "current"` record even though they are present
+        # in the monthly stats table. Keep `current` only as a compatibility
+        # fallback for the alternate detail structure returned for some names.
+        month = None
+        if isinstance(month_obj, dict):
+            for group_name in ("stats_g", "stats_r", "stats_b"):
+                for player in month_obj.get(group_name, []) or []:
+                    if isinstance(player, dict) and player.get("base64") == player_id:
+                        month = player
+                        break
+                if month is not None:
+                    break
+        if month is None:
+            month = ModernLauncherWindow._statistics_find_current(month_obj)
+        if week is None and month is None:
+            raise LookupError(f"Player '{decoded_name}' was not found in current week/month statistics.")
+        clean_name = payload.get("clean") or decoded_name
+        return {
+            "nickname": clean_name,
+            "week": ModernLauncherWindow._statistics_normalize_record(week, clean_name) if week else None,
+            "month": ModernLauncherWindow._statistics_normalize_record(month, clean_name) if month else None,
         }
 
     def _clear_statistics_results(self):
@@ -6231,7 +6364,6 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
         empty.setObjectName("statisticsEmpty")
         lay = QtWidgets.QVBoxLayout(empty)
         lay.setContentsMargins(22, 34, 22, 34)
-        lay.setSpacing(7)
         icon = QtWidgets.QLabel("⌁")
         icon.setObjectName("statisticsEmptyIcon")
         icon.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
@@ -6245,172 +6377,138 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
         self.statisticsLayout.addStretch(1)
 
     def lookup_statistics(self):
-        nickname = self.statisticsNickname.text().strip()
-        if not nickname:
-            self.statisticsMessage.setText("Enter a nickname first.")
+        value = self.statisticsNickname.text().strip()
+        if not value:
+            self.statisticsMessage.setText("Enter your freekill.ru profile URL first.")
             self.statisticsNickname.setFocus()
             return
-
         self.statisticsSearchButton.setEnabled(False)
         self.statisticsSearchButton.setText("SEARCHING...")
-        QtWidgets.QApplication.processEvents()
-        try:
-            payload = self._statistics_preview_payload(nickname)
-            if payload is None:
-                self.statisticsMessage.setText(
-                    "The live statistics API is not connected yet. "
-                    "For now, use Mus1n to test the finished statistics layout."
-                )
-                self._show_statistics_empty("No preview data for this nickname yet.")
-                return
-            self.statisticsMessage.setText(
-                "Preview data loaded. The UI is API-ready; only the data adapter will be replaced."
-            )
-            self._render_statistics(payload)
-        finally:
-            self.statisticsSearchButton.setText("SEARCH")
-            self.statisticsSearchButton.setEnabled(True)
+        self.statisticsMessage.setText("Loading WEEK and MONTH statistics from freekill.ru...")
+        self._show_statistics_empty("Loading player statistics...")
 
-    def _stat_tile(self, label, value, accent=False):
-        tile = QtWidgets.QFrame()
-        tile.setObjectName("statisticsTileAccent" if accent else "statisticsTile")
-        lay = QtWidgets.QVBoxLayout(tile)
-        lay.setContentsMargins(14, 10, 14, 10)
-        lay.setSpacing(2)
-        name = QtWidgets.QLabel(label.upper())
-        name.setObjectName("statisticsStatName")
-        value_label = QtWidgets.QLabel(str(value))
-        value_label.setObjectName("statisticsStatValue")
-        lay.addWidget(name)
-        lay.addWidget(value_label)
-        return tile
+        class StatisticsWorker(QtCore.QThread):
+            done = pyqtSignal(object)
+            failed = pyqtSignal(str)
+            def __init__(self, query, parent=None):
+                super().__init__(parent)
+                self.query = query
+            def run(self):
+                try:
+                    self.done.emit(ModernLauncherWindow._statistics_fetch(self.query))
+                except Exception as exc:
+                    self.failed.emit(str(exc))
+
+        self._statistics_worker = StatisticsWorker(value, self)
+        self._statistics_worker.done.connect(self._statistics_loaded)
+        self._statistics_worker.failed.connect(self._statistics_failed)
+        self._statistics_worker.start()
+
+    def _statistics_loaded(self, payload):
+        self.statisticsSearchButton.setText("SEARCH")
+        self.statisticsSearchButton.setEnabled(True)
+        self._statistics_payload = payload
+        try:
+            player_id = self._statistics_player_id(self.statisticsNickname.text().strip())
+            saved_url = "https://freekill.ru/index.html?name=" + urllib.parse.quote(player_id)
+            self.statisticsNickname.setText(saved_url)
+            launcher_settings["statistics_profile_url"] = saved_url
+            save_launcher_settings(launcher_settings)
+        except Exception:
+            pass
+        if payload.get("week") is not None:
+            self._statistics_period = "week"
+        else:
+            self._statistics_period = "month"
+        self.statisticsMessage.setText("Statistics loaded from freekill.ru.")
+        self._render_statistics(payload)
+
+    def _statistics_failed(self, message):
+        self.statisticsSearchButton.setText("SEARCH")
+        self.statisticsSearchButton.setEnabled(True)
+        self.statisticsMessage.setText("Statistics error: " + message)
+        self._show_statistics_empty("Could not load this player's WEEK / MONTH statistics.")
+
+    @staticmethod
+    def _statistics_online(ms):
+        minutes = max(0, int(ms or 0) // 60000)
+        hours, mins = divmod(minutes, 60)
+        return f"{hours}h {mins:02d}m" if hours else f"{mins}m"
 
     def _statistics_tab_button(self, text):
         button = QtWidgets.QPushButton(text)
         button.setObjectName("statisticsTabButton")
         button.setCheckable(True)
         button.setCursor(QtCore.Qt.CursorShape.PointingHandCursor)
-        button.setMinimumWidth(130)
+        button.setMinimumWidth(110)
         return button
 
-    def _render_statistics(self, data):
+    def _render_statistics(self, payload):
         self._clear_statistics_results()
+        data = payload.get(self._statistics_period)
+        if data is None:
+            other = "month" if self._statistics_period == "week" else "week"
+            data = payload.get(other)
+            self._statistics_period = other
+        if data is None:
+            self._show_statistics_empty("No current WEEK / MONTH data for this player.")
+            return
 
         profile = QtWidgets.QFrame()
         profile.setObjectName("statisticsProfileCard")
         profile_l = QtWidgets.QHBoxLayout(profile)
-        profile_l.setContentsMargins(18, 14, 18, 14)
-        profile_l.setSpacing(14)
-
-        identity = QtWidgets.QVBoxLayout()
-        kicker = QtWidgets.QLabel("PLAYER")
-        kicker.setObjectName("sectionTitle")
-        identity.addWidget(kicker)
-        nick = QtWidgets.QLabel(str(data.get("nickname", "Unknown")))
+        profile_l.setContentsMargins(18, 12, 18, 12)
+        nick = QtWidgets.QLabel(str(payload.get("nickname") or data.get("nickname") or "Unknown"))
         nick.setObjectName("statisticsPlayerName")
-        identity.addWidget(nick)
-        profile_l.addLayout(identity, 1)
+        profile_l.addWidget(nick, 1)
 
-        matches = QtWidgets.QVBoxLayout()
-        matches.setAlignment(QtCore.Qt.AlignmentFlag.AlignRight | QtCore.Qt.AlignmentFlag.AlignVCenter)
-        matches_label = QtWidgets.QLabel("MATCHES")
-        matches_label.setObjectName("statisticsStatName")
-        matches_value = QtWidgets.QLabel(f"{int(data.get('matches', 0)):,}")
-        matches_value.setObjectName("statisticsMatchesValue")
-        matches_label.setAlignment(QtCore.Qt.AlignmentFlag.AlignRight)
-        matches_value.setAlignment(QtCore.Qt.AlignmentFlag.AlignRight)
-        matches.addWidget(matches_label)
-        matches.addWidget(matches_value)
-        profile_l.addLayout(matches)
+        period_box = QtWidgets.QHBoxLayout()
+        period_box.setSpacing(6)
+        week_btn = self._statistics_tab_button("F4  WEEK")
+        month_btn = self._statistics_tab_button("F4  MONTH")
+        week_btn.setEnabled(payload.get("week") is not None)
+        month_btn.setEnabled(payload.get("month") is not None)
+        week_btn.setChecked(self._statistics_period == "week")
+        month_btn.setChecked(self._statistics_period == "month")
+        week_btn.clicked.connect(lambda: self._statistics_switch_period("week"))
+        month_btn.clicked.connect(lambda: self._statistics_switch_period("month"))
+        period_box.addWidget(week_btn)
+        period_box.addWidget(month_btn)
+        profile_l.addLayout(period_box)
+
+        elo = QtWidgets.QLabel(f"ELO  {data.get('elo', 0):,}")
+        elo.setObjectName("statisticsMatchesValue")
+        profile_l.addWidget(elo)
         self.statisticsLayout.addWidget(profile)
 
-        # Two result tabs: general overview + weapon accuracy.
-        tabs = QtWidgets.QHBoxLayout()
-        tabs.setSpacing(6)
-        self.statisticsOverviewTab = self._statistics_tab_button("OVERVIEW")
-        self.statisticsAccuracyTab = self._statistics_tab_button("WEAPON ACCURACY")
-        self.statisticsOverviewTab.setChecked(True)
-        tabs.addWidget(self.statisticsOverviewTab)
-        tabs.addWidget(self.statisticsAccuracyTab)
-        tabs.addStretch(1)
-        self.statisticsLayout.addLayout(tabs)
+        weapon_title = QtWidgets.QLabel("WEAPONS")
+        weapon_title.setObjectName("statisticsGroupTitle")
+        self.statisticsLayout.addWidget(weapon_title)
+        self.statisticsLayout.addWidget(self._build_statistics_weapon_table(data))
 
-        self.statisticsTabs = QtWidgets.QStackedWidget()
-        self.statisticsTabs.setObjectName("statisticsTabs")
-        self.statisticsTabs.addWidget(self._build_statistics_overview(data))
-        self.statisticsTabs.addWidget(self._build_statistics_accuracy(data))
-        self.statisticsLayout.addWidget(self.statisticsTabs)
-
-        def select_tab(index):
-            self.statisticsTabs.setCurrentIndex(index)
-            self.statisticsOverviewTab.setChecked(index == 0)
-            self.statisticsAccuracyTab.setChecked(index == 1)
-
-        self.statisticsOverviewTab.clicked.connect(lambda: select_tab(0))
-        self.statisticsAccuracyTab.clicked.connect(lambda: select_tab(1))
+        general_title = QtWidgets.QLabel("GENERAL")
+        general_title.setObjectName("statisticsGroupTitle")
+        self.statisticsLayout.addWidget(general_title)
+        self.statisticsLayout.addWidget(self._build_statistics_general(data))
         self.statisticsLayout.addStretch(1)
 
-    def _build_statistics_overview(self, data):
-        page = QtWidgets.QWidget()
-        page.setObjectName("statisticsTabPage")
-        lay = QtWidgets.QVBoxLayout(page)
-        lay.setContentsMargins(0, 2, 0, 0)
-        lay.setSpacing(10)
+    def _statistics_cycle_period(self):
+        if not self._statistics_payload:
+            return
+        target = "month" if self._statistics_period == "week" else "week"
+        if self._statistics_payload.get(target) is not None:
+            self._statistics_switch_period(target)
 
-        combat_title = QtWidgets.QLabel("COMBAT")
-        combat_title.setObjectName("statisticsGroupTitle")
-        lay.addWidget(combat_title)
-        combat = QtWidgets.QGridLayout()
-        combat.setHorizontalSpacing(10)
-        combat.setVerticalSpacing(10)
-        combat_values = [
-            ("Kills", f"{int(data.get('kills', 0)):,}", True),
-            ("Deaths", f"{int(data.get('deaths', 0)):,}", False),
-            ("K / D", f"{float(data.get('kd', 0.0)):.3f}", True),
-            ("Thaws", f"{int(data.get('thaws', 0)):,}", False),
-            ("Unfreezes", f"{int(data.get('unfreezes', 0)):,}", False),
-            ("Suicides", f"{int(data.get('suicides', 0)):,}", False),
-        ]
-        for i, (label, value, accent) in enumerate(combat_values):
-            combat.addWidget(self._stat_tile(label, value, accent), i // 3, i % 3)
-        lay.addLayout(combat)
+    def _statistics_switch_period(self, period):
+        if self._statistics_payload and self._statistics_payload.get(period) is not None:
+            self._statistics_period = period
+            self._render_statistics(self._statistics_payload)
 
-        performance_title = QtWidgets.QLabel("DAMAGE & PICKUPS")
-        performance_title.setObjectName("statisticsGroupTitle")
-        lay.addWidget(performance_title)
-        performance = QtWidgets.QGridLayout()
-        performance.setHorizontalSpacing(10)
-        performance.setVerticalSpacing(10)
-        performance_values = [
-            ("Damage given", f"{int(data.get('damage_given', 0)):,}"),
-            ("Damage received", f"{int(data.get('damage_received', 0)):,}"),
-            ("Armor taken", f"{int(data.get('armor', 0)):,}"),
-            ("Health taken", f"{int(data.get('health', 0)):,}"),
-            ("Yellow armor", f"{int(data.get('yellow_armor', 0)):,}"),
-            ("Red armor", f"{int(data.get('red_armor', 0)):,}"),
-            ("Mega health", f"{int(data.get('mega', 0)):,}"),
-        ]
-        for i, (label, value) in enumerate(performance_values):
-            performance.addWidget(self._stat_tile(label, value), i // 4, i % 4)
-        lay.addLayout(performance)
-        lay.addStretch(1)
-        return page
-
-    def _build_statistics_accuracy(self, data):
-        page = QtWidgets.QWidget()
-        page.setObjectName("statisticsTabPage")
-        lay = QtWidgets.QVBoxLayout(page)
-        lay.setContentsMargins(0, 2, 0, 0)
-        lay.setSpacing(8)
-
-        title = QtWidgets.QLabel("WEAPON ACCURACY")
-        title.setObjectName("statisticsGroupTitle")
-        lay.addWidget(title)
-
+    def _build_statistics_weapon_table(self, data):
         table = QtWidgets.QTableWidget()
         table.setObjectName("statisticsWeaponTable")
-        table.setColumnCount(6)
-        table.setHorizontalHeaderLabels(["WEAPON", "HITS", "ATTEMPTS", "ACCURACY", "KILLS", "DEATHS"])
+        table.setColumnCount(5)
+        table.setHorizontalHeaderLabels(["WEAPON", "ACCURACY", "HITS", "SHOTS", "FRAGS"])
         table.setEditTriggers(QtWidgets.QAbstractItemView.EditTrigger.NoEditTriggers)
         table.setSelectionMode(QtWidgets.QAbstractItemView.SelectionMode.NoSelection)
         table.setFocusPolicy(QtCore.Qt.FocusPolicy.NoFocus)
@@ -6418,44 +6516,61 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
         table.verticalHeader().setVisible(False)
         table.horizontalHeader().setHighlightSections(False)
         table.horizontalHeader().setSectionResizeMode(0, QtWidgets.QHeaderView.ResizeMode.Stretch)
-        for col in range(1, 6):
+        for col in range(1, 5):
             table.horizontalHeader().setSectionResizeMode(col, QtWidgets.QHeaderView.ResizeMode.ResizeToContents)
-
         weapons = data.get("weapons", []) or []
         table.setRowCount(len(weapons))
         for row, weapon in enumerate(weapons):
             hits = int(weapon.get("hits", 0) or 0)
-            attempts = int(weapon.get("attempts", weapon.get("atts", 0)) or 0)
-            kills = int(weapon.get("kills", 0) or 0)
-            deaths = int(weapon.get("deaths", 0) or 0)
-            accuracy = (hits / attempts * 100.0) if attempts > 0 else None
-            values = [
-                str(weapon.get("weapon", weapon.get("name", "Unknown"))),
-                f"{hits:,}",
-                f"{attempts:,}",
-                f"{accuracy:.1f}%" if accuracy is not None else "—",
-                f"{kills:,}",
-                f"{deaths:,}",
-            ]
+            shots = int(weapon.get("shots", 0) or 0)
+            frags = int(weapon.get("frags", 0) or 0)
+            accuracy = (hits / shots * 100.0) if shots else None
+            values = [weapon.get("weapon", "Unknown"), f"{accuracy:.1f}%" if accuracy is not None else "—", f"{hits:,}", f"{shots:,}", f"{frags:,}"]
             for col, value in enumerate(values):
-                item = QtWidgets.QTableWidgetItem(value)
+                item = QtWidgets.QTableWidgetItem(str(value))
                 if col > 0:
                     item.setTextAlignment(int(QtCore.Qt.AlignmentFlag.AlignRight | QtCore.Qt.AlignmentFlag.AlignVCenter))
                 table.setItem(row, col, item)
-            table.setRowHeight(row, 36)
-
-        # Keep the table itself non-scrolling; the Statistics page owns scrolling.
+            table.setRowHeight(row, 32)
         table.setVerticalScrollBarPolicy(QtCore.Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         table.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        table.setFixedHeight(36 + max(1, len(weapons)) * 36 + 4)
-        lay.addWidget(table)
+        table.setFixedHeight(36 + max(1, len(weapons)) * 32 + 4)
+        return table
 
-        note = QtWidgets.QLabel("Accuracy = hits / attempts. Weapon values are preview data until the statistics API is connected.")
-        note.setObjectName("statisticsMessage")
-        note.setWordWrap(True)
-        lay.addWidget(note)
-        lay.addStretch(1)
-        return page
+    def _build_statistics_general(self, data):
+        frame = QtWidgets.QFrame()
+        frame.setObjectName("statisticsProfileCard")
+        grid = QtWidgets.QGridLayout(frame)
+        grid.setContentsMargins(16, 12, 16, 12)
+        grid.setHorizontalSpacing(28)
+        grid.setVerticalSpacing(7)
+        values = [
+            ("Games", f"{data.get('games', 0):,}"),
+            ("Online", self._statistics_online(data.get('online_ms', 0))),
+            ("Kills", f"{data.get('kills', 0):,}"),
+            ("Deaths", f"{data.get('deaths', 0):,}"),
+            ("K / D", f"{data.get('kd', 0.0):.2f}"),
+            ("ELO", f"{data.get('elo', 0):,}"),
+            ("Damage Given", f"{data.get('damage_given', 0):,}"),
+            ("Damage Received", f"{data.get('damage_received', 0):,}"),
+            ("DG / DR", f"{data.get('damage_ratio', 0.0):.2f}"),
+            ("Thaws", f"{data.get('thaws', 0):,}"),
+            ("Unfreezes", f"{data.get('unfreezes', 0):,}"),
+            ("Suicides", f"{data.get('suicides', 0):,}"),
+        ]
+        for i, (label, value) in enumerate(values):
+            col = (i % 2) * 2
+            row = i // 2
+            name = QtWidgets.QLabel(label.upper())
+            name.setObjectName("statisticsStatName")
+            val = QtWidgets.QLabel(value)
+            val.setObjectName("statisticsStatValue")
+            val.setAlignment(QtCore.Qt.AlignmentFlag.AlignRight | QtCore.Qt.AlignmentFlag.AlignVCenter)
+            grid.addWidget(name, row, col)
+            grid.addWidget(val, row, col + 1)
+        grid.setColumnStretch(0, 1)
+        grid.setColumnStretch(2, 1)
+        return frame
 
     # ------------------------------------------------------------------
     # SCREENSHOTS / DEMOS — local OSP media
@@ -7947,7 +8062,7 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
         self.onlineLoadMore=GlowButton("LOAD MORE"); self.onlineLoadMore.setObjectName("mapToolbarButton"); self.onlineLoadMore.clicked.connect(self._load_more_online_maps); ol.addWidget(self.onlineLoadMore,0,QtCore.Qt.AlignmentFlag.AlignHCenter)
         self.mapsStack.addWidget(online)
 
-        self.localMaps=[]; self.mapCatalogWorker=None; self.onlineMapsWorker=None; self.onlineDownloadWorkers=[]; self.mapsGametypeSort=0; self.mapsLocationFilter="All"; self.mapsMode="local"; self.onlineLatestLoaded=False; self.onlineSearchSerial=0; self.onlineLatestLimit=12; self._sourceFavicons={}; self._sourceFaviconWorkers=[]
+        self.localMaps=[]; self.mapCatalogWorker=None; self.onlineMapsWorker=None; self.onlineDownloadWorkers=[]; self.onlineDownloadByKey={}; self.mapsGametypeSort=0; self.mapsLocationFilter="All"; self.mapsMode="local"; self.onlineLatestLoaded=False; self.onlineSearchSerial=0; self.onlineLatestLimit=12; self._sourceFavicons={}; self._sourceFaviconWorkers=[]
         self.onlineSearchTimer=QtCore.QTimer(self); self.onlineSearchTimer.setSingleShot(True); self.onlineSearchTimer.setInterval(450); self.onlineSearchTimer.timeout.connect(self._run_online_search); self.onlineMapsSearch.textChanged.connect(self._online_search_changed)
         self.mapShortcuts=[]
         def shortcut(key,fn):
@@ -8082,6 +8197,8 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
     def _set_online_row_action(self,row,data):
         if not (0 <= row < self.onlineMapsTable.rowCount()):return
         installed=_online_installed_files(data)
+        key=_online_map_key(data)
+        active=self.onlineDownloadByKey.get(key)
         if installed:
             action=QtWidgets.QWidget()
             action.setObjectName("mapOnlineActions")
@@ -8091,8 +8208,14 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
             delete=QtWidgets.QPushButton("DELETE"); delete.setObjectName("mapDeleteButton")
             delete.clicked.connect(lambda checked=False,x=dict(data):self.delete_online_map(x))
             al.addWidget(play,1); al.addWidget(delete,1)
+        elif active is not None and active.isRunning():
+            action=QtWidgets.QPushButton("PAUSE")
+            action.setObjectName("mapDownloadButton")
+            action.clicked.connect(lambda checked=False,x=dict(data):self.pause_online_map(x))
         else:
-            action=QtWidgets.QPushButton("LOCKED" if data.get("locked") else "DOWNLOAD")
+            partial=_online_partial_path(data).is_file()
+            label="LOCKED" if data.get("locked") else ("RESUME" if partial else "DOWNLOAD")
+            action=QtWidgets.QPushButton(label)
             action.setObjectName("mapDownloadButton")
             action.setEnabled(not data.get("locked"))
             action.clicked.connect(lambda checked=False,x=dict(data):self.download_online_map(x))
@@ -8210,7 +8333,11 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
     def activate_selected_online_map(self):
         data=self._selected_online_map_data()
         if not data:return
-        if _online_installed_files(data):
+        key=_online_map_key(data)
+        active=self.onlineDownloadByKey.get(key)
+        if active is not None and active.isRunning():
+            self.pause_online_map(data)
+        elif _online_installed_files(data):
             self.play_online_map(data)
         elif not data.get("locked"):
             self.download_online_map(data)
@@ -8280,7 +8407,34 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
         self.play_local_map(bsp_name)
 
     def download_online_map(self,item):
-        w=OnlineMapDownloadWorker(item,self); self.onlineDownloadWorkers.append(w); w.progress.connect(lambda p:self.mapsStatus.setText(f"Downloading… {p}%")); w.ready.connect(lambda name,x=dict(item):self._online_download_ready(name,x)); w.failed.connect(lambda e:self.mapsStatus.setText(f"Download failed: {e}")); w.finished.connect(lambda x=w:self._online_download_done(x)); w.start()
+        key=_online_map_key(item)
+        current=self.onlineDownloadByKey.get(key)
+        if current is not None and current.isRunning():return
+        w=OnlineMapDownloadWorker(item,self)
+        self.onlineDownloadWorkers.append(w)
+        self.onlineDownloadByKey[key]=w
+        row=self._online_row_for_item(item)
+        w.progress.connect(lambda p,x=dict(item):self._online_download_progress(p,x))
+        w.paused.connect(lambda x=dict(item):self._online_download_paused(x))
+        w.ready.connect(lambda name,x=dict(item):self._online_download_ready(name,x))
+        w.failed.connect(lambda e,x=dict(item):self._online_download_failed(e,x))
+        w.finished.connect(lambda x=w,k=key,d=dict(item):self._online_download_done(x,k,d))
+        w.start()
+        if row>=0:
+            self._set_online_row_action(row,item)
+            self.onlineMapsTable.selectRow(row)
+
+    def pause_online_map(self,item):
+        w=self.onlineDownloadByKey.get(_online_map_key(item))
+        if w is not None and w.isRunning():
+            self.mapsStatus.setText("Pausing download…")
+            w.request_pause()
+
+    def _online_download_progress(self,p,item):
+        self.mapsStatus.setText(f"Downloading… {p}%")
+
+    def _online_download_paused(self,item):
+        self.mapsStatus.setText("Download paused • partial file kept")
 
     def delete_online_map(self,item):
         row=self._online_row_for_item(item)
@@ -8295,6 +8449,20 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
                 self.mapsStatus.setText(f"Delete failed: {error}")
                 return
         _forget_online_install(item)
+        partials=[_online_partial_path(item)]
+        rawpak=Path(str(item.get("pak") or "").replace("\\","/")).name
+        if rawpak:partials.append(DOWNLOADED_MAPS_DIR/(rawpak+".part"))
+        if item.get("source")=="LvLWorld":
+            ident=str(item.get("lvl_id") or item.get("map") or "online_map")
+            legacy=re.sub(r'[^A-Za-z0-9._-]+',"_",ident).strip("._")+".zip.part"
+            partials.append(DOWNLOADED_MAPS_DIR/legacy)
+        for partial in partials:
+            try:partial.unlink(missing_ok=True)
+            except OSError:pass
+        # Force the local catalog to forget the deleted PK3 instead of retaining
+        # stale manifest state until a later full rebuild.
+        try:MAPS_MANIFEST_FILE.unlink(missing_ok=True)
+        except OSError:pass
         self.mapsStatus.setText("Deleted "+(", ".join(deleted) if deleted else "downloaded map"))
         self.refresh_maps(force=False)
         # Do not rebuild ONLINE results: preserve selection, scroll, metadata,
@@ -8304,8 +8472,18 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
             self.onlineMapsTable.selectRow(row)
 
 
-    def _online_download_done(self,w):
+    def _online_download_done(self,w,key=None,item=None):
         if w in self.onlineDownloadWorkers:self.onlineDownloadWorkers.remove(w)
+        if key and self.onlineDownloadByKey.get(key) is w:
+            self.onlineDownloadByKey.pop(key,None)
+        if isinstance(item,dict):
+            row=self._online_row_for_item(item)
+            if row>=0:
+                self._set_online_row_action(row,item)
+                self.onlineMapsTable.selectRow(row)
+
+    def _online_download_failed(self,error,item):
+        self.mapsStatus.setText(f"Download failed: {error}")
 
     def _online_download_ready(self,name,item=None):
         self.mapsStatus.setText(f"Downloaded {name}")
@@ -8983,6 +9161,9 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
         screenshots_active = page == "screenshots"
         demos_active = page == "demos"
         maps_active = page == "maps"
+        statistics_active = page == "statistics"
+        if hasattr(self, "statisticsFilterShortcut"):
+            self.statisticsFilterShortcut.setEnabled(statistics_active)
         for shortcut in getattr(self, "screenshotShortcuts", []):
             shortcut.setEnabled(screenshots_active)
         for shortcut in getattr(self, "demoShortcuts", []):
@@ -9006,6 +9187,8 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
         }
         widget, active = mapping[page]
         self.pages.setCurrentWidget(widget)
+        if page == "statistics" and not self._statistics_payload and self.statisticsNickname.text().strip():
+            QtCore.QTimer.singleShot(0, self.lookup_statistics)
         if page == "matchmaking":
             # Opening Matchmaking marks current badge notifications as read for one minute.
             self.matchmakingBadgesHiddenUntil = time.monotonic() + 60.0
