@@ -50,6 +50,9 @@ CACHE_DIR = LAUNCHER_DATA_DIR / "cache"
 TEMP_DIR = LAUNCHER_DATA_DIR / "temp"
 DEFAULT_SERVERS_FILE = LAUNCHER_DIR / "settings" / "servers.json"
 USER_SERVERS_FILE = LAUNCHER_DATA_DIR / "servers.json"
+MAPS_MANIFEST_FILE = LAUNCHER_DATA_DIR / "maps_manifest.json"
+MAP_LEVELSHOTS_DIR = LAUNCHER_DIR / "servers" / "levelshots"
+MAP_UNKNOWN_LEVELSHOT = ASSETS_DIR / "server" / "levelshots" / "unknownmap.png"
 BACKGROUND_IMAGE = IMAGES_DIR / "background.png"
 APP_ICON_ICO = ICONS_DIR / "favicon.ico"
 APP_ICON_PNG = ICONS_DIR / "favicon.png"
@@ -122,7 +125,8 @@ def q3elite_is_installed():
     except OSError:
         installed = False
 
-    print(f"Q3Elite QLmaps marker: {qlmaps} -> {'installed' if installed else 'missing'}")
+    # This predicate is called from several UI refresh paths (including demos).
+    # Keep it silent: repeated status prints made debug output noisy while browsing.
     return installed
 
 
@@ -2121,6 +2125,8 @@ def apply_settings():
     global launcher_settings
     old_vulkan = reshade_layer_enabled()
     old_changelog_media = launcher_settings.get("show_changelog_media", False)
+    old_cleanup_screenshots_days = int(launcher_settings.get("cleanup_screenshots_days", 0) or 0)
+    old_cleanup_demos_days = int(launcher_settings.get("cleanup_demos_days", 0) or 0)
 
     def selected_cleanup_days(checkbox, combo, custom):
         if not checkbox.isChecked():
@@ -2166,7 +2172,34 @@ def apply_settings():
             enabled = launcher_settings["show_changelog_media"]
             for card in window.changelogPage.findChildren(ChangelogCard):
                 card.apply_media_preview_preference(enabled)
-        window.settingsMessage.setText("Settings saved.")
+
+        # Apply changed cleanup rules immediately instead of waiting for the
+        # next launcher start. Refresh the media views afterwards so files
+        # removed by the new rule disappear from the current lists as well.
+        cleanup_messages = []
+        if old_cleanup_screenshots_days != cleanup_screenshots_days:
+            removed = cleanup_old_files(
+                [GAME_ROOT / "baseq3" / "mods" / "osp" / "screenshots",
+                 GAME_ROOT / "Q3Elite" / "Screenshots"],
+                cleanup_screenshots_days,
+            )
+            window.refresh_screenshots()
+            if removed:
+                cleanup_messages.append(f"{removed} screenshot(s) removed")
+
+        if old_cleanup_demos_days != cleanup_demos_days:
+            removed = cleanup_old_files(
+                [GAME_ROOT / "baseq3" / "mods" / "osp" / "demos"],
+                cleanup_demos_days,
+            )
+            window.refresh_demos()
+            if removed:
+                cleanup_messages.append(f"{removed} demo(s) removed")
+
+        message = "Settings saved."
+        if cleanup_messages:
+            message += " " + "; ".join(cleanup_messages) + "."
+        window.settingsMessage.setText(message)
     except Exception as error:
         window.vulkanLayerBox.setChecked(reshade_layer_enabled())
         window.settingsMessage.setText(f"Could not apply settings: {error}")
@@ -4136,10 +4169,18 @@ class ServerCard(QtWidgets.QFrame):
         safe = str(mapname or "").strip()
         candidates = []
         if safe:
-            for ext in (".png", ".jpg", ".jpeg", ".webp"):
+            for ext in (".png", ".jpg", ".jpeg", ".webp", ".tga"):
                 candidates.append(self.levelshots_dir / (safe + ext))
                 candidates.append(self.levelshots_dir / (safe.lower() + ext))
-        candidates.append(self.levelshots_dir / "unknown.png")
+                # Compatibility with levelshots shipped in the current assets tree.
+                candidates.append(ASSETS_DIR / "servers" / "levelshots" / (safe + ext))
+                candidates.append(ASSETS_DIR / "servers" / "levelshots" / (safe.lower() + ext))
+        candidates.extend([
+            self.levelshots_dir / "unknownmap.png",
+            MAP_UNKNOWN_LEVELSHOT,
+            ASSETS_DIR / "servers" / "levelshots" / "unknownmap.png",
+            ASSETS_DIR / "servers" / "levelshots" / "unknown.png",
+        ])
         path = next((p for p in candidates if p.is_file()), None)
         if not path:
             self.levelshot.setPixmap(QtGui.QPixmap())
@@ -4288,6 +4329,177 @@ class FullscreenScreenshotWheelFilter(QtCore.QObject):
         return False
 
 
+
+# ============================================================================
+# LOCAL MAP CATALOG
+# ============================================================================
+
+def _map_pk3_candidates():
+    """Return supported local PK3 paths without recursively walking all baseq3."""
+    baseq3 = GAME_ROOT / "baseq3"
+    found = set()
+    patterns = (
+        "maps/*/*.pk3",
+        "maps/*/*/*.pk3",
+        "*.pk3",
+        "mods/baseq3/*.pk3",
+    )
+    for pattern in patterns:
+        for path in baseq3.glob(pattern):
+            if path.is_file():
+                try:
+                    found.add(path.resolve())
+                except OSError:
+                    found.add(path)
+    return sorted(found, key=lambda p: str(p).casefold())
+
+
+def _parse_arena_blocks(raw_text):
+    """Parse Quake 3 { key value } arena metadata."""
+    raw_text = re.sub(r"//.*?$", "", raw_text, flags=re.MULTILINE)
+    arenas = {}
+    for block in re.findall(r"\{(.*?)\}", raw_text, flags=re.DOTALL):
+        values = {}
+        # Quoted key/value pairs are standard. The fallback also accepts unquoted pairs.
+        quoted = re.findall(r'"([^"]*)"', block)
+        if len(quoted) >= 2:
+            for i in range(0, len(quoted) - 1, 2):
+                values[quoted[i].strip().casefold()] = quoted[i + 1].strip()
+        else:
+            flat = block.split()
+            for i in range(0, len(flat) - 1, 2):
+                values[flat[i].strip().casefold()] = flat[i + 1].strip().strip('"')
+        map_name = values.get("map", "").strip().casefold()
+        if map_name:
+            arenas[map_name] = values
+    return arenas
+
+
+def _arena_gametypes(arena):
+    if not arena:
+        return "Unknown"
+    raw = str(arena.get("type", "") or "").casefold().split()
+    labels = []
+    for token, label in (("ffa", "FFA"), ("team", "TDM"), ("tourney", "Duel"), ("ctf", "CTF")):
+        if token in raw and label not in labels:
+            labels.append(label)
+    return " / ".join(labels) if labels else "Unknown"
+
+
+def _safe_levelshot_name(map_name, suffix):
+    safe = re.sub(r"[^A-Za-z0-9_.-]+", "_", str(map_name or "")).strip("._") or "unknown"
+    return safe + suffix.lower()
+
+
+def _scan_map_pk3(pk3_path, extract_levelshots=True):
+    """Read BSP/arena metadata from one PK3 and extract matching levelshots."""
+    result = []
+    MAP_LEVELSHOTS_DIR.mkdir(parents=True, exist_ok=True)
+    with zipfile.ZipFile(pk3_path, "r") as zf:
+        names = zf.namelist()
+        lower_to_real = {n.casefold(): n for n in names}
+        arenas = {}
+        for name in names:
+            low = name.casefold()
+            if low.startswith("scripts/") and low.endswith(".arena"):
+                try:
+                    arenas.update(_parse_arena_blocks(
+                        zf.read(name).decode("utf-8", errors="ignore")
+                    ))
+                except Exception:
+                    pass
+
+        for name in names:
+            low = name.casefold()
+            if not (low.startswith("maps/") and low.endswith(".bsp")):
+                continue
+            bsp_name = Path(name).stem
+            arena = arenas.get(bsp_name.casefold(), {})
+            long_name = str(arena.get("longname", "") or "").strip() or bsp_name
+            gametype = _arena_gametypes(arena)
+
+            levelshot_file = ""
+            for ext in (".jpg", ".jpeg", ".png", ".webp", ".tga"):
+                real = lower_to_real.get(f"levelshots/{bsp_name}{ext}".casefold())
+                if not real:
+                    continue
+                dest = MAP_LEVELSHOTS_DIR / _safe_levelshot_name(bsp_name, ext)
+                levelshot_file = str(dest)
+                if extract_levelshots:
+                    try:
+                        dest.write_bytes(zf.read(real))
+                    except Exception:
+                        levelshot_file = ""
+                break
+
+            result.append({
+                "map": bsp_name,
+                "name": long_name,
+                "pak": pk3_path.name,
+                "pak_path": str(pk3_path),
+                "gametype": gametype,
+                "levelshot": levelshot_file,
+            })
+    return result
+
+
+def build_local_map_catalog():
+    """Stat-based manifest: only new/changed PK3s are opened as ZIP files."""
+    MAPS_MANIFEST_FILE.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        manifest = json.loads(MAPS_MANIFEST_FILE.read_text(encoding="utf-8"))
+        cached = manifest.get("paks", {}) if isinstance(manifest, dict) else {}
+    except Exception:
+        cached = {}
+
+    updated = {}
+    changed_paks = 0
+    for path in _map_pk3_candidates():
+        try:
+            st = path.stat()
+        except OSError:
+            continue
+        key = str(path)
+        signature = {"size": int(st.st_size), "mtime_ns": int(st.st_mtime_ns)}
+        old = cached.get(key, {})
+        if old.get("signature") == signature and isinstance(old.get("maps"), list):
+            maps = old["maps"]
+        else:
+            try:
+                maps = _scan_map_pk3(path, extract_levelshots=True)
+                changed_paks += 1
+            except (OSError, zipfile.BadZipFile) as error:
+                print(f"[maps] Could not scan {path.name}: {error}")
+                maps = []
+        updated[key] = {"signature": signature, "maps": maps}
+
+    payload = {"version": 1, "paks": updated}
+    tmp = MAPS_MANIFEST_FILE.with_suffix(".tmp")
+    tmp.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    tmp.replace(MAPS_MANIFEST_FILE)
+
+    all_maps = []
+    for entry in updated.values():
+        all_maps.extend(entry.get("maps", []))
+    all_maps.sort(key=lambda m: (
+        str(m.get("name", "")).casefold(),
+        str(m.get("pak", "")).casefold(),
+    ))
+    return all_maps, changed_paks
+
+
+class MapCatalogWorker(QtCore.QThread):
+    ready = pyqtSignal(object, int)
+    failed = pyqtSignal(str)
+
+    def run(self):
+        try:
+            maps, changed = build_local_map_catalog()
+            self.ready.emit(maps, changed)
+        except Exception as error:
+            self.failed.emit(str(error))
+
+
 class ModernLauncherWindow(QtWidgets.QMainWindow):
     """1368x768 frameless Q3Elite launcher. Backend stays in launch.pyw."""
 
@@ -4352,12 +4564,13 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
         self.addonsNav = self._nav_button("INSTALL ADDONS", "addons", "fa5s.puzzle-piece")
         self.statisticsNav = self._nav_button("STATISTICS", "statistics", "fa5s.chart-bar")
         self.serversNav = self._nav_button("SERVERS", "servers", "fa5s.server")
+        self.mapsNav = self._nav_button("MAPS", "maps", "fa5s.map")
         self.matchmakingNav = self._nav_button("MATCHMAKING", "matchmaking", "fa5s.bell")
         self.screenshotsNav = self._nav_button("SCREENSHOTS", "screenshots", "fa5s.image")
         self.demosNav = self._nav_button("DEMOS", "demos", "fa5s.film")
         self.settingsNav = self._nav_button("SETTINGS", "settings", "fa5s.cog")
         self.changelogNav = self._nav_button("CHANGELOG", "changelog", "fa5s.scroll")
-        for button in (self.homeNav, self.addonsNav, self.statisticsNav, self.serversNav, self.matchmakingNav, self.screenshotsNav, self.demosNav, self.settingsNav, self.changelogNav):
+        for button in (self.homeNav, self.addonsNav, self.statisticsNav, self.serversNav, self.mapsNav, self.matchmakingNav, self.screenshotsNav, self.demosNav, self.settingsNav, self.changelogNav):
             side.addWidget(button)
 
         side.addStretch(1)
@@ -4407,12 +4620,13 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
         self.addonsPage = self._build_addons()
         self.statisticsPage = self._build_statistics()
         self.serversPage = self._build_servers()
+        self.mapsPage = self._build_maps()
         self.matchmakingPage = self._build_matchmaking()
         self.screenshotsPage = self._build_screenshots()
         self.demosPage = self._build_demos()
         self.settingsPage = self._build_settings()
         self.changelogPage = self._build_changelog()
-        for page in (self.homePage, self.addonsPage, self.statisticsPage, self.serversPage, self.matchmakingPage, self.screenshotsPage, self.demosPage, self.settingsPage, self.changelogPage):
+        for page in (self.homePage, self.addonsPage, self.statisticsPage, self.serversPage, self.mapsPage, self.matchmakingPage, self.screenshotsPage, self.demosPage, self.settingsPage, self.changelogPage):
             self.pages.addWidget(page)
         body_layout.addWidget(self.pages, 1)
         root.addWidget(body, 1)
@@ -4800,10 +5014,10 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
 
             combo = QtWidgets.QComboBox()
             combo.setObjectName(combo_name)
-            combo.addItem("1 day", 1)
-            combo.addItem("3 days", 3)
-            combo.addItem("7 days", 7)
-            combo.addItem("30 days", 30)
+            combo.addItem("older than 1 day", 1)
+            combo.addItem("older than 3 days", 3)
+            combo.addItem("older than 7 days", 7)
+            combo.addItem("older than 30 days", 30)
             combo.addItem("Custom", -1)
             combo.setFixedWidth(125)
             combo.setEnabled(False)
@@ -6503,16 +6717,45 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
             players_row.addStretch(1)
             conditions_box.addLayout(players_row)
 
-            map_row = QtWidgets.QHBoxLayout()
-            map_on = QtWidgets.QCheckBox("MAP NAME")
-            map_on.setChecked(bool(rule.get("map_enabled", False)))
-            map_row.addWidget(map_on)
-            map_op = QtWidgets.QComboBox(); map_op.addItem("=", "eq"); map_op.addItem("!=", "neq")
-            map_op.setCurrentIndex(max(0, map_op.findData(rule.get("map_operator", "eq"))))
-            map_row.addWidget(map_op)
-            map_text = QtWidgets.QLineEdit(str(rule.get("map_name", ""))); map_text.setPlaceholderText("map name")
-            map_row.addWidget(map_text, 1)
-            conditions_box.addLayout(map_row)
+            map_conditions_host = QtWidgets.QWidget()
+            map_conditions_layout = QtWidgets.QVBoxLayout(map_conditions_host)
+            map_conditions_layout.setContentsMargins(0, 0, 0, 0)
+            map_conditions_layout.setSpacing(5)
+            map_rows = []
+
+            def add_map_condition(value=None):
+                value = value or {}
+                row_widget = QtWidgets.QWidget()
+                r = QtWidgets.QHBoxLayout(row_widget); r.setContentsMargins(0, 0, 0, 0)
+                enabled = QtWidgets.QCheckBox(f"MAP NAME [{len(map_rows)+1}]")
+                enabled.setChecked(bool(value.get("enabled", True))); r.addWidget(enabled)
+                op = QtWidgets.QComboBox(); op.addItem("=", "eq"); op.addItem("!=", "neq")
+                op.setCurrentIndex(max(0, op.findData(value.get("operator", "eq")))); r.addWidget(op)
+                edit = QtWidgets.QLineEdit(str(value.get("name", ""))); edit.setPlaceholderText("map name"); r.addWidget(edit, 1)
+                remove = QtWidgets.QPushButton("×"); remove.setObjectName("smallButton"); remove.setFixedSize(32, 32); r.addWidget(remove)
+                entry = {"widget":row_widget,"enabled":enabled,"op":op,"text":edit}
+                map_rows.append(entry)
+                map_conditions_layout.addWidget(row_widget)
+                def remove_row():
+                    if entry in map_rows: map_rows.remove(entry)
+                    row_widget.deleteLater()
+                    for n, item in enumerate(map_rows, 1): item["enabled"].setText(f"MAP NAME [{n}]")
+                remove.clicked.connect(remove_row)
+
+            old_map_conditions = rule.get("map_conditions", [])
+            # Migrate v3's single map condition to the multi-condition format.
+            if not old_map_conditions and rule.get("map_enabled", False):
+                old_map_conditions = [{"enabled": True, "operator": rule.get("map_operator", "eq"), "name": rule.get("map_name", "")}]
+            for condition in old_map_conditions:
+                if isinstance(condition, dict): add_map_condition(condition)
+
+            add_map = QtWidgets.QPushButton("+ MAP CONDITION")
+            add_map.setObjectName("secondaryButton")
+            # Bind this rule's local function now; otherwise Python's loop closure
+            # would make every button call the function from the last rule.
+            add_map.clicked.connect(lambda checked=False, fn=add_map_condition: fn())
+            conditions_box.addWidget(map_conditions_host)
+            conditions_box.addWidget(add_map, 0, QtCore.Qt.AlignmentFlag.AlignLeft)
 
             player_conditions_host = QtWidgets.QWidget()
             player_conditions_layout = QtWidgets.QVBoxLayout(player_conditions_host)
@@ -6548,7 +6791,7 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
 
             add_player = QtWidgets.QPushButton("+ PLAYER CONDITION")
             add_player.setObjectName("secondaryButton")
-            add_player.clicked.connect(lambda checked=False: add_player_condition())
+            add_player.clicked.connect(lambda checked=False, fn=add_player_condition: fn())
             conditions_box.addWidget(player_conditions_host)
             conditions_box.addWidget(add_player, 0, QtCore.Qt.AlignmentFlag.AlignLeft)
 
@@ -6567,12 +6810,10 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
             save = QtWidgets.QPushButton("SAVE RULE")
             save.setObjectName("secondaryButton")
             v.addWidget(save, 0, QtCore.Qt.AlignmentFlag.AlignRight)
-            editor = {"active":active,"alias":alias,"server_mode":server_mode,"checks":checks,"min_on":min_on,"min":minp,"max_on":max_on,"max":maxp,"map_on":map_on,"map_op":map_op,"map_text":map_text,"player_rows":player_rows,"color":color,"sound":sound,"status":status}
+            editor = {"active":active,"alias":alias,"server_mode":server_mode,"checks":checks,"min_on":min_on,"min":minp,"max_on":max_on,"max":maxp,"map_rows":map_rows,"player_rows":player_rows,"color":color,"sound":sound,"status":status}
             self.matchmakingEditors.append(editor)
             min_on.toggled.connect(minp.setEnabled); max_on.toggled.connect(maxp.setEnabled)
             minp.setEnabled(min_on.isChecked()); maxp.setEnabled(max_on.isChecked())
-            map_on.toggled.connect(map_op.setEnabled); map_on.toggled.connect(map_text.setEnabled)
-            map_op.setEnabled(map_on.isChecked()); map_text.setEnabled(map_on.isChecked())
             save.clicked.connect(lambda checked=False, i=idx: self.save_matchmaking_rule(i))
             self.matchmakingLayout.addWidget(card)
         self.matchmakingLayout.addStretch(1)
@@ -6591,7 +6832,7 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
         if not (0 <= index < len(self.matchmakingRules)): return
         e = self.matchmakingEditors[index]
         old = self.matchmakingRules[index]
-        self.matchmakingRules[index] = {"id":old.get("id") or uuid.uuid4().hex,"alias":e["alias"].text().strip() or f"Rule #{index+1}","active":e["active"].isChecked(),"servers":[int(b.property("serverNumber")) for b in e["checks"] if b.isChecked()],"server_mode":e["server_mode"].currentData(),"min_enabled":e["min_on"].isChecked(),"min_players":e["min"].value(),"max_enabled":e["max_on"].isChecked(),"max_players":e["max"].value(),"map_enabled":e["map_on"].isChecked(),"map_operator":e["map_op"].currentData(),"map_name":e["map_text"].text().strip(),"player_conditions":[{"enabled":r["enabled"].isChecked(),"operator":r["op"].currentData(),"name":r["text"].text().strip()} for r in e["player_rows"]],"color":e["color"].currentData(),"sound":e["sound"].isChecked()}
+        self.matchmakingRules[index] = {"id":old.get("id") or uuid.uuid4().hex,"alias":e["alias"].text().strip() or f"Rule #{index+1}","active":e["active"].isChecked(),"servers":[int(b.property("serverNumber")) for b in e["checks"] if b.isChecked()],"server_mode":e["server_mode"].currentData(),"min_enabled":e["min_on"].isChecked(),"min_players":e["min"].value(),"max_enabled":e["max_on"].isChecked(),"max_players":e["max"].value(),"map_conditions":[{"enabled":r["enabled"].isChecked(),"operator":r["op"].currentData(),"name":r["text"].text().strip()} for r in e["map_rows"]],"player_conditions":[{"enabled":r["enabled"].isChecked(),"operator":r["op"].currentData(),"name":r["text"].text().strip()} for r in e["player_rows"]],"color":e["color"].currentData(),"sound":e["sound"].isChecked()}
         self._save_matchmaking_rules(); self.matchmakingRuleStates[self.matchmakingRules[index]["id"]] = False; self._update_matchmaking_status_ui(); self.refresh_matchmaking()
 
     def refresh_matchmaking(self):
@@ -6633,14 +6874,20 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
             if rule.get("max_enabled", True):
                 conditions.append(count < int(rule.get("max_players", 6)))
 
-            if rule.get("map_enabled", False):
-                wanted = str(rule.get("map_name", "")).casefold().strip()
-                actual = str(result.get("mapname", "")).casefold().strip()
-                if wanted:
-                    equal = actual == wanted
-                    conditions.append(equal if rule.get("map_operator", "eq") == "eq" else not equal)
-                else:
+            actual_map = str(result.get("mapname", "")).casefold().strip()
+            map_conditions = rule.get("map_conditions", [])
+            # Compatibility with v3 single-map rules.
+            if not map_conditions and rule.get("map_enabled", False):
+                map_conditions = [{"enabled": True, "operator": rule.get("map_operator", "eq"), "name": rule.get("map_name", "")}]
+            for mc in map_conditions:
+                if not isinstance(mc, dict) or not mc.get("enabled", True):
+                    continue
+                wanted = str(mc.get("name", "")).casefold().strip()
+                if not wanted:
                     conditions.append(False)
+                    continue
+                equal = actual_map == wanted
+                conditions.append(equal if mc.get("operator", "eq") == "eq" else not equal)
 
             players = [_q3_plain_ascii(p.get("name", "")).casefold().strip() for p in (result.get("players", []) or [])]
             player_conditions = rule.get("player_conditions", [])
@@ -6720,6 +6967,176 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
             e["status"].setText("MATCHED" if matched else "NOT MATCHED")
             e["status"].setStyleSheet(f"color: {rule.get('color','#3b82f6')};" if matched else "")
 
+    def _build_maps(self):
+        page = QtWidgets.QWidget()
+        root = QtWidgets.QVBoxLayout(page)
+        root.setContentsMargins(4, 4, 4, 4)
+        root.setSpacing(10)
+
+        header = QtWidgets.QHBoxLayout()
+        title = QtWidgets.QLabel("MAPS")
+        title.setObjectName("pageTitle")
+        header.addWidget(title)
+        header.addStretch(1)
+        self.mapsStatus = QtWidgets.QLabel("Local map catalog")
+        self.mapsStatus.setObjectName("muted")
+        header.addWidget(self.mapsStatus)
+        self.mapsRefreshButton = GlowButton("↻  REFRESH MAPS")
+        self.mapsRefreshButton.setObjectName("serverToolbarButton")
+        self.mapsRefreshButton.clicked.connect(lambda: self.refresh_maps(force=True))
+        header.addWidget(self.mapsRefreshButton)
+        root.addLayout(header)
+
+        self.mapsSearch = QtWidgets.QLineEdit()
+        self.mapsSearch.setPlaceholderText("Search map name, BSP, PAK or gametype…")
+        self.mapsSearch.setClearButtonEnabled(True)
+        self.mapsSearch.textChanged.connect(self._filter_maps_table)
+        root.addWidget(self.mapsSearch)
+
+        self.mapsTable = QtWidgets.QTableWidget(0, 5)
+        self.mapsTable.setObjectName("mapsTable")
+        self.mapsTable.setHorizontalHeaderLabels(["LEVELSHOT", "MAP", "PAK", "GAMETYPE", ""])
+        self.mapsTable.verticalHeader().setVisible(False)
+        self.mapsTable.setShowGrid(False)
+        self.mapsTable.setSelectionBehavior(QtWidgets.QAbstractItemView.SelectionBehavior.SelectRows)
+        self.mapsTable.setSelectionMode(QtWidgets.QAbstractItemView.SelectionMode.SingleSelection)
+        self.mapsTable.setEditTriggers(QtWidgets.QAbstractItemView.EditTrigger.NoEditTriggers)
+        self.mapsTable.setAlternatingRowColors(True)
+        self.mapsTable.setIconSize(QtCore.QSize(142, 80))
+        self.mapsTable.setWordWrap(False)
+        hv = self.mapsTable.horizontalHeader()
+        hv.setSectionResizeMode(0, QtWidgets.QHeaderView.ResizeMode.Fixed)
+        hv.resizeSection(0, 165)
+        hv.setSectionResizeMode(1, QtWidgets.QHeaderView.ResizeMode.Stretch)
+        hv.setSectionResizeMode(2, QtWidgets.QHeaderView.ResizeMode.Stretch)
+        hv.setSectionResizeMode(3, QtWidgets.QHeaderView.ResizeMode.ResizeToContents)
+        hv.setSectionResizeMode(4, QtWidgets.QHeaderView.ResizeMode.Fixed)
+        hv.resizeSection(4, 105)
+        root.addWidget(self.mapsTable, 1)
+
+        self.localMaps = []
+        self.mapCatalogWorker = None
+        return page
+
+    def _map_levelshot_pixmap(self, item):
+        candidates = []
+        levelshot = str(item.get("levelshot", "") or "")
+        if levelshot:
+            candidates.append(Path(levelshot))
+        bsp = str(item.get("map", "") or "")
+        for ext in (".jpg", ".jpeg", ".png", ".webp", ".tga"):
+            candidates.append(MAP_LEVELSHOTS_DIR / _safe_levelshot_name(bsp, ext))
+        candidates.extend([
+            MAP_UNKNOWN_LEVELSHOT,
+            ASSETS_DIR / "servers" / "levelshots" / "unknownmap.png",
+            ASSETS_DIR / "servers" / "levelshots" / "unknown.png",
+        ])
+        for path in candidates:
+            if path.is_file():
+                pix = QtGui.QPixmap(str(path))
+                if not pix.isNull():
+                    return pix
+        return QtGui.QPixmap()
+
+    def refresh_maps(self, force=False):
+        if self.mapCatalogWorker is not None and self.mapCatalogWorker.isRunning():
+            return
+        if force:
+            try:
+                MAPS_MANIFEST_FILE.unlink(missing_ok=True)
+            except OSError:
+                pass
+        self.mapsStatus.setText("Scanning local maps…")
+        self.mapsRefreshButton.setEnabled(False)
+        self.mapCatalogWorker = MapCatalogWorker(self)
+        self.mapCatalogWorker.ready.connect(self._maps_catalog_ready)
+        self.mapCatalogWorker.failed.connect(self._maps_catalog_failed)
+        self.mapCatalogWorker.start()
+
+    def _maps_catalog_failed(self, message):
+        self.mapsRefreshButton.setEnabled(True)
+        self.mapsStatus.setText("Map scan failed")
+        self.qerror(f"Could not scan local maps:\n{message}")
+
+    def _maps_catalog_ready(self, maps, changed_paks):
+        self.localMaps = list(maps or [])
+        self.mapsRefreshButton.setEnabled(True)
+        suffix = f" • scanned {changed_paks} new/changed PAK(s)" if changed_paks else " • manifest cache"
+        self.mapsStatus.setText(f"{len(self.localMaps)} local map(s){suffix}")
+        self._populate_maps_table()
+
+    def _populate_maps_table(self):
+        table = self.mapsTable
+        table.setUpdatesEnabled(False)
+        table.setRowCount(0)
+        for item in self.localMaps:
+            row = table.rowCount()
+            table.insertRow(row)
+            table.setRowHeight(row, 92)
+
+            shot_item = QtWidgets.QTableWidgetItem()
+            pix = self._map_levelshot_pixmap(item)
+            if not pix.isNull():
+                shot_item.setIcon(QtGui.QIcon(pix))
+            shot_item.setData(QtCore.Qt.ItemDataRole.UserRole, item)
+            table.setItem(row, 0, shot_item)
+
+            map_item = QtWidgets.QTableWidgetItem(str(item.get("name") or item.get("map") or "Unknown"))
+            map_item.setToolTip(f"BSP: {item.get('map', '')}")
+            table.setItem(row, 1, map_item)
+            pak_item = QtWidgets.QTableWidgetItem(str(item.get("pak", "")))
+            pak_item.setToolTip(str(item.get("pak_path", "")))
+            table.setItem(row, 2, pak_item)
+            table.setItem(row, 3, QtWidgets.QTableWidgetItem(str(item.get("gametype", "Unknown"))))
+
+            play = GlowButton("PLAY")
+            play.setObjectName("serverToolbarButton")
+            play.setProperty("bsp", str(item.get("map", "")))
+            play.clicked.connect(
+                lambda checked=False, b=play:
+                self.play_local_map(str(b.property("bsp") or ""))
+            )
+            table.setCellWidget(row, 4, play)
+        table.setUpdatesEnabled(True)
+        self._filter_maps_table(self.mapsSearch.text())
+
+    def _filter_maps_table(self, query):
+        if not hasattr(self, "mapsTable"):
+            return
+        q = str(query or "").strip().casefold()
+        for row in range(self.mapsTable.rowCount()):
+            data_item = self.mapsTable.item(row, 0)
+            data = data_item.data(QtCore.Qt.ItemDataRole.UserRole) if data_item else {}
+            haystack = " ".join(
+                str(data.get(k, "")) for k in ("name", "map", "pak", "gametype")
+            ).casefold()
+            self.mapsTable.setRowHidden(row, bool(q and q not in haystack))
+
+    def play_local_map(self, bsp_name):
+        bsp_name = str(bsp_name or "").strip()
+        if not bsp_name:
+            return
+        if not q3elite_is_installed():
+            self.qerror("Install Quake 3 Elite before launching a map.")
+            return
+        launcher_bat = GAME_ROOT / "Q3Elite" / "Engines" / "Q3Elite (Vulkan) - Cinematic.bat"
+        if not launcher_bat.is_file():
+            self.qerror(f"Q3Elite Vulkan launcher was not found:\n{launcher_bat}")
+            return
+        try:
+            import subprocess
+            # The existing BAT forwards %*, so this launches:
+            # XQ3E_Vulkan.x64.exe ... +devmap <BSP name>
+            subprocess.Popen(
+                [str(launcher_bat), "+devmap", bsp_name],
+                cwd=str(launcher_bat.parent),
+                shell=True,
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+            )
+            self.mapsStatus.setText(f"Launching {bsp_name}…")
+        except Exception as error:
+            self.qerror(f"Could not launch map:\n{error}")
+
     def _build_servers(self):
         page = QtWidgets.QWidget()
         root = QtWidgets.QVBoxLayout(page)
@@ -6788,7 +7205,7 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
         if not self.serverConfigPath.is_file() and DEFAULT_SERVERS_FILE.is_file():
             self.serverConfigPath.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(DEFAULT_SERVERS_FILE, self.serverConfigPath)
-        self.serverLevelshotsDir = ASSETS_DIR / "servers" / "levelshots"
+        self.serverLevelshotsDir = MAP_LEVELSHOTS_DIR
         self.serverCards = []
         self.serverQueryWorker = None
         self._serverScrollAccum = 0
@@ -7110,6 +7527,7 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
             "addons": (self.addonsPage, self.addonsNav),
             "statistics": (self.statisticsPage, self.statisticsNav),
             "servers": (self.serversPage, self.serversNav),
+            "maps": (self.mapsPage, self.mapsNav),
             "matchmaking": (self.matchmakingPage, self.matchmakingNav),
             "screenshots": (self.screenshotsPage, self.screenshotsNav),
             "demos": (self.demosPage, self.demosNav),
@@ -7123,7 +7541,7 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
             self.matchmakingBadgesHiddenUntil = time.monotonic() + 60.0
             self._update_matchmaking_status_ui()
             QtCore.QTimer.singleShot(60000, self._update_matchmaking_status_ui)
-        for b in (self.homeNav, self.addonsNav, self.statisticsNav, self.serversNav, self.matchmakingNav, self.screenshotsNav, self.demosNav, self.settingsNav, self.changelogNav):
+        for b in (self.homeNav, self.addonsNav, self.statisticsNav, self.serversNav, self.mapsNav, self.matchmakingNav, self.screenshotsNav, self.demosNav, self.settingsNav, self.changelogNav):
             b.setChecked(b is active)
         if page == "addons":
             refresh_component_gui()
@@ -7133,6 +7551,8 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
         if page == "demos":
             self.refresh_demos()
             QtCore.QTimer.singleShot(0, self.demoList.setFocus)
+        if page == "maps":
+            self.refresh_maps(force=False)
         if page == "servers":
             self.serverRefreshTimer.start()
             QtCore.QTimer.singleShot(0, self._resize_servers_content)
@@ -7141,7 +7561,7 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
             self.serverRefreshTimer.stop()
 
     def set_navigation_enabled(self, enabled):
-        for b in (self.homeNav, self.addonsNav, self.statisticsNav, self.serversNav, self.matchmakingNav, self.screenshotsNav, self.demosNav, self.settingsNav, self.changelogNav, self.refreshButton):
+        for b in (self.homeNav, self.addonsNav, self.statisticsNav, self.serversNav, self.mapsNav, self.matchmakingNav, self.screenshotsNav, self.demosNav, self.settingsNav, self.changelogNav, self.refreshButton):
             b.setEnabled(enabled)
 
     def _load_component_state_initial(self):
