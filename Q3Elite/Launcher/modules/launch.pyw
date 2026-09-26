@@ -7952,7 +7952,7 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
         self.mapShortcuts=[]
         def shortcut(key,fn):
             q=QtGui.QShortcut(QtGui.QKeySequence(key),self); q.setContext(QtCore.Qt.ShortcutContext.WindowShortcut); q.activated.connect(fn); q.setEnabled(False); self.mapShortcuts.append(q)
-        shortcut("F1",lambda:self.mapsKeys.setVisible(not self.mapsKeys.isVisible()) if self.mapsMode=="local" else None); shortcut("Up",lambda:self._step_map(-1) if self.mapsMode=="local" else None); shortcut("Down",lambda:self._step_map(1) if self.mapsMode=="local" else None); shortcut("Return",lambda:self.play_selected_map() if self.mapsMode=="local" else None); shortcut("O",lambda:self.open_selected_map_location() if self.mapsMode=="local" else self.open_selected_online_map_location()); shortcut("Delete",lambda:self.delete_selected_map_pak() if self.mapsMode=="local" else None); shortcut("F3",lambda:self.cycle_maps_gametype_sort() if self.mapsMode=="local" else None); shortcut("F4",lambda:self.cycle_maps_location_filter() if self.mapsMode=="local" else None)
+        shortcut("F1",lambda:self.mapsKeys.setVisible(not self.mapsKeys.isVisible()) if self.mapsMode=="local" else None); shortcut("Up",lambda:self._step_map(-1) if self.mapsMode=="local" else self._step_online_map(-1)); shortcut("Down",lambda:self._step_map(1) if self.mapsMode=="local" else self._step_online_map(1)); shortcut("Return",lambda:self.play_selected_map() if self.mapsMode=="local" else self.activate_selected_online_map()); shortcut("O",lambda:self.open_selected_map_location() if self.mapsMode=="local" else self.open_selected_online_map_location()); shortcut("Delete",lambda:self.delete_selected_map_pak() if self.mapsMode=="local" else self.delete_selected_online_map()); shortcut("F3",lambda:self.cycle_maps_gametype_sort() if self.mapsMode=="local" else None); shortcut("F4",lambda:self.cycle_maps_location_filter() if self.mapsMode=="local" else None)
         self.mapsTable.itemDoubleClicked.connect(lambda _:self.play_selected_map())
         return page
 
@@ -8026,22 +8026,7 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
             source_item.setToolTip(str(data.get("source") or ""))
             t.setItem(r,5,source_item)
             self._ensure_source_favicon(str(data.get("source") or ""))
-            installed=_online_installed_files(data)
-            if installed:
-                action=QtWidgets.QWidget()
-                action.setObjectName("mapOnlineActions")
-                al=QtWidgets.QHBoxLayout(action); al.setContentsMargins(3,17,3,17); al.setSpacing(4)
-                play=QtWidgets.QPushButton("PLAY"); play.setObjectName("mapPlayButton")
-                play.clicked.connect(lambda checked=False,x=dict(data):self.play_online_map(x))
-                delete=QtWidgets.QPushButton("DELETE"); delete.setObjectName("mapDeleteButton")
-                delete.clicked.connect(lambda checked=False,x=dict(data):self.delete_online_map(x))
-                al.addWidget(play,1); al.addWidget(delete,1)
-            else:
-                action=QtWidgets.QPushButton("LOCKED" if data.get("locked") else "DOWNLOAD")
-                action.setObjectName("mapDownloadButton")
-                action.setEnabled(not data.get("locked"))
-                action.clicked.connect(lambda checked=False,x=dict(data):self.download_online_map(x))
-            t.setCellWidget(r,6,action)
+            self._set_online_row_action(r,data)
             if row_source=="LvLWorld" and data.get("lvl_id"):
                 meta_worker=LvLWorldMetadataWorker(r,str(data.get("lvl_id")),thumb_generation,self)
                 self._worldspawnShotWorkers.append(meta_worker)
@@ -8093,6 +8078,34 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
             self.onlineLoadMore.setVisible(not self.onlineMapsSearch.text().strip() and shown<total)
         if append:
             t.verticalScrollBar().setValue(scroll_value)
+
+    def _set_online_row_action(self,row,data):
+        if not (0 <= row < self.onlineMapsTable.rowCount()):return
+        installed=_online_installed_files(data)
+        if installed:
+            action=QtWidgets.QWidget()
+            action.setObjectName("mapOnlineActions")
+            al=QtWidgets.QHBoxLayout(action); al.setContentsMargins(3,17,3,17); al.setSpacing(4)
+            play=QtWidgets.QPushButton("PLAY"); play.setObjectName("mapPlayButton")
+            play.clicked.connect(lambda checked=False,x=dict(data):self.play_online_map(x))
+            delete=QtWidgets.QPushButton("DELETE"); delete.setObjectName("mapDeleteButton")
+            delete.clicked.connect(lambda checked=False,x=dict(data):self.delete_online_map(x))
+            al.addWidget(play,1); al.addWidget(delete,1)
+        else:
+            action=QtWidgets.QPushButton("LOCKED" if data.get("locked") else "DOWNLOAD")
+            action.setObjectName("mapDownloadButton")
+            action.setEnabled(not data.get("locked"))
+            action.clicked.connect(lambda checked=False,x=dict(data):self.download_online_map(x))
+        self.onlineMapsTable.setCellWidget(row,6,action)
+
+    def _online_row_for_item(self,item):
+        key=_online_map_key(item)
+        for row in range(self.onlineMapsTable.rowCount()):
+            cell=self.onlineMapsTable.item(row,0)
+            data=cell.data(QtCore.Qt.ItemDataRole.UserRole) if cell else None
+            if isinstance(data,dict) and _online_map_key(data)==key:
+                return row
+        return -1
 
     def _ensure_source_favicon(self,source):
         if source not in ("LvLWorld","Worldspawn Index"):return
@@ -8180,6 +8193,35 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
         finally:
             reply.deleteLater()
 
+    def _step_online_map(self,delta):
+        t=self.onlineMapsTable
+        count=t.rowCount()
+        if count<=0:return
+        row=t.currentRow()
+        if row<0:
+            row=0 if delta>=0 else count-1
+        else:
+            row=max(0,min(count-1,row+delta))
+        t.selectRow(row)
+        item=t.item(row,1) or t.item(row,0)
+        if item is not None:
+            t.scrollToItem(item,QtWidgets.QAbstractItemView.ScrollHint.EnsureVisible)
+
+    def activate_selected_online_map(self):
+        data=self._selected_online_map_data()
+        if not data:return
+        if _online_installed_files(data):
+            self.play_online_map(data)
+        elif not data.get("locked"):
+            self.download_online_map(data)
+
+    def delete_selected_online_map(self):
+        data=self._selected_online_map_data()
+        if not data:return
+        if _online_installed_files(data):
+            # Same immediate-delete path as the row DELETE button; no dialog.
+            self.delete_online_map(data)
+
     def _selected_online_map_data(self):
         row=self.onlineMapsTable.currentRow()
         if row < 0:return None
@@ -8203,18 +8245,45 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
             QtGui.QDesktopServices.openUrl(QtCore.QUrl.fromLocalFile(str(path.parent)))
 
     def play_online_map(self,item):
-        map_name=str(item.get("map") or "").strip()
-        if not map_name:
-            # Worldspawn rows normally carry the BSP map name. LvLWorld's
-            # fileName is also the useful map command in the common case.
-            map_name=Path(str(item.get("pak") or "")).stem
-        if map_name:
-            self.play_local_map(map_name)
+        installed=_online_installed_files(item)
+        if not installed:return
+
+        candidates=[]
+        for name in installed:
+            pk3=DOWNLOADED_MAPS_DIR/Path(name).name
+            if not pk3.is_file():continue
+            try:
+                for entry in _scan_map_pk3(pk3,extract_levelshots=False):
+                    bsp=str(entry.get("map") or "").strip()
+                    if bsp and bsp not in candidates:candidates.append(bsp)
+            except Exception as error:
+                print(f"[online maps] BSP scan failed: {pk3.name} -> {type(error).__name__}: {error}")
+
+        if not candidates:
+            self.mapsStatus.setText("PLAY failed: downloaded PK3 contains no maps/*.bsp")
+            return
+
+        # Prefer the BSP matching the source map/file slug. If the package
+        # contains one map, simply use that exact BSP name.
+        hints=[
+            str(item.get("map") or "").strip().casefold(),
+            Path(str(item.get("pak") or "")).stem.casefold(),
+        ]
+        bsp_name=""
+        for candidate in candidates:
+            if candidate.casefold() in hints:
+                bsp_name=candidate; break
+        if not bsp_name:
+            bsp_name=candidates[0]
+
+        # Identical launch path/arguments to LOCAL maps.
+        self.play_local_map(bsp_name)
 
     def download_online_map(self,item):
         w=OnlineMapDownloadWorker(item,self); self.onlineDownloadWorkers.append(w); w.progress.connect(lambda p:self.mapsStatus.setText(f"Downloading… {p}%")); w.ready.connect(lambda name,x=dict(item):self._online_download_ready(name,x)); w.failed.connect(lambda e:self.mapsStatus.setText(f"Download failed: {e}")); w.finished.connect(lambda x=w:self._online_download_done(x)); w.start()
 
     def delete_online_map(self,item):
+        row=self._online_row_for_item(item)
         names=_online_installed_files(item)
         deleted=[]
         for name in names:
@@ -8228,17 +8297,26 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
         _forget_online_install(item)
         self.mapsStatus.setText("Deleted "+(", ".join(deleted) if deleted else "downloaded map"))
         self.refresh_maps(force=False)
-        q=self.onlineMapsSearch.text().strip()
-        self._start_online_worker("search" if q else "latest",q)
+        # Do not rebuild ONLINE results: preserve selection, scroll, metadata,
+        # thumbnails and the user's current place in the list.
+        if row >= 0:
+            self._set_online_row_action(row,item)
+            self.onlineMapsTable.selectRow(row)
 
 
     def _online_download_done(self,w):
         if w in self.onlineDownloadWorkers:self.onlineDownloadWorkers.remove(w)
 
     def _online_download_ready(self,name,item=None):
-        self.mapsStatus.setText(f"Downloaded {name}"); self.refresh_maps(force=False)
-        q=self.onlineMapsSearch.text().strip()
-        self._start_online_worker("search" if q else "latest",q)
+        self.mapsStatus.setText(f"Downloaded {name}")
+        self.refresh_maps(force=False)
+        # Update only the action cell. Re-running search/latest here used to
+        # clear selection, reset row state and make keyboard use frustrating.
+        if isinstance(item,dict):
+            row=self._online_row_for_item(item)
+            if row >= 0:
+                self._set_online_row_action(row,item)
+                self.onlineMapsTable.selectRow(row)
 
 
     def _map_levelshot_pixmap(self, item):
