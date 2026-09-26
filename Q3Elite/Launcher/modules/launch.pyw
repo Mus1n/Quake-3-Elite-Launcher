@@ -6176,6 +6176,7 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
 
         search_card = QtWidgets.QFrame()
         search_card.setObjectName("statisticsSearchCard")
+        self.statisticsSearchCard = search_card
         search_l = QtWidgets.QVBoxLayout(search_card)
         search_l.setContentsMargins(18, 15, 18, 15)
         search_l.setSpacing(9)
@@ -6223,6 +6224,10 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
         self.statisticsFilterShortcut.setContext(QtCore.Qt.ShortcutContext.WindowShortcut)
         self.statisticsFilterShortcut.activated.connect(self._statistics_cycle_period)
         self.statisticsFilterShortcut.setEnabled(False)
+        self.statisticsSearchShortcut = QtGui.QShortcut(QtGui.QKeySequence("Ctrl+F"), self)
+        self.statisticsSearchShortcut.setContext(QtCore.Qt.ShortcutContext.WindowShortcut)
+        self.statisticsSearchShortcut.activated.connect(self._statistics_show_search)
+        self.statisticsSearchShortcut.setEnabled(False)
         self._show_statistics_empty()
         return page
 
@@ -6376,6 +6381,12 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
         self.statisticsLayout.addWidget(empty)
         self.statisticsLayout.addStretch(1)
 
+    def _statistics_show_search(self):
+        if hasattr(self, "statisticsSearchCard"):
+            self.statisticsSearchCard.show()
+        self.statisticsNickname.setFocus()
+        self.statisticsNickname.selectAll()
+
     def lookup_statistics(self):
         value = self.statisticsNickname.text().strip()
         if not value:
@@ -6422,8 +6433,12 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
             self._statistics_period = "month"
         self.statisticsMessage.setText("Statistics loaded from freekill.ru.")
         self._render_statistics(payload)
+        if hasattr(self, "statisticsSearchCard"):
+            self.statisticsSearchCard.hide()
 
     def _statistics_failed(self, message):
+        if hasattr(self, "statisticsSearchCard"):
+            self.statisticsSearchCard.show()
         self.statisticsSearchButton.setText("SEARCH")
         self.statisticsSearchButton.setEnabled(True)
         self.statisticsMessage.setText("Statistics error: " + message)
@@ -6519,22 +6534,39 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
         for col in range(1, 5):
             table.horizontalHeader().setSectionResizeMode(col, QtWidgets.QHeaderView.ResizeMode.ResizeToContents)
         weapons = data.get("weapons", []) or []
+        table.setIconSize(QtCore.QSize(20, 20))
         table.setRowCount(len(weapons))
+        weapon_icons = {
+            "Gauntlet": "gauntlet.png",
+            "Machinegun": "machinegun.png",
+            "Shotgun": "shotgun.png",
+            "Grenade Launcher": "grenadelauncher.png",
+            "Rocket Launcher": "rocketlauncher.png",
+            "Lightning Gun": "lightninggun.png",
+            "Railgun": "railgun.png",
+            "Plasma Gun": "plasmagun.png",
+        }
+        statistics_icons_dir = ASSETS_DIR / "statistics"
         for row, weapon in enumerate(weapons):
             hits = int(weapon.get("hits", 0) or 0)
             shots = int(weapon.get("shots", 0) or 0)
             frags = int(weapon.get("frags", 0) or 0)
             accuracy = (hits / shots * 100.0) if shots else None
-            values = [weapon.get("weapon", "Unknown"), f"{accuracy:.1f}%" if accuracy is not None else "—", f"{hits:,}", f"{shots:,}", f"{frags:,}"]
+            weapon_name = weapon.get("weapon", "Unknown")
+            values = [weapon_name, f"{accuracy:.1f}%" if accuracy is not None else "—", f"{hits:,}", f"{shots:,}", f"{frags:,}"]
             for col, value in enumerate(values):
                 item = QtWidgets.QTableWidgetItem(str(value))
-                if col > 0:
+                if col == 0:
+                    icon_path = statistics_icons_dir / weapon_icons.get(weapon_name, "")
+                    if icon_path.is_file():
+                        item.setIcon(QtGui.QIcon(str(icon_path)))
+                else:
                     item.setTextAlignment(int(QtCore.Qt.AlignmentFlag.AlignRight | QtCore.Qt.AlignmentFlag.AlignVCenter))
                 table.setItem(row, col, item)
-            table.setRowHeight(row, 32)
+            table.setRowHeight(row, 25)
         table.setVerticalScrollBarPolicy(QtCore.Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         table.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        table.setFixedHeight(36 + max(1, len(weapons)) * 32 + 4)
+        table.setFixedHeight(29 + max(1, len(weapons)) * 25 + 3)
         return table
 
     def _build_statistics_general(self, data):
@@ -9164,6 +9196,8 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
         statistics_active = page == "statistics"
         if hasattr(self, "statisticsFilterShortcut"):
             self.statisticsFilterShortcut.setEnabled(statistics_active)
+        if hasattr(self, "statisticsSearchShortcut"):
+            self.statisticsSearchShortcut.setEnabled(statistics_active)
         for shortcut in getattr(self, "screenshotShortcuts", []):
             shortcut.setEnabled(screenshots_active)
         for shortcut in getattr(self, "demoShortcuts", []):

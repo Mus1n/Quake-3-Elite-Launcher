@@ -640,15 +640,16 @@ QTableWidget#statisticsWeaponTable {
     font-size: 11px;
 }
 QTableWidget#statisticsWeaponTable::item {
-    padding: 0px 12px;
+    padding: 0px 7px;
     border-bottom: 1px solid rgba(145, 132, 120, 28);
 }
 QTableWidget#statisticsWeaponTable::item:hover {
     background-color: rgba(55, 8, 8, 135);
 }
 QTableWidget#statisticsWeaponTable QHeaderView::section {
-    min-height: 34px;
-    padding: 0px 12px;
+    min-height: 27px;
+    max-height: 27px;
+    padding: 0px 7px;
     color: rgba(205, 190, 172, 175);
     background-color: rgba(28, 7, 7, 210);
     border: none;
