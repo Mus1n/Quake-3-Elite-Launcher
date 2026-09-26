@@ -1059,3 +1059,23 @@ QWidget#mapOnlineActions QPushButton#mapDeleteButton {
     padding: 0 2px;
     font-size: 8px;
 }
+
+
+/* v0.09.14 Statistics — compact general-stat cards */
+QFrame#statisticsGeneralCards {
+    background: transparent;
+    border: none;
+}
+QFrame#statisticsCompactTile {
+    min-height: 45px;
+    background-color: rgba(4, 4, 5, 145);
+    border: 1px solid rgba(145, 132, 120, 48);
+    border-radius: 7px;
+}
+QFrame#statisticsCompactTile:hover {
+    background-color: rgba(45, 7, 7, 150);
+    border-color: rgba(165, 50, 30, 105);
+}
+QFrame#statisticsCompactTile QLabel#statisticsStatValue {
+    font-size: 16px;
+}

@@ -1728,6 +1728,7 @@ DEFAULT_SETTINGS = {
     "screenshot_source": "reshade",
     "suppress_startup_notification_sound": True,
     "statistics_profile_url": "",
+    "statistics_period": "week",
 }
 
 
@@ -1783,6 +1784,9 @@ def load_launcher_settings():
                             data[key] = value if value in ("reshade", "osp", "both") else "reshade"
                         elif key == "statistics_profile_url":
                             data[key] = str(raw[key] or "").strip()
+                        elif key == "statistics_period":
+                            value = str(raw[key] or "week").lower()
+                            data[key] = value if value in ("week", "month") else "week"
                         else:
                             data[key] = bool(raw[key])
 
@@ -2211,6 +2215,10 @@ def apply_settings():
         "pause_server_refresh_unfocused": window.pauseServerRefreshBox.isChecked(),
         "suppress_startup_notification_sound": window.suppressStartupSoundBox.isChecked(),
         "screenshot_source": launcher_settings.get("screenshot_source", "reshade"),
+        # Statistics preferences live in the same settings file and must survive
+        # pressing APPLY on the Settings page.
+        "statistics_profile_url": launcher_settings.get("statistics_profile_url", ""),
+        "statistics_period": launcher_settings.get("statistics_period", "week"),
     }
     try:
         set_start_with_windows(launcher_settings["start_with_windows"])
@@ -6218,16 +6226,14 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
         root.addWidget(self.statisticsResults, 1)
 
         self._statistics_payload = None
-        self._statistics_period = "week"
+        self._statistics_period = str(launcher_settings.get("statistics_period", "week") or "week").lower()
+        if self._statistics_period not in ("week", "month"):
+            self._statistics_period = "week"
         self._statistics_worker = None
         self.statisticsFilterShortcut = QtGui.QShortcut(QtGui.QKeySequence("F4"), self)
         self.statisticsFilterShortcut.setContext(QtCore.Qt.ShortcutContext.WindowShortcut)
         self.statisticsFilterShortcut.activated.connect(self._statistics_cycle_period)
         self.statisticsFilterShortcut.setEnabled(False)
-        self.statisticsSearchShortcut = QtGui.QShortcut(QtGui.QKeySequence("Ctrl+F"), self)
-        self.statisticsSearchShortcut.setContext(QtCore.Qt.ShortcutContext.WindowShortcut)
-        self.statisticsSearchShortcut.activated.connect(self._statistics_show_search)
-        self.statisticsSearchShortcut.setEnabled(False)
         self._show_statistics_empty()
         return page
 
@@ -6427,7 +6433,11 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
             save_launcher_settings(launcher_settings)
         except Exception:
             pass
-        if payload.get("week") is not None:
+        # Keep the user's last WEEK/MONTH filter across launcher restarts.
+        preferred_period = str(launcher_settings.get("statistics_period", self._statistics_period) or "week").lower()
+        if preferred_period in ("week", "month") and payload.get(preferred_period) is not None:
+            self._statistics_period = preferred_period
+        elif payload.get("week") is not None:
             self._statistics_period = "week"
         else:
             self._statistics_period = "month"
@@ -6517,6 +6527,11 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
     def _statistics_switch_period(self, period):
         if self._statistics_payload and self._statistics_payload.get(period) is not None:
             self._statistics_period = period
+            launcher_settings["statistics_period"] = period
+            try:
+                save_launcher_settings(launcher_settings)
+            except Exception as error:
+                print(f"[statistics] Could not save period: {error}")
             self._render_statistics(self._statistics_payload)
 
     def _build_statistics_weapon_table(self, data):
@@ -6570,38 +6585,49 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
         return table
 
     def _build_statistics_general(self, data):
+        """Compact dashboard cards; ELO stays only in the profile header."""
         frame = QtWidgets.QFrame()
-        frame.setObjectName("statisticsProfileCard")
+        frame.setObjectName("statisticsGeneralCards")
         grid = QtWidgets.QGridLayout(frame)
-        grid.setContentsMargins(16, 12, 16, 12)
-        grid.setHorizontalSpacing(28)
+        grid.setContentsMargins(0, 0, 0, 0)
+        grid.setHorizontalSpacing(7)
         grid.setVerticalSpacing(7)
-        values = [
-            ("Games", f"{data.get('games', 0):,}"),
-            ("Online", self._statistics_online(data.get('online_ms', 0))),
-            ("Kills", f"{data.get('kills', 0):,}"),
-            ("Deaths", f"{data.get('deaths', 0):,}"),
-            ("K / D", f"{data.get('kd', 0.0):.2f}"),
-            ("ELO", f"{data.get('elo', 0):,}"),
-            ("Damage Given", f"{data.get('damage_given', 0):,}"),
-            ("Damage Received", f"{data.get('damage_received', 0):,}"),
-            ("DG / DR", f"{data.get('damage_ratio', 0.0):.2f}"),
-            ("Thaws", f"{data.get('thaws', 0):,}"),
-            ("Unfreezes", f"{data.get('unfreezes', 0):,}"),
-            ("Suicides", f"{data.get('suicides', 0):,}"),
-        ]
-        for i, (label, value) in enumerate(values):
-            col = (i % 2) * 2
-            row = i // 2
-            name = QtWidgets.QLabel(label.upper())
+
+        def add_card(row, column, label, value, column_span=1):
+            tile = QtWidgets.QFrame()
+            tile.setObjectName("statisticsCompactTile")
+            tile_l = QtWidgets.QVBoxLayout(tile)
+            tile_l.setContentsMargins(10, 6, 10, 6)
+            tile_l.setSpacing(1)
+
+            name = QtWidgets.QLabel(label)
             name.setObjectName("statisticsStatName")
             val = QtWidgets.QLabel(value)
             val.setObjectName("statisticsStatValue")
-            val.setAlignment(QtCore.Qt.AlignmentFlag.AlignRight | QtCore.Qt.AlignmentFlag.AlignVCenter)
-            grid.addWidget(name, row, col)
-            grid.addWidget(val, row, col + 1)
-        grid.setColumnStretch(0, 1)
-        grid.setColumnStretch(2, 1)
+            val.setAlignment(QtCore.Qt.AlignmentFlag.AlignLeft | QtCore.Qt.AlignmentFlag.AlignVCenter)
+            tile_l.addWidget(name)
+            tile_l.addWidget(val)
+            grid.addWidget(tile, row, column, 1, column_span)
+
+        # Row 1: core activity/combat values. K/D gets its own card.
+        add_card(0, 0, "GAMES", f"{data.get('games', 0):,}")
+        add_card(0, 1, "ONLINE", self._statistics_online(data.get('online_ms', 0)))
+        add_card(0, 2, "KILLS", f"{data.get('kills', 0):,}")
+        add_card(0, 3, "DEATHS", f"{data.get('deaths', 0):,}")
+        add_card(0, 4, "K/D", f"{data.get('kd', 0.0):.2f}")
+
+        # Row 2: keep the damage ratio directly beside both damage totals.
+        add_card(1, 0, "DAMAGE GIVEN", f"{data.get('damage_given', 0):,}", 2)
+        add_card(1, 2, "DAMAGE RECEIVED", f"{data.get('damage_received', 0):,}", 2)
+        add_card(1, 4, "DG / DR", f"{data.get('damage_ratio', 0.0):.2f}")
+
+        # Row 3: Freeze-specific values, kept separate for quicker reading.
+        add_card(2, 0, "THAWS", f"{data.get('thaws', 0):,}", 2)
+        add_card(2, 2, "UNFREEZES", f"{data.get('unfreezes', 0):,}", 2)
+        add_card(2, 4, "SUICIDES", f"{data.get('suicides', 0):,}")
+
+        for col in range(5):
+            grid.setColumnStretch(col, 1)
         return frame
 
     # ------------------------------------------------------------------
@@ -6676,6 +6702,9 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
 
     def _focus_current_media_search(self):
         page = self.pages.currentWidget()
+        if page is getattr(self, "statisticsPage", None):
+            self._statistics_show_search()
+            return True
         if page is getattr(self, "screenshotsPage", None):
             self.screenshotSearch.setFocus()
             self.screenshotSearch.selectAll()
@@ -9196,8 +9225,6 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
         statistics_active = page == "statistics"
         if hasattr(self, "statisticsFilterShortcut"):
             self.statisticsFilterShortcut.setEnabled(statistics_active)
-        if hasattr(self, "statisticsSearchShortcut"):
-            self.statisticsSearchShortcut.setEnabled(statistics_active)
         for shortcut in getattr(self, "screenshotShortcuts", []):
             shortcut.setEnabled(screenshots_active)
         for shortcut in getattr(self, "demoShortcuts", []):
