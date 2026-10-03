@@ -1240,7 +1240,7 @@ class LauncherSelfUpdate(QtCore.QThread):
             print(f"Changed files: {len(update_info['files'])}")
             print()
 
-            if not launcher_settings.get("auto_update_launcher", True):
+            if not launcher_settings.get("auto_update_launcher", False):
                 print("[settings] Launcher update found; automatic installation is disabled.")
                 self.result_ready.emit("continue")
                 return
@@ -2053,8 +2053,8 @@ MATCHMAKING_FILE = LAUNCHER_DATA_DIR / "matchmaking.json"
 NOTIFY_SOUND = ASSETS_DIR / "sounds" / "notify.mp3"
 
 DEFAULT_SETTINGS = {
-    "auto_update_q3elite": True,
-    "auto_update_launcher": True,
+    "auto_update_q3elite": False,
+    "auto_update_launcher": False,
     "auto_update_osp": True,
     "start_with_windows": False,
     "start_minimized": False,
@@ -2849,7 +2849,7 @@ def start_first_install():
 
 def start_game_checks():
     """Start Q3Elite/PAK/OSP pipeline after launcher self-update resolves."""
-    if q3elite_is_installed() and not launcher_settings.get("auto_update_q3elite", True):
+    if q3elite_is_installed() and not launcher_settings.get("auto_update_q3elite", False):
         print("[settings] Automatic Q3Elite update is disabled.")
         install_state["q3elite_done"] = True
         install_state["q3elite_ok"] = True
@@ -9931,7 +9931,7 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
         self.installActivityCard.setObjectName("homeInstallActivity")
         self.installActivityCard.setProperty("materialRadius", theme_int("radius.md", 10))
         activity_layout = QtWidgets.QVBoxLayout(self.installActivityCard)
-        activity_layout.setContentsMargins(12, 9, 12, 9)
+        activity_layout.setContentsMargins(12, 9, 12, 12)
         activity_layout.setSpacing(5)
         activity_title = QtWidgets.QLabel("INSTALLATION ACTIVITY")
         activity_title.setObjectName("homeMetaCaption")
@@ -9941,7 +9941,25 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
         self.installActivityText.setWordWrap(True)
         self.installActivityText.setAlignment(QtCore.Qt.AlignmentFlag.AlignTop | QtCore.Qt.AlignmentFlag.AlignLeft)
         self.installActivityText.setTextInteractionFlags(QtCore.Qt.TextInteractionFlag.TextSelectableByMouse)
-        self.installActivityText.setMinimumHeight(88)
+
+        # Reserve enough vertical space for every retained activity row.  The old
+        # fixed 88 px minimum was a few pixels shorter than six themed text lines,
+        # which clipped the final row at the bottom of the card.
+        activity_line_height = max(1, self.installActivityText.fontMetrics().lineSpacing())
+        activity_text_height = activity_line_height * _INSTALL_ACTIVITY_LIMIT + 8
+        self.installActivityText.setMinimumHeight(activity_text_height)
+        self.installActivityText.setSizePolicy(
+            QtWidgets.QSizePolicy.Policy.Expanding,
+            QtWidgets.QSizePolicy.Policy.MinimumExpanding,
+        )
+        activity_card_height = (
+            9 + 12
+            + activity_title.sizeHint().height()
+            + activity_layout.spacing()
+            + activity_text_height
+        )
+        self.installActivityCard.setMinimumHeight(activity_card_height)
+
         activity_layout.addWidget(self.installActivityText, 1)
         panel.addWidget(self.installActivityCard)
 
@@ -14370,8 +14388,8 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
         self.addonMessage.style().polish(self.addonMessage)
 
     def load_settings_ui(self):
-        self.autoQ3Box.setChecked(launcher_settings.get("auto_update_q3elite", True))
-        self.autoLauncherBox.setChecked(launcher_settings.get("auto_update_launcher", True))
+        self.autoQ3Box.setChecked(launcher_settings.get("auto_update_q3elite", False))
+        self.autoLauncherBox.setChecked(launcher_settings.get("auto_update_launcher", False))
         self.autoOspBox.setChecked(launcher_settings.get("auto_update_osp", True))
         self.startWindowsBox.setChecked(launcher_settings.get("start_with_windows", False))
         self.startMinimizedBox.setChecked(launcher_settings.get("start_minimized", False))
