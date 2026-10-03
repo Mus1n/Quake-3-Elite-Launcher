@@ -1,0 +1,3040 @@
+/*
+ * Q3ELITE / NOCTRA V6
+ * Component language only. Identity constants live in tokens.json.
+ *
+ * Visual rules:
+ *   - near-black first, imagery second
+ *   - Figtree 500+ for UI text at 1366x768
+ *   - cyan marks state/focus, never floods the entire interface
+ *   - layered translucent material instead of flat rectangles
+ *   - crimson is a rare Quake signature, not a second primary theme
+ */
+
+/* Application-wide typography is installed once through QFont by
+   ThemeManager. Keep the universal selector lightweight: repeatedly resolving
+   family/size/weight for every widget adds needless QSS work during page build. */
+* {
+    color: {{colors.text.primary}};
+    outline: none;
+}
+
+QMainWindow#launcherWindow {
+    /* Top-level window MUST stay transparent. The shell paints the rounded
+       material; an opaque QMainWindow background turns the corners square. */
+    background: transparent;
+}
+
+QFrame#shell {
+    background: transparent;
+    border: none;
+    border-radius: {{radius.window}}px;
+}
+
+/* The shell owns the artwork. The body adds the dark Noctra readability film. */
+QFrame#body {
+    background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
+        stop:0 {{colors.surface.content_scrim_strong}},
+        stop:0.48 {{colors.surface.content_scrim}},
+        stop:1 rgba(2, 5, 8, 145));
+    border: none;
+    border-top-right-radius: {{radius.window}}px;
+    border-bottom-right-radius: {{radius.window}}px;
+}
+
+QStackedWidget#pages,
+QStackedWidget#pages > QWidget,
+QScrollArea,
+QScrollArea > QWidget,
+QScrollArea > QWidget > QWidget {
+    background: transparent;
+    border: none;
+}
+
+QToolTip {
+    color: {{colors.text.primary}};
+    background: {{colors.surface.raised}};
+    border: 1px solid {{colors.border.strong}};
+    border-radius: {{radius.sm}}px;
+    padding: 7px 10px;
+    font-size: {{typography.size.caption}}px;
+    font-weight: {{typography.weight.semibold}};
+}
+
+/* =====================================================================
+   TYPOGRAPHY
+   ===================================================================== */
+
+QLabel {
+    background: transparent;
+    color: {{colors.text.primary}};
+    font-weight: {{typography.weight.medium}};
+}
+
+QLabel#pageTitle {
+    color: {{colors.text.primary}};
+    font-size: {{typography.size.page}}px;
+    font-weight: {{typography.weight.bold}};
+}
+
+QLabel#sectionTitle,
+QLabel#statisticsGroupTitle,
+QLabel#onlineMapsHeading {
+    color: {{colors.text.secondary}};
+    font-size: {{typography.size.caption}}px;
+    font-weight: {{typography.weight.semibold}};
+}
+
+QLabel#topMotto,
+QLabel#heroKicker {
+    color: {{colors.text.muted}};
+    font-size: {{typography.size.micro}}px;
+    font-weight: {{typography.weight.semibold}};
+}
+
+QLabel#topMotto {
+    color: {{colors.text.secondary}};
+}
+
+QLabel#heroTitle {
+    color: {{colors.text.primary}};
+    font-size: {{typography.size.heading}}px;
+    font-weight: {{typography.weight.bold}};
+}
+
+QLabel#brand {
+    color: {{colors.text.primary}};
+    font-size: {{typography.size.section}}px;
+    font-weight: {{typography.weight.bold}};
+}
+
+QLabel#muted,
+QLabel#brandSub,
+QLabel#sideQuote,
+QLabel#downloadInfo,
+QLabel#versionLabel,
+QLabel#serverAddress,
+QLabel#changelogDate,
+QLabel#changelogCounter,
+QLabel#settingsHint,
+QLabel#mapsHint,
+QLabel#statisticsEmptyText,
+QLabel#statisticsMessage,
+QLabel#screenshotStatus,
+QLabel#keyBindsLegend {
+    color: {{colors.text.muted}};
+    font-size: {{typography.size.caption}}px;
+    font-weight: {{typography.weight.semibold}};
+}
+
+QLabel#statusTitle,
+QLabel#addonTitle,
+QLabel#featureTitle,
+QLabel#serverName,
+QLabel#changelogCardTitle,
+QLabel#alertTitle,
+QLabel#statisticsPlayerName {
+    color: {{colors.text.primary}};
+    font-weight: {{typography.weight.semibold}};
+}
+
+QLabel#statisticsStatValue,
+QLabel#statisticsMatchesValue {
+    color: {{colors.text.primary}};
+    font-size: {{typography.size.heading}}px;
+    font-weight: {{typography.weight.bold}};
+}
+
+QLabel#statisticsStatName {
+    color: {{colors.text.muted}};
+    font-size: {{typography.size.caption}}px;
+    font-weight: {{typography.weight.semibold}};
+}
+
+/* =====================================================================
+   LEFT RAIL / WINDOW CHROME
+   ===================================================================== */
+
+QFrame#sidebar {
+    background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
+        stop:0 rgba(3,3,4,252),
+        stop:0.72 rgba(8,8,9,242),
+        stop:1 rgba(13,13,15,226));
+    border: none;
+    border-right: 1px solid {{colors.border.hairline}};
+    border-top-left-radius: {{radius.window}}px;
+    border-bottom-left-radius: {{radius.window}}px;
+}
+
+QFrame#navIndicator {
+    background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
+        stop:0 {{colors.brand.primary_26}},
+        stop:0.55 {{colors.brand.primary_12}},
+        stop:1 rgba(15,15,17,220));
+    border: 1px solid {{colors.brand.primary_38}};
+    border-left: 2px solid {{colors.brand.frost}};
+    border-radius: {{radius.md}}px;
+}
+
+QPushButton#navButton {
+    min-width: {{layout.nav_button}}px;
+    max-width: {{layout.nav_button}}px;
+    min-height: {{layout.nav_button}}px;
+    max-height: {{layout.nav_button}}px;
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: {{radius.md}}px;
+    color: {{colors.text.muted}};
+    padding: 0;
+}
+
+QPushButton#navButton:hover {
+    background: {{colors.brand.primary_05}};
+    border-color: {{colors.border.soft}};
+    color: {{colors.text.secondary}};
+}
+
+/* Active material is drawn by the animated navIndicator behind this button. */
+QPushButton#navButton:checked {
+    background: transparent;
+    border-color: transparent;
+    color: {{colors.brand.frost}};
+}
+
+QPushButton#navButton:disabled {
+    color: {{colors.text.disabled}};
+    background: transparent;
+    border-color: transparent;
+}
+
+QPushButton#windowButton,
+QPushButton#closeButton {
+    min-width: 34px;
+    max-width: 34px;
+    min-height: 30px;
+    max-height: 30px;
+    padding: 0;
+    margin: 0;
+    border: 1px solid transparent;
+    border-radius: {{radius.sm}}px;
+    background: transparent;
+    color: {{colors.text.muted}};
+}
+
+QPushButton#windowButton:hover {
+    background: {{colors.surface.hover}};
+    border-color: {{colors.border.soft}};
+    color: {{colors.text.primary}};
+}
+
+QPushButton#closeButton:hover {
+    background: {{colors.semantic.danger_soft}};
+    border-color: rgba(229, 76, 76, 85);
+    color: {{colors.semantic.danger}};
+}
+
+/* =====================================================================
+   CARDS / GLASS MATERIAL
+   ===================================================================== */
+
+QFrame#heroCard,
+QFrame#statusCard,
+QFrame#updateAlert,
+QFrame#firstInstallCard,
+QFrame#progressCard,
+QFrame#featureCard,
+QFrame#addonCard,
+QFrame#settingsCard,
+QFrame#serverCard,
+QFrame#statisticsSearchCard,
+QFrame#statisticsProfileCard,
+QFrame#statisticsCompactTile,
+QFrame#mediaPreviewFrame,
+QFrame#configEditorPanel,
+QFrame#changelogCard {
+    background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+        stop:0 {{colors.surface.panel_soft}},
+        stop:0.18 {{colors.surface.panel}},
+        stop:1 {{colors.surface.panel_strong}});
+    border: 1px solid {{colors.border.soft}};
+    border-radius: {{radius.lg}}px;
+}
+
+QFrame#heroCard {
+    background: rgba(8, 8, 9, 226);
+    border-color: {{colors.border.normal}};
+}
+
+QFrame#featureCard:hover,
+QFrame#statisticsCompactTile:hover,
+QFrame#serverCard:hover {
+    background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
+        stop:0 {{colors.surface.panel_strong}},
+        stop:1 {{colors.brand.primary_05}});
+    border-color: {{colors.brand.primary_26}};
+}
+
+QFrame#statusCard[state="working"] { border-color: {{colors.brand.primary_38}}; }
+QFrame#statusCard[state="ok"] { border-color: {{colors.semantic.success_soft}}; }
+QFrame#statusCard[state="warning"] { border-color: {{colors.semantic.warning_soft}}; }
+QFrame#statusCard[state="critical"] { border-color: {{colors.semantic.danger_soft}}; }
+
+QFrame#heroOverlay {
+    background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
+        stop:0 rgba(3, 7, 11, 248),
+        stop:0.65 rgba(5, 10, 14, 238),
+        stop:1 rgba(8, 15, 19, 226));
+    border: none;
+    border-top: 1px solid {{colors.border.highlight}};
+}
+
+/* =====================================================================
+   BUTTONS
+   ===================================================================== */
+
+QPushButton {
+    min-height: 39px;
+    padding: 0 16px;
+    border: 1px solid {{colors.border.normal}};
+    border-radius: {{radius.md}}px;
+    background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+        stop:0 #202024,
+        stop:1 #151517);
+    color: {{colors.text.secondary}};
+    font-size: {{typography.size.control}}px;
+    font-weight: {{typography.weight.semibold}};
+}
+
+QPushButton:hover {
+    background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+        stop:0 #28282D,
+        stop:1 #1A1A1D);
+    border-color: {{colors.border.strong}};
+    color: {{colors.text.primary}};
+}
+
+QPushButton:pressed {
+    background: {{colors.surface.pressed}};
+    border-color: {{colors.brand.primary_38}};
+}
+
+QPushButton:disabled {
+    background: {{colors.surface.deep}};
+    border-color: {{colors.border.soft}};
+    color: {{colors.text.disabled}};
+}
+
+/* Large Noctra-like launch/install control. */
+QPushButton#playButton {
+    min-height: 72px;
+    background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+        stop:0 #F4F8FA,
+        stop:0.48 #E4EDF0,
+        stop:1 #D2D2D5);
+    color: {{colors.text.inverse}};
+    border: 1px solid #F8FCFD;
+    border-radius: {{radius.lg}}px;
+    font-size: {{typography.size.page}}px;
+    font-weight: {{typography.weight.bold}};
+    padding: 0 30px;
+}
+
+QPushButton#playButton:hover {
+    background: #F8FBFC;
+    border-color: {{colors.brand.frost}};
+}
+
+QPushButton#playButton:pressed {
+    background: {{colors.brand.frost}};
+}
+
+QPushButton#applyButton,
+QPushButton#serverConnectButton {
+    background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+        stop:0 {{colors.brand.primary_hover}},
+        stop:1 {{colors.brand.primary}});
+    border-color: {{colors.brand.primary}};
+    color: {{colors.text.inverse}};
+    font-weight: {{typography.weight.bold}};
+}
+
+QPushButton#applyButton:hover,
+QPushButton#serverConnectButton:hover {
+    background: {{colors.brand.primary_hover}};
+    border-color: {{colors.brand.frost}};
+}
+
+/* Dense table actions stay restrained until hover. */
+QPushButton#mapPlayButton,
+QPushButton#demoPlayButton,
+QPushButton#mapDownloadButton {
+    min-width: 70px;
+    max-height: 42px;
+    padding: 0 11px;
+    background: {{colors.brand.primary_08}};
+    border-color: {{colors.brand.primary_26}};
+    color: {{colors.brand.frost}};
+    font-weight: {{typography.weight.semibold}};
+}
+
+QPushButton#mapPlayButton:hover,
+QPushButton#demoPlayButton:hover,
+QPushButton#mapDownloadButton:hover {
+    background: {{colors.brand.primary}};
+    border-color: {{colors.brand.primary_hover}};
+    color: {{colors.text.inverse}};
+}
+
+QPushButton#secondaryButton,
+QPushButton#smallButton,
+QPushButton#serverSmallButton,
+QPushButton#serverEditButton,
+QPushButton#serverToolbarButton,
+QPushButton#mapToolbarButton,
+QPushButton#mapModeButton,
+QPushButton#statisticsTabButton,
+QPushButton#mediaSourceButton,
+QPushButton#changelogLinkButton {
+    background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+        stop:0 {{colors.surface.raised}},
+        stop:1 {{colors.surface.base}});
+    border-color: {{colors.border.normal}};
+    color: {{colors.text.secondary}};
+}
+
+QPushButton#statisticsTabButton:checked,
+QPushButton#mapModeButton:checked,
+QPushButton#mapModeButton[active="true"],
+QPushButton#mediaSourceButton:checked,
+QPushButton#mapToolbarButton[active="true"] {
+    background: {{colors.brand.primary_08}};
+    border-color: {{colors.brand.primary_38}};
+    color: {{colors.brand.frost}};
+}
+
+QPushButton#mapDeleteButton,
+QPushButton#serverRemoveButton {
+    min-width: 76px;
+    max-height: 42px;
+    padding: 0 10px;
+    background: transparent;
+    border-color: rgba(229, 76, 76, 70);
+    color: {{colors.semantic.danger}};
+    font-weight: {{typography.weight.semibold}};
+}
+
+QPushButton#mapDeleteButton:hover,
+QPushButton#serverRemoveButton:hover {
+    background: {{colors.semantic.danger_soft}};
+    border-color: {{colors.semantic.danger}};
+    color: #FF7474;
+}
+
+QPushButton#sliderArrow,
+QPushButton#serverCarouselButton,
+QPushButton#changelogArrow,
+QPushButton#changelogToggle {
+    background: rgba(8, 8, 9, 222);
+    border: 1px solid {{colors.border.normal}};
+    color: {{colors.text.secondary}};
+    padding: 0;
+}
+
+QPushButton#sliderArrow:hover,
+QPushButton#serverCarouselButton:hover,
+QPushButton#changelogArrow:hover,
+QPushButton#changelogToggle:hover {
+    background: {{colors.surface.hover}};
+    border-color: {{colors.brand.primary_38}};
+    color: {{colors.brand.primary}};
+}
+
+/* =====================================================================
+   INPUTS
+   ===================================================================== */
+
+QLineEdit,
+QPlainTextEdit,
+QTextEdit,
+QTextBrowser,
+QComboBox,
+QSpinBox,
+QDoubleSpinBox {
+    color: {{colors.text.primary}};
+    selection-color: {{colors.text.inverse}};
+    selection-background-color: {{colors.brand.primary}};
+    background: rgba(6, 11, 15, 228);
+    border: 1px solid {{colors.border.normal}};
+    border-radius: {{radius.md}}px;
+    padding: 8px 11px;
+    font-size: {{typography.size.body}}px;
+    font-weight: {{typography.weight.medium}};
+}
+
+QLineEdit:hover,
+QPlainTextEdit:hover,
+QTextEdit:hover,
+QTextBrowser:hover,
+QComboBox:hover,
+QSpinBox:hover,
+QDoubleSpinBox:hover {
+    border-color: {{colors.border.strong}};
+}
+
+QLineEdit:focus,
+QPlainTextEdit:focus,
+QTextEdit:focus,
+QComboBox:focus,
+QSpinBox:focus,
+QDoubleSpinBox:focus {
+    background: rgba(13,13,14,242);
+    border-color: {{colors.brand.primary}};
+}
+
+QLineEdit:disabled,
+QComboBox:disabled,
+QSpinBox:disabled {
+    color: {{colors.text.disabled}};
+    background: {{colors.surface.void}};
+}
+
+QComboBox::drop-down {
+    width: 30px;
+    border: none;
+    background: transparent;
+}
+
+QComboBox QAbstractItemView {
+    background: {{colors.surface.base}};
+    color: {{colors.text.primary}};
+    border: 1px solid {{colors.border.strong}};
+    selection-background-color: {{colors.brand.primary_12}};
+    selection-color: {{colors.text.primary}};
+    outline: 0;
+}
+
+/* =====================================================================
+   CHECKBOXES / PROGRESS / SLIDERS
+   ===================================================================== */
+
+QCheckBox {
+    spacing: 10px;
+    color: {{colors.text.secondary}};
+    font-weight: {{typography.weight.medium}};
+}
+QCheckBox:hover { color: {{colors.text.primary}}; }
+QCheckBox::indicator {
+    width: 18px;
+    height: 18px;
+    /* A small fixed radius renders cleaner in Qt than the generic 4 px card
+       radius on an 18 px indicator, especially over textured backgrounds. */
+    border-radius: 3px;
+    border: 1px solid rgba(255,255,255,72);
+    background: {{colors.surface.deep}};
+}
+QCheckBox::indicator:hover { border-color: {{colors.brand.primary}}; }
+QCheckBox::indicator:checked {
+    background: {{colors.brand.primary}};
+    border-color: {{colors.brand.primary}};
+}
+QCheckBox:disabled { color: {{colors.text.disabled}}; }
+QCheckBox::indicator:disabled {
+    border-color: {{colors.border.soft}};
+    background: {{colors.surface.void}};
+}
+
+QProgressBar {
+    min-height: 6px;
+    max-height: 6px;
+    background: {{colors.surface.hover}};
+    border: none;
+    border-radius: 3px;
+}
+QProgressBar::chunk {
+    background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
+        stop:0 {{colors.brand.primary_pressed}},
+        stop:0.68 {{colors.brand.primary}},
+        stop:1 {{colors.brand.frost}});
+    border-radius: 3px;
+}
+
+QSlider::groove:horizontal {
+    height: 5px;
+    background: {{colors.surface.hover}};
+    border-radius: 2px;
+}
+QSlider::sub-page:horizontal {
+    background: {{colors.brand.primary}};
+    border-radius: 2px;
+}
+QSlider::handle:horizontal {
+    width: 15px;
+    height: 15px;
+    margin: -5px 0;
+    border-radius: 7px;
+    background: {{colors.text.primary}};
+    border: 2px solid {{colors.brand.primary}};
+}
+
+/* =====================================================================
+   TABLES / LISTS
+   ===================================================================== */
+
+QListWidget,
+QTreeWidget,
+QTableWidget,
+QTableView,
+QTreeView {
+    background: rgba(8,8,9,230);
+    alternate-background-color: {{colors.surface.base}};
+    color: {{colors.text.secondary}};
+    border: 1px solid {{colors.border.normal}};
+    border-radius: {{radius.md}}px;
+    gridline-color: {{colors.border.soft}};
+    selection-background-color: rgba(52,52,57,178);
+    selection-color: {{colors.text.primary}};
+    font-size: {{typography.size.body}}px;
+    font-weight: {{typography.weight.medium}};
+}
+
+QTableWidget#mapsTable::item:selected,
+QTableView#mapsTable::item:selected,
+QTableWidget#statisticsWeaponTable::item:selected {
+    background: rgba(55,55,60,178);
+    color: {{colors.text.primary}};
+}
+
+QListWidget::item,
+QTreeWidget::item,
+QTableWidget::item {
+    padding: 6px 8px;
+    border: none;
+}
+
+QListWidget::item:hover,
+QTreeWidget::item:hover {
+    background: {{colors.brand.primary_08}};
+}
+
+QHeaderView {
+    background: transparent;
+    border: none;
+}
+
+QHeaderView::section {
+    background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+        stop:0 #171719,
+        stop:1 #121214);
+    color: {{colors.text.muted}};
+    border: none;
+    border-bottom: 1px solid {{colors.border.normal}};
+    padding: 8px 9px;
+    font-size: {{typography.size.micro}}px;
+    font-weight: {{typography.weight.semibold}};
+}
+
+/* Qt does not clip header-section children to a QTableView's stylesheet
+   radius. Round the actual first/last painted sections too, otherwise a
+   1–2 px square cap is visible at the top corners. */
+QHeaderView::section:first {
+    border-top-left-radius: {{radius.md}}px;
+}
+QHeaderView::section:last {
+    border-top-right-radius: {{radius.md}}px;
+}
+QHeaderView::section:only-one {
+    border-top-left-radius: {{radius.md}}px;
+    border-top-right-radius: {{radius.md}}px;
+}
+
+QTableCornerButton::section {
+    background: #171719;
+    border: none;
+    border-bottom: 1px solid {{colors.border.normal}};
+    border-top-left-radius: {{radius.md}}px;
+}
+
+QTreeWidget#serverPlayerList {
+    background: rgba(4, 8, 11, 190);
+}
+
+/* =====================================================================
+   STATUS / BADGES
+   ===================================================================== */
+
+QLabel#installedBadge {
+    color: {{colors.semantic.success}};
+    background: {{colors.semantic.success_soft}};
+    border: 1px solid rgba(155, 214, 41, 74);
+    border-radius: {{radius.pill}}px;
+    padding: 4px 9px;
+    font-size: {{typography.size.micro}}px;
+    font-weight: {{typography.weight.semibold}};
+}
+QLabel#serverState[online="true"] { color: {{colors.semantic.success}}; }
+QLabel#serverState[online="false"] { color: {{colors.text.muted}}; }
+QLabel#message[error="true"] { color: {{colors.semantic.danger}}; }
+QLabel#message[error="false"] { color: {{colors.semantic.success}}; }
+QLabel#railStatus { color: {{colors.brand.primary}}; }
+
+/* =====================================================================
+   MEDIA / CHANGELOG
+   ===================================================================== */
+
+QWidget#changelogContent,
+QWidget#statisticsContent,
+QWidget#serversContent,
+QWidget#dynamicMediaHost,
+QWidget#screenshotToolsWidget,
+QWidget#mapOnlineActions {
+    background: transparent;
+    border: none;
+}
+
+QLabel#heroImage {
+    background: transparent;
+    border: none;
+}
+
+QLabel#screenshotPreview,
+QLabel#serverLevelshot,
+QLabel#youtubeThumbnailImage,
+QLabel#telegramVideoThumbnailImage,
+QLabel#changelogImage {
+    background: {{colors.surface.void}};
+    color: {{colors.text.muted}};
+    border: none;
+    border-radius: {{radius.md}}px;
+}
+
+QFrame#youtubeThumbnail,
+QFrame#telegramVideoThumbnail,
+QFrame#changelogMedia,
+QFrame#changelogMediaStage,
+QFrame#changelogVideoContainer {
+    background: {{colors.surface.void}};
+    border: 1px solid {{colors.border.normal}};
+    border-radius: {{radius.md}}px;
+}
+
+QPushButton#youtubePlayOverlay,
+QPushButton#telegramPlayOverlay {
+    background: rgba(8, 8, 9, 224);
+    border: 1px solid {{colors.brand.primary_38}};
+    border-radius: {{radius.md}}px;
+}
+QPushButton#youtubePlayOverlay:hover,
+QPushButton#telegramPlayOverlay:hover {
+    background: {{colors.brand.primary}};
+    border-color: {{colors.brand.primary_hover}};
+}
+
+QTextBrowser#changelogSelectableText {
+    background: transparent;
+    border: none;
+    padding: 0;
+}
+
+/* =====================================================================
+   SCROLLBARS / MENUS / DIALOGS
+   ===================================================================== */
+
+QScrollBar:vertical {
+    width: 8px;
+    background: transparent;
+    margin: 2px 0;
+}
+QScrollBar::handle:vertical {
+    min-height: 34px;
+    background: {{colors.border.strong}};
+    border-radius: 4px;
+}
+QScrollBar::handle:vertical:hover { background: {{colors.text.muted}}; }
+QScrollBar::add-line:vertical,
+QScrollBar::sub-line:vertical,
+QScrollBar::add-page:vertical,
+QScrollBar::sub-page:vertical {
+    height: 0;
+    background: transparent;
+}
+
+QScrollBar:horizontal {
+    height: 8px;
+    background: transparent;
+}
+QScrollBar::handle:horizontal {
+    min-width: 34px;
+    background: {{colors.border.strong}};
+    border-radius: 4px;
+}
+QScrollBar::add-line:horizontal,
+QScrollBar::sub-line:horizontal,
+QScrollBar::add-page:horizontal,
+QScrollBar::sub-page:horizontal {
+    width: 0;
+    background: transparent;
+}
+
+QDialog,
+QMessageBox,
+QMenu {
+    background: {{colors.surface.deep}};
+    color: {{colors.text.primary}};
+}
+QMenu {
+    border: 1px solid {{colors.border.strong}};
+    border-radius: {{radius.md}}px;
+    padding: 6px;
+}
+QMenu::item {
+    padding: 8px 21px 8px 11px;
+    border-radius: {{radius.sm}}px;
+}
+QMenu::item:selected {
+    background: {{colors.brand.primary_08}};
+    color: {{colors.text.primary}};
+}
+QMenu::separator {
+    height: 1px;
+    margin: 5px 8px;
+    background: {{colors.border.soft}};
+}
+
+/* =====================================================================
+   V6 / LAYER 2B — SECTION COMPOSITION
+   ===================================================================== */
+
+QWidget#homePage,
+QWidget#addonsPage,
+QWidget#settingsPage {
+    background: transparent;
+}
+
+/* Home ---------------------------------------------------------------- */
+QFrame#homeHeroCard,
+QFrame#homeLaunchPanel,
+QFrame#quickLinkCard,
+QFrame#addonCoreCard,
+QFrame#sectionActionBar {
+    background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+        stop:0 rgba(15,15,17,238),
+        stop:0.55 rgba(6, 11, 15, 232),
+        stop:1 rgba(8, 8, 9, 242));
+    border: 1px solid {{colors.border.soft}};
+    border-radius: {{radius.lg}}px;
+}
+
+QFrame#homeHeroCard {
+    background: rgba(12, 12, 14, 232);
+    border-color: {{colors.border.normal}};
+}
+
+QFrame#homeLaunchPanel {
+    border-color: {{colors.border.normal}};
+}
+
+QFrame#homeLaunchPanel[state="working"] { border-color: {{colors.brand.primary_38}}; }
+QFrame#homeLaunchPanel[state="ok"] { border-color: rgba(155, 214, 41, 65); }
+QFrame#homeLaunchPanel[state="warning"] { border-color: rgba(231, 163, 68, 78); }
+QFrame#homeLaunchPanel[state="critical"] { border-color: rgba(229, 76, 76, 90); }
+
+QLabel#homeEyebrow,
+QLabel#homeMetaCaption,
+QLabel#homeAlertLabel {
+    color: {{colors.text.muted}};
+    font-size: {{typography.size.micro}}px;
+    font-weight: {{typography.weight.semibold}};
+}
+
+QLabel#homeStatusDot {
+    color: {{colors.brand.primary}};
+    font-size: 12px;
+}
+
+QLabel#homeStatusTitle {
+    color: {{colors.text.primary}};
+    font-size: {{typography.size.heading}}px;
+    font-weight: {{typography.weight.bold}};
+}
+
+QLabel#homeStatusDetail,
+QLabel#homeAlertText {
+    color: {{colors.text.muted}};
+    font-size: {{typography.size.caption}}px;
+    font-weight: {{typography.weight.medium}};
+}
+
+QFrame#homeMetaChip,
+QFrame#homeInstallOptions {
+    background: rgba(22,22,24,145);
+    border: 1px solid {{colors.border.hairline}};
+    border-radius: {{radius.md}}px;
+}
+
+QLabel#homeMetaValue {
+    color: {{colors.text.primary}};
+    font-size: {{typography.size.body}}px;
+    font-weight: {{typography.weight.semibold}};
+}
+
+QPushButton#homePauseButton,
+QPushButton#homeRefreshButton {
+    min-height: 29px;
+    max-height: 29px;
+    padding: 0 10px;
+    background: transparent;
+    border: 1px solid {{colors.border.soft}};
+    border-radius: {{radius.sm}}px;
+    color: {{colors.text.muted}};
+    font-size: {{typography.size.micro}}px;
+    font-weight: {{typography.weight.semibold}};
+}
+
+QPushButton#homePauseButton:hover,
+QPushButton#homeRefreshButton:hover {
+    background: {{colors.brand.primary_08}};
+    border-color: {{colors.brand.primary_26}};
+    color: {{colors.brand.frost}};
+}
+
+QProgressBar#homeProgress {
+    min-height: 7px;
+    max-height: 7px;
+}
+
+QFrame#quickLinkCard {
+    border-color: {{colors.border.hairline}};
+}
+
+QFrame#quickLinkCard:hover {
+    border-color: {{colors.brand.primary_26}};
+}
+
+QLabel#quickLinkIcon {
+    background: {{colors.brand.primary_08}};
+    border: 1px solid {{colors.brand.primary_26}};
+    border-radius: {{radius.md}}px;
+}
+
+QLabel#quickLinkTitle {
+    color: {{colors.text.primary}};
+    font-size: {{typography.size.body}}px;
+    font-weight: {{typography.weight.semibold}};
+}
+
+QLabel#quickLinkText,
+QLabel#quickLinkArrow {
+    color: {{colors.text.muted}};
+    font-size: {{typography.size.caption}}px;
+    font-weight: {{typography.weight.medium}};
+}
+
+QFrame#quickLinkCard:hover QLabel#quickLinkArrow {
+    color: {{colors.brand.frost}};
+}
+
+/* Addons -------------------------------------------------------------- */
+QFrame#addonCoreCard,
+QFrame#addonCard {
+    background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
+        stop:0 rgba(15,15,17,234),
+        stop:1 rgba(5, 10, 14, 238));
+    border: 1px solid {{colors.border.soft}};
+    border-radius: {{radius.lg}}px;
+}
+
+QFrame#addonCard:hover {
+    border-color: {{colors.brand.primary_26}};
+    background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
+        stop:0 rgba(20,20,22,240),
+        stop:1 rgba(12, 12, 14, 240));
+}
+
+QLabel#addonIcon,
+QLabel#addonCoreIcon {
+    background: {{colors.brand.primary_08}};
+    border: 1px solid {{colors.brand.primary_26}};
+    border-radius: {{radius.md}}px;
+    color: {{colors.brand.frost}};
+    font-weight: {{typography.weight.bold}};
+}
+
+QFrame#sectionActionBar {
+    background: rgba(5, 10, 14, 238);
+    border-color: {{colors.border.hairline}};
+}
+
+/* Settings ------------------------------------------------------------ */
+QLabel#settingsCardTitle {
+    color: {{colors.text.primary}};
+    font-size: {{typography.size.body}}px;
+    font-weight: {{typography.weight.semibold}};
+}
+
+QLabel#settingsPath {
+    color: {{colors.text.quiet}};
+    font-size: {{typography.size.micro}}px;
+    font-weight: {{typography.weight.medium}};
+}
+
+QPushButton#iconButton,
+QPushButton#mapDeleteIconButton {
+    min-width: 38px;
+    max-width: 38px;
+    min-height: 38px;
+    max-height: 38px;
+    padding: 0;
+    background: rgba(20,20,22,220);
+    border: 1px solid {{colors.border.normal}};
+    border-radius: {{radius.md}}px;
+}
+
+QPushButton#iconButton:hover {
+    background: {{colors.brand.primary_08}};
+    border-color: {{colors.brand.primary_38}};
+}
+
+QPushButton#mapDeleteIconButton {
+    background: transparent;
+    border-color: rgba(229, 76, 76, 58);
+}
+
+QPushButton#mapDeleteIconButton:hover {
+    background: {{colors.semantic.danger_soft}};
+    border-color: {{colors.semantic.danger}};
+}
+
+/* Tables / list materials -------------------------------------------- */
+QTableWidget#mapsTable,
+QTableWidget#statisticsWeaponTable,
+QTreeWidget#serverPlayerList {
+    background: rgba(8, 8, 9, 224);
+    border-color: {{colors.border.soft}};
+}
+
+QTableWidget#mapsTable::item,
+QTableWidget#statisticsWeaponTable::item,
+QTreeWidget#serverPlayerList::item {
+    background: transparent;
+    border: none;
+}
+
+QTableWidget#mapsTable::item:selected,
+QTableWidget#statisticsWeaponTable::item:selected {
+    background: transparent;
+    color: {{colors.text.primary}};
+}
+
+QWidget#mapRowActions,
+QWidget#mapOnlineActions,
+QWidget#serverEditActions {
+    background: transparent;
+    border: none;
+}
+
+QPushButton#mapPlayButton,
+QPushButton#mapDownloadButton {
+    min-width: 62px;
+    max-height: 38px;
+    min-height: 38px;
+    padding: 0 10px;
+}
+
+/* Statistics ---------------------------------------------------------- */
+QFrame#statisticsProfileCard {
+    background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
+        stop:0 rgba(18,18,20,238),
+        stop:0.7 rgba(6, 12, 16, 236),
+        stop:1 {{colors.brand.primary_05}});
+    border-color: {{colors.border.normal}};
+}
+
+QFrame#statisticsCompactTile {
+    background: rgba(11,11,12,226);
+    border-color: {{colors.border.hairline}};
+}
+
+QFrame#statisticsCompactTile:hover {
+    border-color: {{colors.brand.primary_26}};
+    background: rgba(17,17,19,238);
+}
+
+/* Servers ------------------------------------------------------------- */
+QFrame#serverCard {
+    background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+        stop:0 rgba(14,14,15,240),
+        stop:1 rgba(8, 8, 9, 242));
+    border-color: {{colors.border.soft}};
+}
+
+QFrame#serverCard:hover {
+    border-color: {{colors.brand.primary_26}};
+}
+
+QLabel#serverMetric {
+    color: {{colors.text.secondary}};
+    background: rgba(20,20,22,180);
+    border: 1px solid {{colors.border.hairline}};
+    border-radius: {{radius.sm}}px;
+    padding: 5px 8px;
+    font-size: {{typography.size.micro}}px;
+    font-weight: {{typography.weight.semibold}};
+}
+
+QLabel#serverState[online="true"] {
+    color: {{colors.semantic.success}};
+    background: {{colors.semantic.success_soft}};
+    border: 1px solid rgba(155,214,41,55);
+    border-radius: 8px;
+    padding: 3px 7px;
+}
+
+QLabel#serverState[online="false"] {
+    color: {{colors.text.muted}};
+    background: rgba(69,81,90,25);
+    border: 1px solid {{colors.border.hairline}};
+    border-radius: 8px;
+    padding: 3px 7px;
+}
+
+QLabel#serverLevelshot {
+    background: #060607;
+    border: 1px solid {{colors.border.hairline}};
+    border-radius: {{radius.md}}px;
+}
+
+QPushButton#serverConnectButton {
+    min-height: 40px;
+}
+
+/* Dense pages --------------------------------------------------------- */
+QLabel#mapsHint,
+QLabel#onlineMapsHeading,
+QLabel#statisticsGroupTitle {
+    color: {{colors.text.quiet}};
+    letter-spacing: 0.2px;
+}
+QLabel#homeStatusDot[state="ok"] { color: {{colors.semantic.success}}; }
+QLabel#homeStatusDot[state="warning"] { color: {{colors.semantic.warning}}; }
+QLabel#homeStatusDot[state="critical"] { color: {{colors.semantic.danger}}; }
+QLabel#homeStatusDot[state="working"] { color: {{colors.brand.frost}}; }
+
+/* =====================================================================
+   V6 / LAYER 2B — BLACKER NOCTRA MATERIAL + SECTION POLISH
+   ===================================================================== */
+
+/* Neutral-black foundation: artwork supplies color, UI surfaces do not. */
+QFrame#body {
+    background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
+        stop:0 {{colors.surface.content_scrim_strong}},
+        stop:0.55 {{colors.surface.content_scrim}},
+        stop:1 rgba(1, 3, 5, 184));
+}
+
+QFrame#sidebar {
+    background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
+        stop:0 rgba(2, 4, 6, 253),
+        stop:0.78 rgba(4, 6, 8, 247),
+        stop:1 rgba(7, 10, 12, 236));
+}
+
+QLabel#brandMark {
+    background: transparent;
+    border: none;
+}
+
+QPushButton#navButton:hover {
+    background: {{colors.brand.primary_05}};
+    border-color: {{colors.brand.primary_26}};
+    color: {{colors.brand.frost}};
+}
+
+QPushButton {
+    background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+        stop:0 #151517,
+        stop:1 #0C0C0D);
+}
+QPushButton:hover {
+    background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+        stop:0 #1C1C1F,
+        stop:1 #121214);
+}
+
+/* Cards no longer sample/repeat the shell blur while scrolling. */
+QFrame#heroCard,
+QFrame#statusCard,
+QFrame#updateAlert,
+QFrame#firstInstallCard,
+QFrame#progressCard,
+QFrame#featureCard,
+QFrame#addonCard,
+QFrame#settingsCard,
+QFrame#serverCard,
+QFrame#statisticsSearchCard,
+QFrame#statisticsProfileCard,
+QFrame#statisticsCompactTile,
+QFrame#mediaPreviewFrame,
+QFrame#configEditorPanel,
+QFrame#changelogCard,
+QFrame#demoLibraryCard,
+QFrame#demoDetailCard,
+QFrame#matchmakingRuleCard,
+QFrame#matchmakingIntroCard {
+    background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+        stop:0 {{colors.surface.panel_soft}},
+        stop:0.18 {{colors.surface.panel}},
+        stop:1 {{colors.surface.panel_strong}});
+    border: 1px solid {{colors.border.soft}};
+    border-radius: {{radius.lg}}px;
+}
+
+QListWidget,
+QTreeWidget,
+QTableWidget,
+QTableView,
+QTreeView {
+    background: rgba(3, 6, 8, 242);
+    alternate-background-color: {{colors.surface.base}};
+}
+
+QHeaderView::section {
+    background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+        stop:0 #101011,
+        stop:1 #0C0C0E);
+}
+QTableCornerButton::section { background: #101011; }
+
+/* Servers ------------------------------------------------------------- */
+QLabel#serverState[online="true"],
+QLabel#serverState[online="false"] {
+    padding: {{servers.online_padding_v}}px {{servers.online_padding_h}}px;
+    min-height: 18px;
+}
+
+QPushButton#serverCarouselButton {
+    min-width: {{servers.carousel_button}}px;
+    max-width: {{servers.carousel_button}}px;
+    min-height: {{servers.carousel_button}}px;
+    max-height: {{servers.carousel_button}}px;
+    padding: 0;
+    border-radius: {{radius.md}}px;
+    background: rgba(5, 8, 11, 242);
+    border: 1px solid {{colors.border.normal}};
+}
+QPushButton#serverCarouselButton:hover {
+    background: {{colors.brand.primary_08}};
+    border-color: {{colors.brand.primary_38}};
+}
+QLabel#serverCarouselPosition {
+    color: {{colors.text.muted}};
+    font-size: {{typography.size.micro}}px;
+    font-weight: {{typography.weight.semibold}};
+}
+
+/* Settings ------------------------------------------------------------ */
+QFrame#sectionActionBar {
+    background: rgba(3, 6, 8, 250);
+    border: 1px solid {{colors.border.normal}};
+    border-radius: {{radius.md}}px;
+}
+
+/* Maps: action cell remains clean/opaque-free; no glow graphics effects. */
+QWidget#mapRowActions,
+QWidget#mapOnlineActions {
+    background: transparent;
+}
+QPushButton#mapPlayButton,
+QPushButton#mapDownloadButton {
+    min-width: 72px;
+    min-height: 38px;
+    max-height: 38px;
+}
+QPushButton#mapDeleteIconButton {
+    min-width: 36px;
+    max-width: 36px;
+    min-height: 36px;
+    max-height: 36px;
+}
+
+/* Demos --------------------------------------------------------------- */
+QFrame#demoLibraryCard { padding: 0; }
+QFrame#demoDetailCard {
+    background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
+        stop:0 rgba(7, 11, 14, 246),
+        stop:1 rgba(3, 6, 8, 250));
+}
+QLabel#demoDetailIcon {
+    background: {{colors.brand.primary_05}};
+    border: 1px solid {{colors.brand.primary_18}};
+    border-radius: {{radius.md}}px;
+}
+QLabel#demoDetailName {
+    color: {{colors.text.primary}};
+    font-size: {{typography.size.section}}px;
+    font-weight: {{typography.weight.bold}};
+}
+QLabel#demoDetailPath {
+    color: {{colors.text.quiet}};
+    font-size: {{typography.size.micro}}px;
+    font-weight: {{typography.weight.medium}};
+}
+QPushButton#dangerButton {
+    color: {{colors.semantic.danger}};
+    background: transparent;
+    border-color: rgba(229, 76, 76, 64);
+}
+QPushButton#dangerButton:hover {
+    color: #FF7474;
+    background: {{colors.semantic.danger_soft}};
+    border-color: {{colors.semantic.danger}};
+}
+
+/* Matchmaking --------------------------------------------------------- */
+QFrame#matchmakingIntroCard {
+    background: rgba(3, 6, 8, 244);
+    border-color: {{colors.border.normal}};
+}
+QFrame#matchmakingStep {
+    background: rgba(10, 14, 17, 180);
+    border: 1px solid {{colors.border.hairline}};
+    border-radius: {{radius.md}}px;
+}
+QLabel#matchmakingStepNumber {
+    color: {{colors.text.inverse}};
+    background: {{colors.brand.primary}};
+    border-radius: 16px;
+    font-size: {{typography.size.micro}}px;
+    font-weight: {{typography.weight.bold}};
+}
+QLabel#matchmakingStepTitle,
+QLabel#matchmakingSectionTitle {
+    color: {{colors.text.secondary}};
+    font-size: {{typography.size.micro}}px;
+    font-weight: {{typography.weight.bold}};
+}
+QFrame#matchmakingConditions,
+QWidget#matchmakingServerChoices {
+    background: rgba(2, 5, 7, 168);
+    /* Inner panels use a tighter radius than outer cards.  This avoids the
+       pinched/uneven 1 px corners Qt produces with a 10 px QSS radius. */
+    border: 1px solid rgba(255,255,255,30);
+    border-radius: 7px;
+}
+QWidget#matchmakingServerChoices { padding: 8px; }
+QLabel#matchmakingStatus {
+    color: {{colors.text.muted}};
+    background: rgba(10, 14, 17, 210);
+    border: 1px solid {{colors.border.soft}};
+    border-radius: {{radius.pill}}px;
+    padding: 5px 10px;
+    font-size: {{typography.size.micro}}px;
+    font-weight: {{typography.weight.bold}};
+}
+
+/* Changelog/WebEngine: never allow Chromium transparency to punch a hole
+   through the frameless translucent launcher. */
+QFrame#changelogWebBackdrop {
+    background: #080809;
+    border: 1px solid {{colors.border.hairline}};
+    border-radius: {{radius.md}}px;
+}
+QWidget#changelogCardBody {
+    background: rgba(3, 6, 8, 242);
+    border-radius: {{radius.md}}px;
+}
+
+/* Wider screens should feel like the same app, not a stretched 1366 mockup. */
+QWidget#demosPage,
+QWidget#matchmakingPage,
+QWidget#mapsPage {
+    background: transparent;
+}
+
+/* =====================================================================
+   V7 / BLACK GLASS STYLE LOCK — neutral graphite / white / restrained green
+   ===================================================================== */
+
+/* Remove the remaining cold-blue cast from the shell/UI materials. */
+QFrame#body {
+    background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
+        stop:0 {{colors.surface.content_scrim_strong}},
+        stop:0.58 {{colors.surface.content_scrim}},
+        stop:1 rgba(0, 0, 0, 196));
+}
+
+QFrame#sidebar {
+    background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
+        stop:0 rgba(2, 2, 3, 225),
+        stop:0.76 rgba(4, 4, 5, 196),
+        stop:1 rgba(8, 8, 10, 168));
+    border-right: 1px solid {{colors.border.hairline}};
+}
+
+QFrame#sidebarSeparator {
+    min-height: 1px;
+    max-height: 1px;
+    background: rgba(255,255,255,22);
+    border: none;
+    margin-left: 12px;
+    margin-right: 12px;
+}
+
+QFrame#navIndicator {
+    background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
+        stop:0 rgba(255,255,255,34),
+        stop:0.55 rgba(255,255,255,17),
+        stop:1 rgba(255,255,255,7));
+    border: 1px solid rgba(255,255,255,62);
+    border-radius: {{radius.md}}px;
+}
+
+QPushButton#navButton:hover {
+    background: rgba(255,255,255,13);
+    border-color: rgba(255,255,255,28);
+    color: {{colors.text.primary}};
+}
+QPushButton#navButton:checked {
+    background: transparent;
+    border-color: transparent;
+    color: {{colors.brand.frost}};
+}
+
+QPushButton#windowButton,
+QPushButton#closeButton {
+    min-width: 40px;
+    max-width: 40px;
+    min-height: 32px;
+    max-height: 32px;
+    border-radius: 0px;
+    background: transparent;
+    border: none;
+}
+QPushButton#windowButton:hover {
+    background: rgba(255,255,255,11);
+    border: none;
+    color: {{colors.text.primary}};
+}
+QPushButton#closeButton:hover {
+    background: rgba(168,60,66,165);
+    border: none;
+    color: #FFFFFF;
+}
+
+QPushButton {
+    background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+        stop:0 #151518,
+        stop:1 #0D0D0F);
+    border-color: {{colors.border.normal}};
+    color: {{colors.text.secondary}};
+}
+QPushButton:hover {
+    background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+        stop:0 #1D1E21,
+        stop:1 #121316);
+    border-color: {{colors.border.strong}};
+    color: {{colors.text.primary}};
+}
+QPushButton:pressed {
+    background: #09090A;
+    border-color: rgba(255,255,255,82);
+}
+
+QPushButton#playButton,
+QPushButton#applyButton,
+QPushButton#serverConnectButton {
+    background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+        stop:0 #F0F2F3,
+        stop:1 #D8DCDF);
+    color: #080808;
+    border-color: rgba(255,255,255,190);
+}
+QPushButton#playButton:hover,
+QPushButton#applyButton:hover,
+QPushButton#serverConnectButton:hover {
+    background: #FFFFFF;
+    color: #050505;
+    border-color: #FFFFFF;
+}
+
+QPushButton#mapPlayButton,
+QPushButton#mapDownloadButton {
+    background: rgba(255,255,255,8);
+    border-color: rgba(255,255,255,55);
+    color: {{colors.text.primary}};
+}
+QPushButton#mapPlayButton:hover,
+QPushButton#mapDownloadButton:hover {
+    background: rgba(255,255,255,18);
+    border-color: rgba(255,255,255,92);
+    color: #FFFFFF;
+}
+
+QLineEdit,
+QPlainTextEdit,
+QTextEdit,
+QTextBrowser,
+QComboBox,
+QSpinBox,
+QDoubleSpinBox {
+    background: rgba(7,7,8,238);
+    border-color: rgba(255,255,255,34);
+}
+QLineEdit:hover,
+QPlainTextEdit:hover,
+QTextEdit:hover,
+QTextBrowser:hover,
+QComboBox:hover,
+QSpinBox:hover,
+QDoubleSpinBox:hover {
+    border-color: rgba(255,255,255,65);
+}
+QLineEdit:focus,
+QPlainTextEdit:focus,
+QTextEdit:focus,
+QComboBox:focus,
+QSpinBox:focus,
+QDoubleSpinBox:focus {
+    border-color: rgba(255,255,255,118);
+}
+
+QFrame#heroCard,
+QFrame#statusCard,
+QFrame#updateAlert,
+QFrame#firstInstallCard,
+QFrame#progressCard,
+QFrame#featureCard,
+QFrame#addonCard,
+QFrame#settingsCard,
+QFrame#statisticsSearchCard,
+QFrame#statisticsProfileCard,
+QFrame#statisticsCompactTile,
+QFrame#mediaPreviewFrame,
+QFrame#configEditorPanel,
+QFrame#changelogCard,
+QFrame#demoLibraryCard,
+QFrame#demoDetailCard,
+QFrame#matchmakingRuleCard,
+QFrame#matchmakingIntroCard {
+    background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+        stop:0 rgba(15,15,17,226),
+        stop:0.20 rgba(8,8,9,234),
+        stop:1 rgba(3,3,4,244));
+    border-color: rgba(255,255,255,24);
+}
+
+QFrame#featureCard:hover,
+QFrame#statisticsCompactTile:hover {
+    background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
+        stop:0 rgba(20,20,22,236),
+        stop:1 rgba(7,7,8,244));
+    border-color: rgba(255,255,255,52);
+}
+
+QListWidget,
+QTreeWidget,
+QTableWidget,
+QTableView,
+QTreeView {
+    background: rgba(2,2,3,244);
+    alternate-background-color: #080809;
+    border-color: rgba(255,255,255,24);
+}
+QHeaderView::section {
+    background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+        stop:0 #111214,
+        stop:1 #090A0B);
+    border-bottom-color: rgba(255,255,255,28);
+}
+QTableCornerButton::section { background: #111214; }
+
+/* Servers: levelshot is painted by ServerCard itself; all child surfaces stay glassy. */
+QFrame#serverCard {
+    background: transparent;
+    border: 1px solid rgba(255,255,255,26);
+    border-radius: {{radius.lg}}px;
+}
+QFrame#serverCard:hover {
+    border-color: rgba(255,255,255,72);
+}
+QLabel#serverName,
+QLabel#serverAddress,
+QLabel#serverMetric,
+QLabel#serverState {
+    background-color: transparent;
+}
+QLabel#serverMetric {
+    background: rgba(0,0,0,120);
+    border-color: rgba(255,255,255,24);
+    color: {{colors.text.secondary}};
+}
+QLabel#serverState[online="true"] {
+    background: rgba(0,0,0,140);
+    border-color: rgba(137,197,65,74);
+    color: {{colors.semantic.success}};
+}
+QLabel#serverState[online="false"] {
+    background: rgba(0,0,0,140);
+    border-color: rgba(255,255,255,22);
+    color: {{colors.text.muted}};
+}
+QTreeWidget#serverPlayerList {
+    background: rgba(0,0,0,92);
+    border: 1px solid rgba(255,255,255,18);
+}
+QTreeWidget#serverPlayerList QHeaderView::section {
+    background: rgba(0,0,0,135);
+}
+QTreeWidget#serverPlayerList::item {
+    background: transparent;
+    border-bottom: 1px solid rgba(255,255,255,8);
+}
+QPushButton#serverConnectButton {
+    min-height: 42px;
+}
+
+/* Map action cells get more breathing room and stay vertically centered. */
+QWidget#mapRowActions,
+QWidget#mapOnlineActions {
+    background: transparent;
+    border: none;
+}
+QPushButton#mapPlayButton,
+QPushButton#mapDownloadButton {
+    min-width: 82px;
+    min-height: 38px;
+    max-height: 38px;
+}
+
+/* Stable selected-demo preview. */
+QLabel#demoPreview {
+    background: #030303;
+    border: 1px solid rgba(255,255,255,30);
+    border-radius: {{radius.md}}px;
+    color: {{colors.text.muted}};
+}
+QLabel#demoMapName {
+    color: {{colors.text.secondary}};
+    font-size: {{typography.size.caption}}px;
+    font-weight: {{typography.weight.semibold}};
+}
+QLabel#demoDetailPath {
+    color: {{colors.text.quiet}};
+    background: transparent;
+}
+
+/* Settings alignment. */
+QFrame#settingsCard {
+    min-height: {{settings.card_min_height}}px;
+}
+QFrame#sectionActionBar {
+    background: rgba(5,5,6,248);
+    border-color: rgba(255,255,255,32);
+}
+
+/* Statistics needs no inner scrollbar when all weapon rows fit. */
+QTableWidget#statisticsWeaponTable {
+    background: rgba(2,2,3,230);
+}
+
+QScrollBar::handle:vertical,
+QScrollBar::handle:horizontal {
+    background: #505052;
+}
+QScrollBar::handle:vertical:hover,
+QScrollBar::handle:horizontal:hover {
+    background: #747477;
+}
+
+QFrame#windowControls {
+    background: rgba(2,2,3,210);
+    border: none;
+    border-bottom-left-radius: 8px;
+}
+
+/* =====================================================================
+   V8 / THEMEHUB UNIVERSAL MATERIAL LAYER
+   Shared component grammar; presets change tokens, not page code.
+   ===================================================================== */
+
+QFrame#body {
+    background: {{materials.body}};
+}
+
+QFrame#sidebar {
+    background: {{materials.sidebar}};
+    border-right: 1px solid {{colors.border.hairline}};
+}
+
+QFrame#navIndicator {
+    background: qlineargradient(x1:0,y1:0,x2:1,y2:1,
+        stop:0 rgba(255,255,255,30), stop:0.5 rgba(255,255,255,14), stop:1 rgba(255,255,255,5));
+    border: 1px solid {{colors.border.normal}};
+    border-radius: {{radius.md}}px;
+}
+QPushButton#navButton {
+    color: {{icons.nav_idle_color}};
+    background: transparent;
+    border: 1px solid transparent;
+}
+QPushButton#navButton:hover {
+    color: {{icons.nav_active_color}};
+    background: rgba(255,255,255,10);
+    border-color: rgba(255,255,255,24);
+}
+QPushButton#navButton:checked {
+    color: {{icons.nav_active_color}};
+    background: transparent;
+    border-color: transparent;
+}
+QPushButton#navButton:disabled { color: {{icons.nav_disabled_color}}; }
+
+QFrame#windowControls {
+    background: transparent;
+    border: none;
+    border-radius: 0px;
+}
+QPushButton#windowButton,
+QPushButton#closeButton {
+    min-width: {{window_controls.button_width}}px;
+    max-width: {{window_controls.button_width}}px;
+    min-height: {{window_controls.button_height}}px;
+    max-height: {{window_controls.button_height}}px;
+    border-radius: 0px;
+    background: transparent;
+    border: none;
+    color: {{colors.text.muted}};
+}
+QPushButton#windowButton:hover {
+    background: rgba(255,255,255,13);
+    color: {{colors.text.primary}};
+}
+QPushButton#closeButton:hover {
+    background: {{colors.semantic.danger}};
+    color: #FFFFFF;
+}
+
+/* Main cards use the current material preset. */
+QFrame#heroCard,
+QFrame#statusCard,
+QFrame#updateAlert,
+QFrame#firstInstallCard,
+QFrame#progressCard,
+QFrame#featureCard,
+QFrame#addonCard,
+QFrame#settingsCard,
+QFrame#statisticsSearchCard,
+QFrame#statisticsProfileCard,
+QFrame#statisticsCompactTile,
+QFrame#mediaPreviewFrame,
+QFrame#configEditorPanel,
+QFrame#changelogCard,
+QFrame#demoLibraryCard,
+QFrame#demoDetailCard,
+QFrame#matchmakingRuleCard,
+QFrame#matchmakingIntroCard,
+QFrame#themeHubCard {
+    background: {{materials.panel}};
+    border: 1px solid {{colors.border.soft}};
+    border-radius: {{radius.lg}}px;
+}
+QFrame#featureCard:hover,
+QFrame#statisticsCompactTile:hover,
+QFrame#themeHubCard:hover {
+    background: {{materials.panel_hover}};
+    border-color: {{colors.border.normal}};
+}
+
+QPushButton {
+    background: {{materials.control}};
+    border: 1px solid {{colors.border.normal}};
+    color: {{colors.text.secondary}};
+}
+QPushButton:hover {
+    background: {{materials.control_hover}};
+    border-color: {{colors.border.strong}};
+    color: {{colors.text.primary}};
+}
+QPushButton:pressed {
+    background: {{colors.surface.pressed}};
+    border-color: {{colors.border.focus}};
+}
+
+/* Explicit hover rules prevent old page-specific QSS from swallowing hover. */
+QPushButton#secondaryButton:hover,
+QPushButton#smallButton:hover,
+QPushButton#serverSmallButton:hover,
+QPushButton#serverEditButton:hover,
+QPushButton#serverToolbarButton:hover,
+QPushButton#mapToolbarButton:hover,
+QPushButton#mapModeButton:hover,
+QPushButton#statisticsTabButton:hover,
+QPushButton#mediaSourceButton:hover,
+QPushButton#changelogLinkButton:hover,
+QPushButton#iconButton:hover {
+    background: {{materials.control_hover}};
+    border-color: {{colors.border.strong}};
+    color: {{colors.text.primary}};
+}
+
+QPushButton#playButton,
+QPushButton#applyButton {
+    background: {{materials.primary_button}};
+    border-color: {{colors.border.highlight}};
+    color: {{materials.primary_button_text}};
+    font-weight: {{typography.weight.bold}};
+}
+QPushButton#playButton:hover,
+QPushButton#applyButton:hover {
+    background: {{materials.primary_button_hover}};
+    border-color: {{colors.text.primary}};
+    color: {{materials.primary_button_text}};
+}
+
+QPushButton#serverConnectButton {
+    background: {{servers.connect_button_bg}};
+    border-color: rgba(255,255,255,120);
+    color: {{servers.connect_button_text}};
+    font-weight: {{typography.weight.bold}};
+}
+QPushButton#serverConnectButton:hover {
+    background: #FFFFFF;
+    border-color: #FFFFFF;
+    color: #050505;
+}
+
+QPushButton#mapPlayButton,
+QPushButton#mapDownloadButton,
+QPushButton#demoPlayButton {
+    background: transparent;
+    border-color: {{materials.action_outline}};
+    color: {{colors.text.primary}};
+}
+QPushButton#mapPlayButton:hover,
+QPushButton#mapDownloadButton:hover,
+QPushButton#demoPlayButton:hover {
+    background: {{materials.action_hover}};
+    border-color: {{colors.border.strong}};
+    color: {{colors.text.primary}};
+}
+
+QLineEdit,
+QPlainTextEdit,
+QTextEdit,
+QTextBrowser,
+QComboBox,
+QSpinBox,
+QDoubleSpinBox {
+    background: {{materials.input}};
+    border-color: {{colors.border.soft}};
+    color: {{colors.text.primary}};
+}
+QLineEdit:hover,
+QPlainTextEdit:hover,
+QTextEdit:hover,
+QTextBrowser:hover,
+QComboBox:hover,
+QSpinBox:hover,
+QDoubleSpinBox:hover { border-color: {{colors.border.normal}}; }
+QLineEdit:focus,
+QPlainTextEdit:focus,
+QTextEdit:focus,
+QComboBox:focus,
+QSpinBox:focus,
+QDoubleSpinBox:focus { border-color: {{colors.border.focus}}; }
+
+QListWidget,
+QTreeWidget,
+QTableWidget,
+QTableView,
+QTreeView {
+    background: {{materials.table}};
+    alternate-background-color: {{colors.surface.base}};
+    border-color: {{colors.border.soft}};
+    color: {{colors.text.primary}};
+}
+QHeaderView::section,
+QTableCornerButton::section {
+    background: {{materials.header}};
+    color: {{colors.text.muted}};
+    border-bottom-color: {{colors.border.soft}};
+}
+
+QFrame#sectionActionBar {
+    background: {{materials.footer}};
+    border-color: {{colors.border.soft}};
+}
+
+/* Required is a status pill, not a button. */
+QLabel#installedBadge {
+    color: {{badges.required_text}};
+    background: {{badges.required_bg}};
+    border: 1px solid {{badges.required_border}};
+    border-radius: 11px;
+    padding: 5px 11px;
+    font-size: {{typography.size.micro}}px;
+    font-weight: {{typography.weight.semibold}};
+}
+
+/* Servers: only a green status lamp; no ONLINE/OFFLINE badge capsule. */
+QLabel#serverState,
+QLabel#serverState[online="true"],
+QLabel#serverState[online="false"] {
+    min-width: 14px;
+    max-width: 14px;
+    min-height: 14px;
+    max-height: 14px;
+    padding: 0px;
+    margin: 0px;
+    background: transparent;
+    border: none;
+    border-radius: 0px;
+    font-size: 14px;
+}
+QLabel#serverState[online="true"] { color: {{colors.semantic.success}}; }
+QLabel#serverState[online="false"] { color: {{colors.text.quiet}}; }
+QLabel#serverName { color: {{servers.text_primary}}; }
+QLabel#serverAddress,
+QLabel#serverMetric { color: {{servers.text_secondary}}; }
+QTreeWidget#serverPlayerList {
+    color: {{servers.text_primary}};
+    background: rgba(0,0,0,82);
+    border-color: rgba(255,255,255,22);
+}
+QTreeWidget#serverPlayerList QHeaderView::section {
+    color: {{servers.text_secondary}};
+    background: rgba(0,0,0,115);
+}
+
+/* Cyan/light accent belongs to state/progress, not to dark surfaces. */
+QProgressBar::chunk { background: {{colors.brand.primary}}; }
+
+/* ThemeHub */
+QLabel#themeHubTitle { font-size: {{typography.size.section}}px; font-weight: {{typography.weight.semibold}}; }
+QLabel#themeHubDescription { color: {{colors.text.muted}}; }
+QLabel#themeHubActive {
+    color: {{colors.brand.primary}};
+    font-weight: {{typography.weight.semibold}};
+}
+QFrame#themeSwatch {
+    border: 1px solid {{colors.border.normal}};
+    border-radius: {{radius.md}}px;
+}
+
+/* Paper-cut keeps the rail deliberately dark while the content can invert. */
+QFrame#sidebar QLabel { color: {{icons.nav_idle_color}}; }
+QLabel#railStatus { color: {{colors.semantic.success}}; }
+QFrame#themeHubCard[active="true"] {
+    border-color: {{colors.brand.primary}};
+    background: {{materials.panel_hover}};
+}
+QFrame#themeHubCard[active="true"] QLabel#themeHubTitle {
+    color: {{colors.text.primary}};
+}
+QLabel#quickLinkIcon,
+QLabel#addonIcon,
+QLabel#addonCoreIcon {
+    background: {{icons.tile_background}};
+    border-color: {{icons.tile_border}};
+}
+QFrame#quickLinkCard:hover QLabel#quickLinkArrow { color: {{colors.brand.primary}}; }
+/* V8 neutralize remaining legacy cold-blue section materials. */
+QFrame#homeLaunchPanel,
+QFrame#homeHeroFrame,
+QFrame#quickLinkCard,
+QFrame#addonCoreCard,
+QFrame#addonCard,
+QFrame#matchmakingConditions,
+QWidget#matchmakingServerChoices {
+    background: {{materials.panel}};
+    border-color: {{colors.border.soft}};
+}
+QFrame#quickLinkCard:hover,
+QFrame#addonCard:hover {
+    background: {{materials.panel_hover}};
+    border-color: {{colors.border.normal}};
+}
+QLabel#matchmakingStatus {
+    background: {{materials.control}};
+    border-color: {{colors.border.soft}};
+    color: {{colors.text.muted}};
+}
+QFrame#changelogWebBackdrop,
+QWidget#changelogCardBody {
+    background: {{materials.table}};
+    border-color: {{colors.border.soft}};
+}
+QLabel#serverMetric {
+    background: rgba(0,0,0,118);
+    border-color: rgba(255,255,255,24);
+}
+
+/* =====================================================================
+   V9 FINAL OVERRIDE — NOCTRA BLACK
+   Two-theme lock: black/graphite/white with cyan only for instrumentation.
+   ===================================================================== */
+
+QMainWindow#launcherWindow { background: transparent; }
+QFrame#shell { background: transparent; border: none; }
+QFrame#body { background: {{materials.body}}; }
+QFrame#sidebar {
+    background: {{materials.sidebar}};
+    border: none;
+    border-right: 1px solid {{colors.border.hairline}};
+}
+
+/* Simplified Noctra rail: contrast circles replace the old selection plate. */
+QFrame#navIndicator { background: transparent; border: none; }
+QPushButton#navButton {
+    background: {{icons.nav_circle_idle}};
+    border: 1px solid transparent;
+    border-radius: 27px;
+    color: {{icons.nav_idle_color}};
+}
+QPushButton#navButton:hover {
+    background: {{icons.nav_circle_hover}};
+    border-color: {{icons.nav_circle_border}};
+    color: {{icons.nav_active_color}};
+}
+QPushButton#navButton:checked {
+    background: {{icons.nav_circle_active}};
+    border-color: {{icons.nav_circle_border}};
+    color: {{icons.nav_active_color}};
+}
+QFrame#sidebarSeparator { background: rgba(255,255,255,18); border: none; }
+
+/* Every button defines foreground explicitly — no black-on-black inheritance. */
+QPushButton {
+    color: {{colors.text.secondary}};
+    background: {{materials.control}};
+    border: 1px solid {{colors.border.normal}};
+}
+QPushButton:hover {
+    color: {{colors.text.primary}};
+    background: {{materials.control_hover}};
+    border-color: {{colors.border.strong}};
+}
+QPushButton:pressed { background: {{colors.surface.pressed}}; color: {{colors.text.primary}}; }
+QPushButton#playButton,
+QPushButton#applyButton,
+QPushButton#serverConnectButton,
+QPushButton#mapPlayButton,
+QPushButton#demoPlayButton,
+QPushButton#saveSettingsButton {
+    background: {{materials.primary_button}};
+    color: {{materials.primary_button_text}};
+    border-color: rgba(255,255,255,190);
+}
+QPushButton#playButton:hover,
+QPushButton#applyButton:hover,
+QPushButton#serverConnectButton:hover,
+QPushButton#mapPlayButton:hover,
+QPushButton#demoPlayButton:hover,
+QPushButton#saveSettingsButton:hover {
+    background: {{materials.primary_button_hover}};
+    color: {{materials.primary_button_text}};
+    border-color: #FFFFFF;
+}
+QPushButton#dangerButton,
+QPushButton#serverRemoveButton,
+QPushButton#mapDeleteButton {
+    color: {{colors.text.secondary}};
+    background: transparent;
+    border-color: {{colors.border.normal}};
+}
+QPushButton#dangerButton:hover,
+QPushButton#serverRemoveButton:hover,
+QPushButton#mapDeleteButton:hover {
+    color: #FFFFFF;
+    background: rgba(255,255,255,10);
+    border-color: rgba(255,255,255,90);
+}
+
+QLabel#installedBadge {
+    background: {{badges.required_bg}};
+    color: {{badges.required_text}};
+    border: 1px solid {{badges.required_border}};
+    border-radius: 11px;
+    padding: 5px 10px;
+}
+
+/* Cinematic server cards remain exclusive to Noctra Black. */
+QFrame#serverCard {
+    background: transparent;
+    border: 1px solid rgba(255,255,255,28);
+    border-radius: {{radius.lg}}px;
+}
+QFrame#serverCard:hover { border-color: rgba(255,255,255,72); }
+QLabel#serverName { color: {{servers.text_primary}}; }
+QLabel#serverAddress, QLabel#serverMetric { color: {{servers.text_secondary}}; }
+QTreeWidget#serverPlayerList {
+    color: {{servers.text_primary}};
+    background: rgba(0,0,0,118);
+    border-color: rgba(255,255,255,24);
+}
+QTreeWidget#serverPlayerList QHeaderView::section {
+    color: {{servers.text_secondary}};
+    background: rgba(0,0,0,118);
+}
+
+QFrame#changelogWebBackdrop,
+QWidget#changelogCardBody { background: {{changelog.body_bg}}; }
+
+QPushButton#windowButton:hover { background: rgba(255,255,255,12); color:#FFFFFF; }
+QPushButton#closeButton:hover { background: rgba(255,255,255,18); color:#FFFFFF; }
+
+/* =====================================================================
+   V10 FINAL POLISH — NOCTRA BLACK
+   Restores cinematic Banner depth and removes cyan from the visual language.
+   ===================================================================== */
+
+QFrame#body {
+    background: qlineargradient(x1:0,y1:0,x2:1,y2:1,
+        stop:0 rgba(0,0,0,186), stop:0.55 rgba(4,4,5,170), stop:1 rgba(0,0,0,206));
+}
+
+/* Rail: pure monochrome contrast circles. */
+QPushButton#navButton { background:transparent; color:#FFFFFF; border:1px solid transparent; }
+QPushButton#navButton:hover { background:rgba(255,255,255,10); color:#FFFFFF; border-color:rgba(255,255,255,26); }
+QPushButton#navButton:checked { background:#FFFFFF; color:#050505; border-color:#FFFFFF; }
+
+/* No cyan action layer in Noctra Black. */
+QProgressBar::chunk { background:#F1F2F3; }
+QCheckBox::indicator:checked { background:#F1F2F3; border-color:#F1F2F3; }
+QPushButton#statisticsTabButton:checked,
+QPushButton#mapModeButton:checked,
+QPushButton#mapModeButton[active="true"],
+QPushButton#mediaSourceButton:checked,
+QPushButton#mapToolbarButton[active="true"] {
+    background:rgba(255,255,255,15);
+    color:#FFFFFF;
+    border-color:rgba(255,255,255,72);
+}
+
+/* Explicit contrast for all button states. */
+QPushButton { color:#D4D6D8; background:#0D0D0F; border:1px solid rgba(255,255,255,42); }
+QPushButton:hover { color:#FFFFFF; background:#1A1A1D; border-color:rgba(255,255,255,100); }
+QPushButton:pressed { color:#FFFFFF; background:#242427; }
+QPushButton#playButton,
+QPushButton#applyButton,
+QPushButton#serverConnectButton,
+QPushButton#mapPlayButton,
+QPushButton#demoPlayButton,
+QPushButton#saveSettingsButton {
+    background:#F0F1F2;
+    color:#080808;
+    border-color:#FFFFFF;
+}
+QPushButton#playButton:hover,
+QPushButton#applyButton:hover,
+QPushButton#serverConnectButton:hover,
+QPushButton#mapPlayButton:hover,
+QPushButton#demoPlayButton:hover,
+QPushButton#saveSettingsButton:hover {
+    background:#FFFFFF;
+    color:#000000;
+    border-color:#FFFFFF;
+}
+
+QLabel#serverState[online="true"] {
+    background:{{colors.semantic.success}};
+    border:none;
+    border-radius:6px;
+    color:transparent;
+}
+QLabel#serverState[online="false"] {
+    background:#55575B;
+    border:none;
+    border-radius:6px;
+    color:transparent;
+}
+
+QWidget#mapLevelshotHost { background:transparent; }
+QLabel#mapLevelshot16x9 { background:#050505; border:1px solid rgba(255,255,255,18); border-radius:9px; }
+QLabel#serverState,
+QLabel#serverState[online="true"],
+QLabel#serverState[online="false"] { min-width:12px; max-width:12px; min-height:12px; max-height:12px; padding:0; margin:0; border-radius:6px; }
+
+/* =====================================================================
+   V11 FINAL POLISH — NOCTRA BLACK
+   Graphite depth, monochrome interactions, no blue selection artifacts.
+   ===================================================================== */
+
+/* Slight graphite differentiation prevents the black UI from becoming a
+   featureless slab while preserving Noctra's almost-black identity. */
+QFrame#settingsCard,
+QFrame#addonCard,
+QFrame#addonCoreCard,
+QFrame#statisticsSearchCard,
+QFrame#statisticsProfileCard,
+QFrame#statisticsCompactTile,
+QFrame#demoDetailsCard,
+QFrame#matchmakingIntroCard,
+QFrame#matchmakingRuleCard,
+QFrame#quickLinkCard {
+    border-color: rgba(255,255,255,30);
+}
+QFrame#addonCard:hover,
+QFrame#quickLinkCard:hover {
+    background: {{materials.panel_hover}};
+    border-color: rgba(255,255,255,72);
+}
+
+/* Demos are the interaction reference for Screenshots as well. */
+QListWidget#mediaList::item {
+    color: {{colors.text.secondary}};
+    background: transparent;
+    border: none;
+}
+QListWidget#mediaList::item:hover {
+    color: {{colors.text.primary}};
+    background: {{effects.row_hover}};
+    border: none;
+}
+QListWidget#mediaList::item:selected {
+    color: {{colors.text.primary}};
+    background: {{effects.row_selected}};
+    border: none;
+}
+
+/* Maps use only neutral gray/white state materials. The delegate paints the
+   whole row; individual cells must not add a coloured focus/selection edge. */
+QTableWidget#mapsTable,
+QTableWidget#onlineMapsTable {
+    selection-background-color: transparent;
+    selection-color: {{colors.text.primary}};
+}
+QTableWidget#mapsTable::item,
+QTableWidget#onlineMapsTable::item,
+QTableWidget#mapsTable::item:selected,
+QTableWidget#onlineMapsTable::item:selected,
+QTableWidget#mapsTable::item:focus,
+QTableWidget#onlineMapsTable::item:focus {
+    background: transparent;
+    color: {{colors.text.primary}};
+    border: none;
+}
+QLabel#mapLevelshot16x9 {
+    border: none;
+    border-radius: 8px;
+    background: #060606;
+}
+
+/* White CTA / neutral utility language. */
+QPushButton#mapDownloadButton {
+    background: #101012;
+    color: #F3F3F3;
+    border-color: rgba(255,255,255,64);
+}
+QPushButton#mapDownloadButton:hover {
+    background: #202024;
+    color: #FFFFFF;
+    border-color: rgba(255,255,255,120);
+}
+
+/* A little more glass/graphite separation without colour. */
+QFrame#sectionActionBar {
+    background: rgba(7,7,8,242);
+    border-color: rgba(255,255,255,30);
+}
+QLineEdit, QPlainTextEdit, QTextEdit, QTextBrowser, QComboBox, QSpinBox, QDoubleSpinBox {
+    background: rgba(7,7,8,246);
+    border-color: rgba(255,255,255,42);
+}
+QLineEdit:focus, QPlainTextEdit:focus, QTextEdit:focus, QComboBox:focus, QSpinBox:focus, QDoubleSpinBox:focus {
+    border-color: rgba(255,255,255,110);
+}
+
+/* =====================================================================
+   V12 FINAL AUTHORITY — NOCTRA BLACK
+   Neutral graphite + black + white.  No blue material cast.
+   ===================================================================== */
+
+/* Neutralize legacy blue-black material rules from early launcher layers. */
+QFrame#sidebar {
+    background: qlineargradient(x1:0,y1:0,x2:1,y2:0,
+        stop:0 rgba(0,0,0,248), stop:0.72 rgba(7,7,8,238), stop:1 rgba(14,14,16,220));
+    border-right: 1px solid rgba(255,255,255,18);
+}
+QFrame#body { background: {{materials.body}}; }
+QListWidget, QTreeWidget, QTableWidget, QTableView, QTreeView {
+    background: rgba(5,5,6,242);
+    alternate-background-color: #0B0B0C;
+    border-color: rgba(255,255,255,32);
+    gridline-color: rgba(255,255,255,14);
+    selection-background-color: transparent;
+}
+QHeaderView::section {
+    background: {{materials.header}};
+    color: {{colors.text.muted}};
+    border-bottom-color: rgba(255,255,255,26);
+}
+
+/* Black/white icon play inside Addons — light tile, black glyph. */
+QLabel#addonIcon,
+QLabel#addonCoreIcon {
+    background: #F2F2F3;
+    color: #070707;
+    border: 1px solid rgba(255,255,255,165);
+    border-radius: 11px;
+}
+QFrame#addonCard:hover QLabel#addonIcon,
+QFrame#addonCoreCard:hover QLabel#addonCoreIcon {
+    background: #FFFFFF;
+    border-color: #FFFFFF;
+}
+
+/* Maps: the delegate owns selection. No per-cell coloured selection remnants. */
+QTableWidget#mapsTable,
+QTableWidget#onlineMapsTable {
+    selection-background-color: transparent;
+    selection-color: {{colors.text.primary}};
+}
+QTableWidget#mapsTable::item,
+QTableWidget#onlineMapsTable::item,
+QTableWidget#mapsTable::item:selected,
+QTableWidget#onlineMapsTable::item:selected,
+QTableWidget#mapsTable::item:focus,
+QTableWidget#onlineMapsTable::item:focus {
+    background: transparent;
+    color: {{colors.text.primary}};
+    border: none;
+}
+QWidget#mapLevelshotHost,
+QWidget#mapSourceIconHost { background: transparent; border: none; }
+QLabel#mapLevelshot16x9 { background: #060606; border: none; border-radius: 0px; }
+QLabel#mapSourceIcon { background: transparent; border: none; }
+
+/* Single WEEK/MONTH control. */
+QPushButton#statisticsPeriodToggle {
+    min-width: 118px;
+    background: #121214;
+    color: #F1F1F2;
+    border: 1px solid rgba(255,255,255,58);
+}
+QPushButton#statisticsPeriodToggle:hover {
+    background: #252529;
+    color: #FFFFFF;
+    border-color: rgba(255,255,255,118);
+}
+QPushButton#statisticsPeriodToggle:checked {
+    background: #F1F1F2;
+    color: #070707;
+    border-color: #FFFFFF;
+}
+
+/* Window control hover must remain inside the rounded shell corner. */
+QPushButton#closeButton {
+    border-top-right-radius: {{radius.window}}px;
+    border-bottom-right-radius: 0px;
+}
+QPushButton#closeButton:hover {
+    background: rgba(255,255,255,18);
+    color: #FFFFFF;
+}
+
+/* Media corners are pixel-clipped in Python; these frames only provide the rim. */
+QLabel#heroImage,
+QLabel#demoPreview,
+QLabel#screenshotPreview {
+    background: #050505;
+    border: 1px solid rgba(255,255,255,24);
+    border-radius: 12px;
+}
+
+/* Utility/action icon buttons stay monochrome. */
+QPushButton#changelogLinkButton { color: #E4E4E6; }
+QPushButton#changelogLinkButton:hover { color: #FFFFFF; }
+
+/* =====================================================================
+   V13 FINAL AUTHORITY — DARK NOVA
+   Graphite / smoke / black shadows / restrained white flashes.
+   ===================================================================== */
+
+QFrame#sidebar {
+    background: {{materials.sidebar}};
+    border-right: 1px solid rgba(255,255,255,16);
+}
+QFrame#body { background: {{materials.body}}; }
+
+/* Dark Nova surfaces deliberately separate black accents from smoke/graphite
+   panels without introducing a navy/blue cast. */
+QFrame#settingsCard,
+QFrame#addonCard,
+QFrame#addonCoreCard,
+QFrame#statisticsSearchCard,
+QFrame#statisticsProfileCard,
+QFrame#statisticsCompactTile,
+QFrame#demoDetailsCard,
+QFrame#matchmakingIntroCard,
+QFrame#matchmakingRuleCard,
+QFrame#quickLinkCard,
+QFrame#serverCard,
+QFrame#changelogCard {
+    background: {{materials.panel}};
+    border-color: rgba(255,255,255,30);
+}
+QFrame#settingsCard:hover,
+QFrame#addonCard:hover,
+QFrame#quickLinkCard:hover {
+    background: {{materials.panel_hover}};
+    border-color: rgba(255,255,255,62);
+}
+
+QListWidget, QTreeWidget, QTableWidget, QTableView, QTreeView {
+    background: {{materials.table}};
+    alternate-background-color: #101012;
+    color: {{colors.text.primary}};
+    border-color: rgba(255,255,255,28);
+    gridline-color: rgba(255,255,255,12);
+}
+QHeaderView::section {
+    background: {{materials.header}};
+    color: {{colors.text.muted}};
+    border-bottom: 1px solid rgba(255,255,255,22);
+}
+
+/* Demos/Screenshots share a restrained graphite interaction language. */
+QFrame#mediaPreviewFrame {
+    background: transparent;
+    border: none;
+    border-radius: {{radius.lg}}px;
+}
+QListWidget#mediaList {
+    background: rgba(9,9,10,246);
+    border: 1px solid rgba(255,255,255,24);
+    border-radius: {{radius.lg}}px;
+    padding: 4px;
+}
+QListWidget#mediaList::item {
+    background: transparent;
+    color: {{colors.text.secondary}};
+    border: none;
+    border-radius: 8px;
+    margin: 1px 0px;
+    padding: 7px 9px;
+}
+QListWidget#mediaList::item:hover {
+    background: {{effects.row_hover}};
+    color: {{colors.text.primary}};
+    border-radius: 8px;
+}
+QListWidget#mediaList::item:selected {
+    background: {{effects.row_selected}};
+    color: #F4F4F5;
+    border: 1px solid rgba(255,255,255,30);
+    border-radius: 8px;
+}
+
+/* Home visual remains the strongest black accent inside a graphite shell. */
+QFrame#homeHeroCard {
+    background: #050506;
+    border: 1px solid rgba(255,255,255,24);
+    border-radius: {{radius.lg}}px;
+}
+QFrame#heroOverlay {
+    background: rgba(6,6,7,244);
+    border: none;
+    border-top: 1px solid rgba(255,255,255,16);
+    border-bottom-left-radius: {{radius.lg}}px;
+    border-bottom-right-radius: {{radius.lg}}px;
+}
+QFrame#heroOverlay QLabel { color: #DCDCE0; }
+QPushButton#sliderArrow {
+    background: #111113;
+    color: #E6E6E8;
+    border: 1px solid rgba(255,255,255,42);
+}
+QPushButton#sliderArrow:hover {
+    background: #303034;
+    color: #FFFFFF;
+    border-color: rgba(255,255,255,90);
+}
+
+/* Match result is semantic green text only. */
+QLabel#matchmakingStatus {
+    background: transparent;
+    border: none;
+    border-radius: 0px;
+    padding: 0 4px;
+    color: {{colors.text.muted}};
+    font-weight: {{typography.weight.semibold}};
+}
+QLabel#matchmakingStatus[matched="true"] { color: {{colors.semantic.success}}; }
+QLabel#matchmakingStatus[matched="false"] { color: {{colors.text.muted}}; }
+
+/* Neutral map art/selection: no blue focus cast. */
+QLabel#mapLevelshot16x9 {
+    background: #0B0B0C;
+    border: none;
+    border-radius: {{maps.levelshot_radius}}px;
+}
+QTableWidget#mapsTable::item,
+QTableWidget#onlineMapsTable::item,
+QTableWidget#mapsTable::item:selected,
+QTableWidget#onlineMapsTable::item:selected,
+QTableWidget#mapsTable::item:focus,
+QTableWidget#onlineMapsTable::item:focus {
+    background: transparent;
+    color: {{colors.text.primary}};
+    border: none;
+}
+
+/* Buttons are explicit graphite/white; no inherited dark text on dark fill. */
+QPushButton#secondaryButton,
+QPushButton#smallButton,
+QPushButton#serverToolbarButton,
+QPushButton#mapToolbarButton,
+QPushButton#changelogLinkButton {
+    background: {{materials.control}};
+    color: {{colors.text.primary}};
+    border: 1px solid rgba(255,255,255,48);
+}
+QPushButton#secondaryButton:hover,
+QPushButton#smallButton:hover,
+QPushButton#serverToolbarButton:hover,
+QPushButton#mapToolbarButton:hover,
+QPushButton#changelogLinkButton:hover {
+    background: {{materials.control_hover}};
+    color: #FFFFFF;
+    border-color: rgba(255,255,255,100);
+}
+
+QPushButton#statisticsPeriodToggle {
+    background: #161619;
+    color: {{colors.text.primary}};
+    border: 1px solid rgba(255,255,255,48);
+}
+QPushButton#statisticsPeriodToggle:hover {
+    background: #2A2A2F;
+    color: #FFFFFF;
+    border-color: rgba(255,255,255,100);
+}
+
+/* =====================================================================
+   V14 FINAL AUTHORITY — DARK NOVA DEPTH PASS
+   High-contrast graphite / black / white, inspired by hard-lit EDC materials.
+   ===================================================================== */
+
+/* The shell should feel like matte graphite under a narrow white key light. */
+QWidget#body,
+QWidget#homePage,
+QWidget#statisticsPage,
+QWidget#serversPage,
+QWidget#mapsPage,
+QWidget#matchmakingPage,
+QWidget#screenshotsPage,
+QWidget#demosPage,
+QWidget#settingsPage,
+QWidget#changelogPage,
+QWidget#addonsPage {
+    background: transparent;
+}
+
+QFrame#settingsCard,
+QFrame#matchmakingRuleCard,
+QFrame#statisticsSearchCard,
+QFrame#statisticsProfileCard,
+QFrame#addonCard,
+QFrame#addonCoreCard,
+QFrame#sectionActionBar,
+QFrame#homeLaunchPanel,
+QFrame#homeQuickCard {
+    background: qlineargradient(x1:0,y1:0,x2:0,y2:1,
+        stop:0 rgba(31,31,35,244),
+        stop:0.13 rgba(24,24,27,246),
+        stop:1 rgba(10,10,11,250));
+    border: 1px solid rgba(255,255,255,38);
+}
+
+QFrame#settingsCard:hover,
+QFrame#homeQuickCard:hover {
+    border-color: rgba(255,255,255,66);
+}
+
+/* Strong monochrome controls rather than blue-black remnants. */
+QPushButton#secondaryButton,
+QPushButton#serverToolbarButton,
+QPushButton#smallButton,
+QPushButton#iconButton,
+QPushButton#mapDownloadButton,
+QPushButton#mapDeleteIconButton,
+QPushButton#changelogLinkButton {
+    background: #111113;
+    color: #D2D2D2;
+    border: 1px solid rgba(255,255,255,55);
+}
+QPushButton#secondaryButton:hover,
+QPushButton#serverToolbarButton:hover,
+QPushButton#smallButton:hover,
+QPushButton#iconButton:hover,
+QPushButton#mapDownloadButton:hover,
+QPushButton#mapDeleteIconButton:hover,
+QPushButton#changelogLinkButton:hover {
+    background: #242428;
+    color: #FFFFFF;
+    border-color: rgba(255,255,255,92);
+}
+
+/* Carousel arrows are explicitly white in Dark Nova. */
+QPushButton#serverCarouselButton {
+    background: #09090A;
+    color: #FFFFFF;
+    border: 1px solid rgba(255,255,255,58);
+    border-radius: {{radius.md}}px;
+}
+QPushButton#serverCarouselButton:hover {
+    background: #242428;
+    color: #FFFFFF;
+    border-color: rgba(255,255,255,105);
+}
+
+/* Screenshot wireframe is strict 16:9; preview pixels carry their own rounding. */
+QFrame#mediaPreviewFrame {
+    background: #09090A;
+    border: 1px solid rgba(255,255,255,42);
+    border-radius: {{media.preview_radius}}px;
+}
+QLabel#screenshotPreview {
+    background: transparent;
+    border: none;
+    border-radius: {{media.preview_radius}}px;
+}
+
+/* Keep tables as deep-black wells against graphite page material. */
+QTableWidget,
+QTreeWidget,
+QListWidget {
+    background: #070708;
+}
+QHeaderView::section {
+    background: qlineargradient(x1:0,y1:0,x2:0,y2:1,
+        stop:0 #1D1D20,
+        stop:1 #111113);
+}
+
+/* =====================================================================
+   V15 OBSIDIAN MATERIAL AUTHORITY
+   BLACK BASE -> TEXTURE -> DIRECTIONAL LIGHT -> VIGNETTE -> CONTACT
+   SHADOW -> IMPERFECT EDGE. QPainter owns premium surfaces; QSS keeps
+   typography, spacing and fallback states deterministic.
+   ===================================================================== */
+
+QWidget#body,
+QWidget#homePage,
+QWidget#statisticsPage,
+QWidget#serversPage,
+QWidget#mapsPage,
+QWidget#matchmakingPage,
+QWidget#screenshotsPage,
+QWidget#demosPage,
+QWidget#settingsPage,
+QWidget#changelogPage,
+QWidget#addonsPage {
+    background: transparent;
+    color: {{colors.text.primary}};
+}
+
+/* Near-black wells are deliberately darker than the graphite page material. */
+QTableWidget,
+QTreeWidget,
+QListWidget,
+QTextEdit,
+QPlainTextEdit {
+    background: {{materials.table}};
+    color: {{colors.text.primary}};
+    border: 1px solid rgba(255,255,255,24);
+}
+
+QHeaderView::section {
+    background: {{materials.header}};
+    color: {{colors.text.secondary}};
+    border-bottom: 1px solid rgba(255,255,255,24);
+}
+
+QLineEdit,
+QComboBox,
+QSpinBox {
+    background: {{materials.input}};
+    color: {{colors.text.primary}};
+    border: 1px solid rgba(255,255,255,38);
+}
+QLineEdit:hover,
+QComboBox:hover,
+QSpinBox:hover {
+    background: #0D0D0F;
+    border-color: rgba(255,255,255,72);
+}
+QLineEdit:focus,
+QComboBox:focus,
+QSpinBox:focus {
+    background: #09090B;
+    border-color: rgba(255,255,255,130);
+}
+
+/* Controls behave like coated black polymer: dark body, white grazing edge. */
+QPushButton {
+    background: {{materials.control}};
+    color: {{colors.text.primary}};
+    border: 1px solid rgba(255,255,255,45);
+}
+QPushButton:hover {
+    background: {{materials.control_hover}};
+    color: #FFFFFF;
+    border-color: rgba(255,255,255,100);
+}
+QPushButton:pressed {
+    background: #050506;
+    color: #F6F6F7;
+    border-color: rgba(255,255,255,54);
+}
+
+/* Primary actions are the intentional high-contrast white flashes. */
+QPushButton#playButton,
+QPushButton#applyButton,
+QPushButton#serverConnectButton {
+    background: {{materials.primary_button}};
+    color: {{materials.primary_button_text}};
+    border: 1px solid rgba(255,255,255,170);
+}
+QPushButton#playButton:hover,
+QPushButton#applyButton:hover,
+QPushButton#serverConnectButton:hover {
+    background: #FFFFFF;
+    color: #050506;
+    border-color: #FFFFFF;
+}
+
+/* Graphite stat blocks: painter adds the physical edge; QSS stays dark. */
+QFrame#statisticsCompactTile,
+QFrame#statisticsProfileCard,
+QFrame#statisticsSearchCard,
+QFrame#settingsCard,
+QFrame#homeLaunchPanel,
+QFrame#quickLinkCard,
+QFrame#sectionActionBar {
+    background: transparent;
+    border: none;
+}
+
+/* Selection is smoke/graphite, never blue. */
+QTableWidget::item:selected,
+QTreeWidget::item:selected,
+QListWidget::item:selected {
+    background: transparent;
+    color: {{colors.text.primary}};
+}
+QTableWidget::item:hover,
+QTreeWidget::item:hover,
+QListWidget::item:hover {
+    background: transparent;
+}
+
+/* Sidebar remains the deepest object in the scene. */
+QFrame#sidebar {
+    background: qlineargradient(x1:0,y1:0,x2:1,y2:0,
+        stop:0 #010102,
+        stop:0.80 #030304,
+        stop:1 #09090B);
+    border-right: 1px solid rgba(255,255,255,16);
+}
+
+/* ========================================================================
+   V16 OBSIDIAN MATERIAL OVERRIDES
+   MaterialPushButton paints the real surface; QSS now owns layout/text only.
+   ======================================================================== */
+QPushButton {
+    background: transparent;
+    border: none;
+    color: {{colors.text.primary}};
+}
+QPushButton:hover { background: transparent; border: none; color: {{colors.text.primary}}; }
+QPushButton:pressed { background: transparent; border: none; color: {{colors.text.primary}}; }
+QPushButton:disabled { background: transparent; border: none; color: {{colors.text.disabled}}; }
+
+/* Rail controls are true circles.  The selected white disc is painted by Qt,
+   not by a square stylesheet plate, so rounded edges stay antialiased. */
+QPushButton#navButton {
+    min-width: 54px; max-width: 54px;
+    min-height: 54px; max-height: 54px;
+    border-radius: 27px;
+    background: transparent;
+    border: none;
+    color: {{icons.nav_idle_color}};
+}
+QPushButton#navButton:hover,
+QPushButton#navButton:checked {
+    border-radius: 27px;
+    background: transparent;
+    border: none;
+}
+
+/* Native window buttons intentionally remain flat and untextured. */
+QPushButton#windowButton,
+QPushButton#closeButton {
+    background: transparent;
+    border: none;
+    color: {{colors.text.secondary}};
+}
+QPushButton#windowButton:hover,
+QPushButton#closeButton:hover {
+    background: rgba(255,255,255,12);
+    color: #FFFFFF;
+}
+
+/* Obsidian primary actions are no longer white blocks.  Their painted surface
+   is dark coated ceramic with white typography and a bright top key line. */
+QPushButton#playButton,
+QPushButton#applyButton,
+QPushButton#serverConnectButton,
+QPushButton#mapPlayButton,
+QPushButton#mapDownloadButton,
+QPushButton#demoPlayButton,
+QPushButton#saveSettingsButton {
+    background: transparent;
+    border: none;
+    color: #F1F1F1;
+    font-weight: 700;
+}
+
+/* Custom scrollbar class paints track+handle itself; QSS only fixes geometry. */
+QScrollBar:vertical {
+    background: transparent;
+    width: 12px;
+    margin: 1px 1px 1px 1px;
+}
+QScrollBar:horizontal {
+    background: transparent;
+    height: 12px;
+    margin: 1px 1px 1px 1px;
+}
+QScrollBar::handle:vertical,
+QScrollBar::handle:horizontal,
+QScrollBar::add-line:vertical,
+QScrollBar::sub-line:vertical,
+QScrollBar::add-line:horizontal,
+QScrollBar::sub-line:horizontal,
+QScrollBar::add-page:vertical,
+QScrollBar::sub-page:vertical,
+QScrollBar::add-page:horizontal,
+QScrollBar::sub-page:horizontal {
+    background: transparent;
+    border: none;
+}
+
+/* Floating F1 help is now an overlay, never a layout row. */
+QLabel#keyBindsLegend {
+    background: rgba(5,5,6,246);
+    color: {{colors.text.secondary}};
+    border: 1px solid {{colors.border.normal}};
+    border-radius: {{radius.md}}px;
+    padding: 14px 16px;
+}
+
+
+/* ==========================================================================
+   V17 OBSIDIAN STUDIO — material-owned containers
+   ========================================================================== */
+QWidget#changelogCardBody,
+QTextBrowser#changelogSelectableText {
+    background: transparent;
+    border: none;
+}
+QFrame#changelogWebBackdrop,
+QFrame#configEditorPanel {
+    background: transparent;
+}
+/* Text color is painted by MaterialPushButton in Obsidian. Keep QSS from
+   forcing black hover labels if a platform style queries the palette. */
+QPushButton:hover, QPushButton:pressed { color: {{colors.text.primary}}; }
+QPushButton#navButton:checked { color: {{colors.text.inverse}}; }
+
+/* ========================================================================
+   V18 OBSIDIAN MATERIAL UNIFICATION
+   QPainter owns silver icon plates, compact material chips, table headers,
+   checkboxes and the continuous rounded rim. Keep QSS from drawing a second
+   vector border underneath those surfaces.
+   ======================================================================== */
+QFrame#homeMetaChip,
+QFrame#homeInstallOptions {
+    background: transparent;
+    border: none;
+}
+
+QLabel#quickLinkIcon,
+QLabel#addonIcon,
+QLabel#addonCoreIcon {
+    background: transparent;
+    border: none;
+}
+
+/* MaterialCheckBox paints both indicator states. QSS only supplies typography. */
+QCheckBox {
+    background: transparent;
+    color: {{colors.text.secondary}};
+}
+QCheckBox::indicator {
+    background: transparent;
+    border: none;
+    width: 18px;
+    height: 18px;
+}
+
+/* Chromium receives the material texture directly; its Qt host must not add a
+   second inset fill/border around the textured Telegram content. */
+QFrame#changelogWebBackdrop {
+    background: transparent;
+    border: none;
+}
+
+/* The custom header paints graphit.png + satin text. */
+QHeaderView {
+    background: transparent;
+    border: none;
+}
+
+
+/* =====================================================================
+   V21 FINAL AUTHORITY — CRISP SMALL SILVER TYPOGRAPHY
+   Small table headers must stay sharp. Material/textured silver is reserved
+   for larger display text and controls.
+   ===================================================================== */
+QHeaderView::section {
+    color: #D6D2C9;
+    font-weight: 600;
+}
+
+/* V22: prevent a square host texture behind the rounded Telegram material. */
+QWidget#changelogWebBackdrop {
+    background: transparent;
+    border: none;
+}
+
+
+/* =====================================================================
+   V22.1 FIX — continuous table material + Telegram rounded host
+   ===================================================================== */
+QHeaderView {
+    background: transparent;
+    border: none;
+}
+QWidget#changelogWebBackdrop {
+    background: transparent;
+    border: none;
+    border-radius: {{material.web.radius}}px;
+}
+
+
+/* V22.1 geometry cleanup -------------------------------------------------- */
+QCheckBox::indicator:unchecked {
+    width: 18px;
+    height: 18px;
+    border-radius: 3px;
+    border: 1px solid rgba(255,255,255,72);
+    background: {{colors.surface.deep}};
+}
+QCheckBox::indicator:unchecked:hover {
+    border-color: rgba(255,255,255,125);
+}
+QFrame#matchmakingConditions,
+QWidget#matchmakingServerChoices {
+    border: 1px solid rgba(255,255,255,30);
+    border-radius: 7px;
+}
+
+
+/* =====================================================================
+   V22.2 FINAL AUTHORITY — single-pass inner Matchmaking material
+   SurfaceCard paints these two Obsidian panels itself.  Keeping a QSS border
+   underneath creates the doubled left corners visible at 1 px scale.
+   ===================================================================== */
+QFrame#matchmakingConditions,
+QWidget#matchmakingServerChoices {
+    background: transparent;
+    border: none;
+    border-radius: 0px;
+}
+
+/* Native QHeaderView section colour is only a fallback.  Obsidian's custom
+   header painter uses material.header.text and is independent of hover state. */
+QHeaderView::section {
+    color: {{material.header.text}};
+}
+
+
+/* V22.3 material support -------------------------------------------------- */
+QFrame#matchmakingRuleCard,
+QFrame#matchmakingIntroCard,
+QFrame#matchmakingConditions,
+QWidget#matchmakingServerChoices,
+QFrame#changelogWebBackdrop {
+    background: transparent;
+}
+QFrame#matchmakingConditions,
+QWidget#matchmakingServerChoices,
+QFrame#changelogWebBackdrop {
+    border: none;
+}
+QHeaderView::section {
+    color: {{material.header.text}};
+}
+
+
+/* =====================================================================
+   V24 CACHED MATERIAL SCROLLBARS
+   Geometry stays in QSS; track/handle texture + gradient + specular rim are
+   painted from cached pixmaps by MaterialScrollBar in launch.pyw.
+   ===================================================================== */
+QScrollBar:vertical {
+    background: transparent;
+    width: 12px;
+    margin: 1px;
+}
+QScrollBar:horizontal {
+    background: transparent;
+    height: 12px;
+    margin: 1px;
+}
+QScrollBar::handle:vertical,
+QScrollBar::handle:horizontal,
+QScrollBar::add-line:vertical,
+QScrollBar::sub-line:vertical,
+QScrollBar::add-line:horizontal,
+QScrollBar::sub-line:horizontal,
+QScrollBar::add-page:vertical,
+QScrollBar::sub-page:vertical,
+QScrollBar::add-page:horizontal,
+QScrollBar::sub-page:horizontal {
+    background: transparent;
+    border: none;
+}
+
+/* V25 performance: opaque heavy-scroll paint barriers. Settings and
+   Matchmaking have many material controls; keeping both the viewport and the
+   moving content widget opaque lets Qt reuse backing-store pixels instead of
+   recompositing the translucent launcher shell on every wheel/slider tick. */
+QWidget#settingsViewport,
+QWidget#settingsScrollBody,
+QWidget#matchmakingViewport,
+QWidget#matchmakingScrollBody {
+    background: {{colors.surface.deep}};
+    border: none;
+}
+
+/* =====================================================================
+   V27 STEEL SCROLL SURFACES — real painted backing store
+   Do not rely on WA_OpaquePaintEvent alone: the frameless translucent HWND
+   needs actual pixels behind Settings/Matchmaking during scroll exposure.
+   ===================================================================== */
+QWidget#settingsPage,
+QWidget#settingsViewport,
+QWidget#settingsScrollBody,
+QWidget#matchmakingPage,
+QWidget#matchmakingViewport,
+QWidget#matchmakingScrollBody {
+    background: qlineargradient(
+        x1:0, y1:0, x2:1, y2:1,
+        stop:0 {{colors.surface.deep}},
+        stop:0.62 {{colors.surface.base}},
+        stop:1 {{colors.surface.void}}
+    );
+    border: none;
+}

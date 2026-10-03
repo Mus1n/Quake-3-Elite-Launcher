@@ -1,0 +1,37 @@
+[
+    {
+        "type": "Launcher",
+        "version": "0.07.3",
+        "date": "2026-09-20",
+        "list": false,
+        "text": "Hybrid native Qt + Telegram web-rendered changelog.",
+        "images": [
+            "https://t.me/Q3News/250",
+            "https://t.me/Q3News/250"
+        ],
+        "changelog": [
+            "Multi-line mouse selection",
+            "Native 16:9 screenshot carousel",
+            "Telegram custom emoji renderer"
+        ]
+    },
+    {
+        "type": "Quake 3 News",
+        "version": "1.19",
+        "date": "2026-06-29",
+        "telegram": "https://t.me/Q3News/264"
+    },
+    {
+        "type": "Quake 3 Elite",
+        "version": "1.18",
+        "date": "2026-06-27",
+        "telegram": "https://t.me/Q3News/250"
+    },
+    {
+        "type": "Quake 3 Elite",
+        "version": "1.15",
+        "date": "2026-06-24",
+        "telegram": "https://t.me/Q3News/217"
+    }
+
+]

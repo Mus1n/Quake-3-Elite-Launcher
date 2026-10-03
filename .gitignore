@@ -1,0 +1,49 @@
+# ============================================================
+# Q3ELITE PROJECT
+# ============================================================
+
+# Ignore base Quake 3 files
+/BaseQ3/
+
+# Ignore everything inside Q3Elite
+/Q3Elite/*
+/Q3Elite/Launcher/servers/levelshots/**
+/Q3Elite/Launcher/servers/levelshots/
+
+# Keep Launcher directory
+!/Q3Elite/Launcher/
+!/Q3Elite/Launcher/**
+
+# Ignore cache files
+/Q3Elite/Launcher/python/pyen/*
+/Q3Elite/Launcher/temp_files/*
+/Q3Elite/Launcher/python/pyenv/bin/*.exe
+/Q3Elite/Launcher/python/pyenv/uv.exe
+/Q3Elite/Launcher/python/pyenv/uvw.exe
+/Q3Elite/Launcher/python/pyenv/uvx.exe
+
+# ============================================================
+# GENERAL
+# ============================================================
+
+# Python cache
+__pycache__/
+*.py[cod]
+*.pyo
+
+# Logs
+*.log
+
+# Temporary files
+*.tmp
+*.temp
+*.bak
+
+# Windows
+Thumbs.db
+Desktop.ini
+Q3Elite.lnk
+
+# IDE
+.vscode/
+.idea/
