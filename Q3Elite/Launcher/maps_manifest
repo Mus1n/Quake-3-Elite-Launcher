@@ -1,1285 +1,473 @@
 {
-  "version": 4,
+  "version": 5,
   "paks": {
-    "C:\\Users\\Administrator\\Desktop\\Quake-3-Elite-Launcher\\baseq3\\maps\\QLmaps\\arenagate.pk3": {
+    "baseq3/maps/QLmaps/arenagate.pk3": {
       "signature": {
         "size": 1547298,
-        "mtime_ns": 1790219521935261700
+        "mtime_ns": 1791053510694029800
       },
       "maps": [
         {
           "map": "arenagate",
           "name": "Arena Gate",
           "pak": "arenagate.pk3",
-          "pak_path": "C:\\Users\\Administrator\\Desktop\\Quake-3-Elite-Launcher\\baseq3\\maps\\QLmaps\\arenagate.pk3",
+          "pak_path": "baseq3/maps/QLmaps/arenagate.pk3",
           "pak_size": 1547298,
           "location": "Preinstalled",
           "gametype": "FFA / Duel",
-          "levelshot": "C:\\Users\\Administrator\\AppData\\Roaming\\Quake 3 Elite\\Launcher\\levelshots\\arenagate.jpg"
+          "levelshot": "levelshots/arenagate.jpg"
         }
       ]
     },
-    "C:\\Users\\Administrator\\Desktop\\Quake-3-Elite-Launcher\\baseq3\\maps\\QLmaps\\beyondreality.pk3": {
+    "baseq3/maps/QLmaps/beyondreality.pk3": {
       "signature": {
         "size": 5978475,
-        "mtime_ns": 1790219521941808200
+        "mtime_ns": 1791053510701515700
       },
       "maps": [
         {
           "map": "Beyondreality",
           "name": "Beyond Reality",
           "pak": "beyondreality.pk3",
-          "pak_path": "C:\\Users\\Administrator\\Desktop\\Quake-3-Elite-Launcher\\baseq3\\maps\\QLmaps\\beyondreality.pk3",
+          "pak_path": "baseq3/maps/QLmaps/beyondreality.pk3",
           "pak_size": 5978475,
           "location": "Preinstalled",
           "gametype": "FFA / Duel",
-          "levelshot": "C:\\Users\\Administrator\\AppData\\Roaming\\Quake 3 Elite\\Launcher\\levelshots\\Beyondreality.jpg"
+          "levelshot": "levelshots/Beyondreality.jpg"
         }
       ]
     },
-    "C:\\Users\\Administrator\\Desktop\\Quake-3-Elite-Launcher\\baseq3\\maps\\QLmaps\\brimstoneabbey.pk3": {
+    "baseq3/maps/QLmaps/brimstoneabbey.pk3": {
       "signature": {
         "size": 2173121,
-        "mtime_ns": 1790219521945760100
+        "mtime_ns": 1791053510705047600
       },
       "maps": [
         {
           "map": "Brimstoneabbey",
           "name": "Brimstone Abbey",
           "pak": "brimstoneabbey.pk3",
-          "pak_path": "C:\\Users\\Administrator\\Desktop\\Quake-3-Elite-Launcher\\baseq3\\maps\\QLmaps\\brimstoneabbey.pk3",
+          "pak_path": "baseq3/maps/QLmaps/brimstoneabbey.pk3",
           "pak_size": 2173121,
           "location": "Preinstalled",
           "gametype": "FFA / TDM",
-          "levelshot": "C:\\Users\\Administrator\\AppData\\Roaming\\Quake 3 Elite\\Launcher\\levelshots\\Brimstoneabbey.jpg"
+          "levelshot": "levelshots/Brimstoneabbey.jpg"
         }
       ]
     },
-    "C:\\Users\\Administrator\\Desktop\\Quake-3-Elite-Launcher\\baseq3\\maps\\QLmaps\\campgrounds.pk3": {
+    "baseq3/maps/QLmaps/campgrounds.pk3": {
       "signature": {
         "size": 2995265,
-        "mtime_ns": 1790219521949082400
+        "mtime_ns": 1791053510711625400
       },
       "maps": [
         {
           "map": "campgrounds",
           "name": "Campgrounds",
           "pak": "campgrounds.pk3",
-          "pak_path": "C:\\Users\\Administrator\\Desktop\\Quake-3-Elite-Launcher\\baseq3\\maps\\QLmaps\\campgrounds.pk3",
+          "pak_path": "baseq3/maps/QLmaps/campgrounds.pk3",
           "pak_size": 2995265,
           "location": "Preinstalled",
           "gametype": "FFA / TDM",
-          "levelshot": "C:\\Users\\Administrator\\AppData\\Roaming\\Quake 3 Elite\\Launcher\\levelshots\\campgrounds.jpg"
+          "levelshot": "levelshots/campgrounds.jpg"
         }
       ]
     },
-    "C:\\Users\\Administrator\\Desktop\\Quake-3-Elite-Launcher\\baseq3\\maps\\QLmaps\\chemicalreaction.pk3": {
+    "baseq3/maps/QLmaps/chemicalreaction.pk3": {
       "signature": {
         "size": 4169509,
-        "mtime_ns": 1790219521954180800
+        "mtime_ns": 1791053510717382600
       },
       "maps": [
         {
           "map": "Chemicalreaction",
           "name": "Chemical Reaction",
           "pak": "chemicalreaction.pk3",
-          "pak_path": "C:\\Users\\Administrator\\Desktop\\Quake-3-Elite-Launcher\\baseq3\\maps\\QLmaps\\chemicalreaction.pk3",
+          "pak_path": "baseq3/maps/QLmaps/chemicalreaction.pk3",
           "pak_size": 4169509,
           "location": "Preinstalled",
           "gametype": "FFA / TDM",
-          "levelshot": "C:\\Users\\Administrator\\AppData\\Roaming\\Quake 3 Elite\\Launcher\\levelshots\\Chemicalreaction.jpg"
+          "levelshot": "levelshots/Chemicalreaction.jpg"
         }
       ]
     },
-    "C:\\Users\\Administrator\\Desktop\\Quake-3-Elite-Launcher\\baseq3\\maps\\QLmaps\\cobaltstation.pk3": {
+    "baseq3/maps/QLmaps/cobaltstation.pk3": {
       "signature": {
         "size": 6479717,
-        "mtime_ns": 1790219521961677700
+        "mtime_ns": 1791053510724321700
       },
       "maps": [
         {
           "map": "Cobaltstation",
           "name": "Cobalt Station",
           "pak": "cobaltstation.pk3",
-          "pak_path": "C:\\Users\\Administrator\\Desktop\\Quake-3-Elite-Launcher\\baseq3\\maps\\QLmaps\\cobaltstation.pk3",
+          "pak_path": "baseq3/maps/QLmaps/cobaltstation.pk3",
           "pak_size": 6479717,
           "location": "Preinstalled",
           "gametype": "FFA",
-          "levelshot": "C:\\Users\\Administrator\\AppData\\Roaming\\Quake 3 Elite\\Launcher\\levelshots\\Cobaltstation.jpg"
+          "levelshot": "levelshots/Cobaltstation.jpg"
         }
       ]
     },
-    "C:\\Users\\Administrator\\Desktop\\Quake-3-Elite-Launcher\\baseq3\\maps\\QLmaps\\demonkeep.pk3": {
+    "baseq3/maps/QLmaps/demonkeep.pk3": {
       "signature": {
         "size": 3594157,
-        "mtime_ns": 1790219521966185400
+        "mtime_ns": 1791053510730026300
       },
       "maps": [
         {
           "map": "demonkeep",
           "name": "Demon Keep",
           "pak": "demonkeep.pk3",
-          "pak_path": "C:\\Users\\Administrator\\Desktop\\Quake-3-Elite-Launcher\\baseq3\\maps\\QLmaps\\demonkeep.pk3",
+          "pak_path": "baseq3/maps/QLmaps/demonkeep.pk3",
           "pak_size": 3594157,
           "location": "Preinstalled",
           "gametype": "FFA / TDM",
-          "levelshot": "C:\\Users\\Administrator\\AppData\\Roaming\\Quake 3 Elite\\Launcher\\levelshots\\demonkeep.jpg"
+          "levelshot": "levelshots/demonkeep.jpg"
         }
       ]
     },
-    "C:\\Users\\Administrator\\Desktop\\Quake-3-Elite-Launcher\\baseq3\\maps\\QLmaps\\dredwerkz.pk3": {
+    "baseq3/maps/QLmaps/dredwerkz.pk3": {
       "signature": {
         "size": 4215871,
-        "mtime_ns": 1790219521971668600
+        "mtime_ns": 1791053510736516200
       },
       "maps": [
         {
           "map": "Dredwerkz",
           "name": "Dredwerkz",
           "pak": "dredwerkz.pk3",
-          "pak_path": "C:\\Users\\Administrator\\Desktop\\Quake-3-Elite-Launcher\\baseq3\\maps\\QLmaps\\dredwerkz.pk3",
+          "pak_path": "baseq3/maps/QLmaps/dredwerkz.pk3",
           "pak_size": 4215871,
           "location": "Preinstalled",
           "gametype": "FFA / TDM",
-          "levelshot": "C:\\Users\\Administrator\\AppData\\Roaming\\Quake 3 Elite\\Launcher\\levelshots\\Dredwerkz.jpg"
+          "levelshot": "levelshots/Dredwerkz.jpg"
         }
       ]
     },
-    "C:\\Users\\Administrator\\Desktop\\Quake-3-Elite-Launcher\\baseq3\\maps\\QLmaps\\eviscerated.pk3": {
+    "baseq3/maps/QLmaps/eviscerated.pk3": {
       "signature": {
         "size": 2383125,
-        "mtime_ns": 1790219521975186400
+        "mtime_ns": 1791053510740667100
       },
       "maps": [
         {
           "map": "eviscerated",
           "name": "Eviscerated",
           "pak": "eviscerated.pk3",
-          "pak_path": "C:\\Users\\Administrator\\Desktop\\Quake-3-Elite-Launcher\\baseq3\\maps\\QLmaps\\eviscerated.pk3",
+          "pak_path": "baseq3/maps/QLmaps/eviscerated.pk3",
           "pak_size": 2383125,
           "location": "Preinstalled",
           "gametype": "FFA",
-          "levelshot": "C:\\Users\\Administrator\\AppData\\Roaming\\Quake 3 Elite\\Launcher\\levelshots\\eviscerated.jpg"
+          "levelshot": "levelshots/eviscerated.jpg"
         }
       ]
     },
-    "C:\\Users\\Administrator\\Desktop\\Quake-3-Elite-Launcher\\baseq3\\maps\\QLmaps\\fatalinstinct.pk3": {
+    "baseq3/maps/QLmaps/fatalinstinct.pk3": {
       "signature": {
         "size": 1290441,
-        "mtime_ns": 1790219521977612600
+        "mtime_ns": 1791053510744218100
       },
       "maps": [
         {
           "map": "Fatalinstinct",
           "name": "Fatal Instinct",
           "pak": "fatalinstinct.pk3",
-          "pak_path": "C:\\Users\\Administrator\\Desktop\\Quake-3-Elite-Launcher\\baseq3\\maps\\QLmaps\\fatalinstinct.pk3",
+          "pak_path": "baseq3/maps/QLmaps/fatalinstinct.pk3",
           "pak_size": 1290441,
           "location": "Preinstalled",
           "gametype": "FFA / Duel",
-          "levelshot": "C:\\Users\\Administrator\\AppData\\Roaming\\Quake 3 Elite\\Launcher\\levelshots\\Fatalinstinct.jpg"
+          "levelshot": "levelshots/Fatalinstinct.jpg"
         }
       ]
     },
-    "C:\\Users\\Administrator\\Desktop\\Quake-3-Elite-Launcher\\baseq3\\maps\\QLmaps\\forgotten.pk3": {
+    "baseq3/maps/QLmaps/forgotten.pk3": {
       "signature": {
         "size": 1901486,
-        "mtime_ns": 1790219521987585900
+        "mtime_ns": 1791053510746227400
       },
       "maps": [
         {
           "map": "Forgotten",
           "name": "Forgotten",
           "pak": "forgotten.pk3",
-          "pak_path": "C:\\Users\\Administrator\\Desktop\\Quake-3-Elite-Launcher\\baseq3\\maps\\QLmaps\\forgotten.pk3",
+          "pak_path": "baseq3/maps/QLmaps/forgotten.pk3",
           "pak_size": 1901486,
           "location": "Preinstalled",
           "gametype": "FFA",
-          "levelshot": "C:\\Users\\Administrator\\AppData\\Roaming\\Quake 3 Elite\\Launcher\\levelshots\\Forgotten.jpg"
+          "levelshot": "levelshots/Forgotten.jpg"
         }
       ]
     },
-    "C:\\Users\\Administrator\\Desktop\\Quake-3-Elite-Launcher\\baseq3\\maps\\QLmaps\\grimdungeons.pk3": {
+    "baseq3/maps/QLmaps/grimdungeons.pk3": {
       "signature": {
         "size": 3490922,
-        "mtime_ns": 1790219521992499900
+        "mtime_ns": 1791053510753393600
       },
       "maps": [
         {
           "map": "Grimdungeons",
           "name": "Grim Dungeons",
           "pak": "grimdungeons.pk3",
-          "pak_path": "C:\\Users\\Administrator\\Desktop\\Quake-3-Elite-Launcher\\baseq3\\maps\\QLmaps\\grimdungeons.pk3",
+          "pak_path": "baseq3/maps/QLmaps/grimdungeons.pk3",
           "pak_size": 3490922,
           "location": "Preinstalled",
           "gametype": "FFA / TDM",
-          "levelshot": "C:\\Users\\Administrator\\AppData\\Roaming\\Quake 3 Elite\\Launcher\\levelshots\\Grimdungeons.jpg"
+          "levelshot": "levelshots/Grimdungeons.jpg"
         }
       ]
     },
-    "C:\\Users\\Administrator\\Desktop\\Quake-3-Elite-Launcher\\baseq3\\maps\\QLmaps\\hearth.pk3": {
+    "baseq3/maps/QLmaps/hearth.pk3": {
       "signature": {
         "size": 1805503,
-        "mtime_ns": 1790219521995534800
+        "mtime_ns": 1791053510755921200
       },
       "maps": [
         {
           "map": "hearth",
           "name": "Hearth",
           "pak": "hearth.pk3",
-          "pak_path": "C:\\Users\\Administrator\\Desktop\\Quake-3-Elite-Launcher\\baseq3\\maps\\QLmaps\\hearth.pk3",
+          "pak_path": "baseq3/maps/QLmaps/hearth.pk3",
           "pak_size": 1805503,
           "location": "Preinstalled",
           "gametype": "FFA",
-          "levelshot": "C:\\Users\\Administrator\\AppData\\Roaming\\Quake 3 Elite\\Launcher\\levelshots\\hearth.jpg"
+          "levelshot": "levelshots/hearth.jpg"
         }
       ]
     },
-    "C:\\Users\\Administrator\\Desktop\\Quake-3-Elite-Launcher\\baseq3\\maps\\QLmaps\\hellsgate.pk3": {
+    "baseq3/maps/QLmaps/hellsgate.pk3": {
       "signature": {
         "size": 1750230,
-        "mtime_ns": 1790219521998310600
+        "mtime_ns": 1791053510759957500
       },
       "maps": [
         {
           "map": "Hellsgate",
           "name": "Hell's Gate",
           "pak": "hellsgate.pk3",
-          "pak_path": "C:\\Users\\Administrator\\Desktop\\Quake-3-Elite-Launcher\\baseq3\\maps\\QLmaps\\hellsgate.pk3",
+          "pak_path": "baseq3/maps/QLmaps/hellsgate.pk3",
           "pak_size": 1750230,
           "location": "Preinstalled",
           "gametype": "FFA / Duel",
-          "levelshot": "C:\\Users\\Administrator\\AppData\\Roaming\\Quake 3 Elite\\Launcher\\levelshots\\Hellsgate.jpg"
+          "levelshot": "levelshots/Hellsgate.jpg"
         }
       ]
     },
-    "C:\\Users\\Administrator\\Desktop\\Quake-3-Elite-Launcher\\baseq3\\maps\\QLmaps\\heroskeep.pk3": {
+    "baseq3/maps/QLmaps/heroskeep.pk3": {
       "signature": {
         "size": 3375156,
-        "mtime_ns": 1790219522001843300
+        "mtime_ns": 1791053510764986700
       },
       "maps": [
         {
           "map": "Heroskeep",
           "name": "Hero's Keep",
           "pak": "heroskeep.pk3",
-          "pak_path": "C:\\Users\\Administrator\\Desktop\\Quake-3-Elite-Launcher\\baseq3\\maps\\QLmaps\\heroskeep.pk3",
+          "pak_path": "baseq3/maps/QLmaps/heroskeep.pk3",
           "pak_size": 3375156,
           "location": "Preinstalled",
           "gametype": "FFA / TDM",
-          "levelshot": "C:\\Users\\Administrator\\AppData\\Roaming\\Quake 3 Elite\\Launcher\\levelshots\\Heroskeep.jpg"
+          "levelshot": "levelshots/Heroskeep.jpg"
         }
       ]
     },
-    "C:\\Users\\Administrator\\Desktop\\Quake-3-Elite-Launcher\\baseq3\\maps\\QLmaps\\longestyard.pk3": {
+    "baseq3/maps/QLmaps/longestyard.pk3": {
       "signature": {
         "size": 7605524,
-        "mtime_ns": 1790219522011191000
+        "mtime_ns": 1791053510775781800
       },
       "maps": [
         {
           "map": "Longestyard",
           "name": "Longest Yard",
           "pak": "longestyard.pk3",
-          "pak_path": "C:\\Users\\Administrator\\Desktop\\Quake-3-Elite-Launcher\\baseq3\\maps\\QLmaps\\longestyard.pk3",
+          "pak_path": "baseq3/maps/QLmaps/longestyard.pk3",
           "pak_size": 7605524,
           "location": "Preinstalled",
           "gametype": "FFA",
-          "levelshot": "C:\\Users\\Administrator\\AppData\\Roaming\\Quake 3 Elite\\Launcher\\levelshots\\Longestyard.jpg"
+          "levelshot": "levelshots/Longestyard.jpg"
         }
       ]
     },
-    "C:\\Users\\Administrator\\Desktop\\Quake-3-Elite-Launcher\\baseq3\\maps\\QLmaps\\lostworld.pk3": {
+    "baseq3/maps/QLmaps/lostworld.pk3": {
       "signature": {
         "size": 2048561,
-        "mtime_ns": 1790219522015745500
+        "mtime_ns": 1791053510779511000
       },
       "maps": [
         {
           "map": "lostworld",
           "name": "Lost World",
           "pak": "lostworld.pk3",
-          "pak_path": "C:\\Users\\Administrator\\Desktop\\Quake-3-Elite-Launcher\\baseq3\\maps\\QLmaps\\lostworld.pk3",
+          "pak_path": "baseq3/maps/QLmaps/lostworld.pk3",
           "pak_size": 2048561,
           "location": "Preinstalled",
           "gametype": "FFA / TDM",
-          "levelshot": "C:\\Users\\Administrator\\AppData\\Roaming\\Quake 3 Elite\\Launcher\\levelshots\\lostworld.jpg"
+          "levelshot": "levelshots/lostworld.jpg"
         }
       ]
     },
-    "C:\\Users\\Administrator\\Desktop\\Quake-3-Elite-Launcher\\baseq3\\maps\\QLmaps\\namelessplace.pk3": {
+    "baseq3/maps/QLmaps/namelessplace.pk3": {
       "signature": {
         "size": 2433470,
-        "mtime_ns": 1790219522018768300
+        "mtime_ns": 1791053510783126800
       },
       "maps": [
         {
           "map": "Namelessplace",
           "name": "Nameless Place",
           "pak": "namelessplace.pk3",
-          "pak_path": "C:\\Users\\Administrator\\Desktop\\Quake-3-Elite-Launcher\\baseq3\\maps\\QLmaps\\namelessplace.pk3",
+          "pak_path": "baseq3/maps/QLmaps/namelessplace.pk3",
           "pak_size": 2433470,
           "location": "Preinstalled",
           "gametype": "FFA",
-          "levelshot": "C:\\Users\\Administrator\\AppData\\Roaming\\Quake 3 Elite\\Launcher\\levelshots\\Namelessplace.jpg"
+          "levelshot": "levelshots/Namelessplace.jpg"
         }
       ]
     },
-    "C:\\Users\\Administrator\\Desktop\\Quake-3-Elite-Launcher\\baseq3\\maps\\QLmaps\\powerstation.pk3": {
+    "baseq3/maps/QLmaps/powerstation.pk3": {
       "signature": {
         "size": 2086957,
-        "mtime_ns": 1790219522022093600
+        "mtime_ns": 1791053510786655500
       },
       "maps": [
         {
           "map": "Powerstation",
           "name": "Powerstation",
           "pak": "powerstation.pk3",
-          "pak_path": "C:\\Users\\Administrator\\Desktop\\Quake-3-Elite-Launcher\\baseq3\\maps\\QLmaps\\powerstation.pk3",
+          "pak_path": "baseq3/maps/QLmaps/powerstation.pk3",
           "pak_size": 2086957,
           "location": "Preinstalled",
           "gametype": "FFA / Duel",
-          "levelshot": "C:\\Users\\Administrator\\AppData\\Roaming\\Quake 3 Elite\\Launcher\\levelshots\\Powerstation.jpg"
+          "levelshot": "levelshots/Powerstation.jpg"
         }
       ]
     },
-    "C:\\Users\\Administrator\\Desktop\\Quake-3-Elite-Launcher\\baseq3\\maps\\QLmaps\\provinggrounds.pk3": {
+    "baseq3/maps/QLmaps/provinggrounds.pk3": {
       "signature": {
         "size": 2904554,
-        "mtime_ns": 1790219522025199100
+        "mtime_ns": 1791053510790423800
       },
       "maps": [
         {
           "map": "provinggrounds",
           "name": "Proving Grounds",
           "pak": "provinggrounds.pk3",
-          "pak_path": "C:\\Users\\Administrator\\Desktop\\Quake-3-Elite-Launcher\\baseq3\\maps\\QLmaps\\provinggrounds.pk3",
+          "pak_path": "baseq3/maps/QLmaps/provinggrounds.pk3",
           "pak_size": 2904554,
           "location": "Preinstalled",
           "gametype": "FFA / Duel",
-          "levelshot": "C:\\Users\\Administrator\\AppData\\Roaming\\Quake 3 Elite\\Launcher\\levelshots\\provinggrounds.jpg"
+          "levelshot": "levelshots/provinggrounds.jpg"
         }
       ]
     },
-    "C:\\Users\\Administrator\\Desktop\\Quake-3-Elite-Launcher\\baseq3\\maps\\QLmaps\\retribution.pk3": {
+    "baseq3/maps/QLmaps/retribution.pk3": {
       "signature": {
         "size": 2981097,
-        "mtime_ns": 1790219522029388800
+        "mtime_ns": 1791053510796346900
       },
       "maps": [
         {
           "map": "retribution",
           "name": "Retribution",
           "pak": "retribution.pk3",
-          "pak_path": "C:\\Users\\Administrator\\Desktop\\Quake-3-Elite-Launcher\\baseq3\\maps\\QLmaps\\retribution.pk3",
+          "pak_path": "baseq3/maps/QLmaps/retribution.pk3",
           "pak_size": 2981097,
           "location": "Preinstalled",
           "gametype": "FFA / TDM",
-          "levelshot": "C:\\Users\\Administrator\\AppData\\Roaming\\Quake 3 Elite\\Launcher\\levelshots\\retribution.jpg"
+          "levelshot": "levelshots/retribution.jpg"
         }
       ]
     },
-    "C:\\Users\\Administrator\\Desktop\\Quake-3-Elite-Launcher\\baseq3\\maps\\QLmaps\\spacechamber.pk3": {
+    "baseq3/maps/QLmaps/spacechamber.pk3": {
       "signature": {
         "size": 7499542,
-        "mtime_ns": 1790219522036435900
+        "mtime_ns": 1791053510806272300
       },
       "maps": [
         {
           "map": "Spacechamber",
           "name": "Space Chamber",
           "pak": "spacechamber.pk3",
-          "pak_path": "C:\\Users\\Administrator\\Desktop\\Quake-3-Elite-Launcher\\baseq3\\maps\\QLmaps\\spacechamber.pk3",
+          "pak_path": "baseq3/maps/QLmaps/spacechamber.pk3",
           "pak_size": 7499542,
           "location": "Preinstalled",
           "gametype": "FFA",
-          "levelshot": "C:\\Users\\Administrator\\AppData\\Roaming\\Quake 3 Elite\\Launcher\\levelshots\\Spacechamber.jpg"
+          "levelshot": "levelshots/Spacechamber.jpg"
         }
       ]
     },
-    "C:\\Users\\Administrator\\Desktop\\Quake-3-Elite-Launcher\\baseq3\\maps\\QLmaps\\spillway.pk3": {
+    "baseq3/maps/QLmaps/spillway.pk3": {
       "signature": {
         "size": 1566693,
-        "mtime_ns": 1790219522042153800
+        "mtime_ns": 1791053510808826800
       },
       "maps": [
         {
           "map": "spillway",
           "name": "Spillway",
           "pak": "spillway.pk3",
-          "pak_path": "C:\\Users\\Administrator\\Desktop\\Quake-3-Elite-Launcher\\baseq3\\maps\\QLmaps\\spillway.pk3",
+          "pak_path": "baseq3/maps/QLmaps/spillway.pk3",
           "pak_size": 1566693,
           "location": "Preinstalled",
           "gametype": "FFA / Duel",
-          "levelshot": "C:\\Users\\Administrator\\AppData\\Roaming\\Quake 3 Elite\\Launcher\\levelshots\\spillway.jpg"
+          "levelshot": "levelshots/spillway.jpg"
         }
       ]
     },
-    "C:\\Users\\Administrator\\Desktop\\Quake-3-Elite-Launcher\\baseq3\\maps\\QLmaps\\terminalheights.pk3": {
+    "baseq3/maps/QLmaps/terminalheights.pk3": {
       "signature": {
         "size": 5523494,
-        "mtime_ns": 1790219522048577500
+        "mtime_ns": 1791053510816021600
       },
       "maps": [
         {
           "map": "Terminalheights",
           "name": "Terminal Heights",
           "pak": "terminalheights.pk3",
-          "pak_path": "C:\\Users\\Administrator\\Desktop\\Quake-3-Elite-Launcher\\baseq3\\maps\\QLmaps\\terminalheights.pk3",
+          "pak_path": "baseq3/maps/QLmaps/terminalheights.pk3",
           "pak_size": 5523494,
           "location": "Preinstalled",
           "gametype": "FFA",
-          "levelshot": "C:\\Users\\Administrator\\AppData\\Roaming\\Quake 3 Elite\\Launcher\\levelshots\\Terminalheights.jpg"
+          "levelshot": "levelshots/Terminalheights.jpg"
         }
       ]
     },
-    "C:\\Users\\Administrator\\Desktop\\Quake-3-Elite-Launcher\\baseq3\\maps\\QLmaps\\theepicenter.pk3": {
+    "baseq3/maps/QLmaps/theepicenter.pk3": {
       "signature": {
         "size": 3283528,
-        "mtime_ns": 1790219522053129700
+        "mtime_ns": 1791053510822105000
       },
       "maps": [
         {
           "map": "Theepicenter",
           "name": "The Epicenter",
           "pak": "theepicenter.pk3",
-          "pak_path": "C:\\Users\\Administrator\\Desktop\\Quake-3-Elite-Launcher\\baseq3\\maps\\QLmaps\\theepicenter.pk3",
+          "pak_path": "baseq3/maps/QLmaps/theepicenter.pk3",
           "pak_size": 3283528,
           "location": "Preinstalled",
           "gametype": "FFA",
-          "levelshot": "C:\\Users\\Administrator\\AppData\\Roaming\\Quake 3 Elite\\Launcher\\levelshots\\Theepicenter.jpg"
+          "levelshot": "levelshots/Theepicenter.jpg"
         }
       ]
     },
-    "C:\\Users\\Administrator\\Desktop\\Quake-3-Elite-Launcher\\baseq3\\maps\\QLmaps\\verticalvengeance.pk3": {
+    "baseq3/maps/QLmaps/verticalvengeance.pk3": {
       "signature": {
         "size": 1937245,
-        "mtime_ns": 1790219522056192300
+        "mtime_ns": 1791053510825212200
       },
       "maps": [
         {
           "map": "verticalvengeance",
           "name": "Vertical Vengeance",
           "pak": "verticalvengeance.pk3",
-          "pak_path": "C:\\Users\\Administrator\\Desktop\\Quake-3-Elite-Launcher\\baseq3\\maps\\QLmaps\\verticalvengeance.pk3",
+          "pak_path": "baseq3/maps/QLmaps/verticalvengeance.pk3",
           "pak_size": 1937245,
           "location": "Preinstalled",
           "gametype": "FFA / TDM / Duel",
-          "levelshot": "C:\\Users\\Administrator\\AppData\\Roaming\\Quake 3 Elite\\Launcher\\levelshots\\verticalvengeance.jpg"
+          "levelshot": "levelshots/verticalvengeance.jpg"
         }
       ]
-    },
-    "C:\\Users\\Administrator\\Desktop\\Quake-3-Elite-Launcher\\baseq3\\mods\\baseq3\\doubledm17.pk3": {
-      "signature": {
-        "size": 2691620,
-        "mtime_ns": 1790411388621914300
-      },
-      "maps": [
-        {
-          "map": "doubledm17",
-          "name": "double dm17",
-          "pak": "doubledm17.pk3",
-          "pak_path": "C:\\Users\\Administrator\\Desktop\\Quake-3-Elite-Launcher\\baseq3\\mods\\baseq3\\doubledm17.pk3",
-          "pak_size": 2691620,
-          "location": "Downloaded",
-          "gametype": "FFA / TDM / Duel",
-          "levelshot": "C:\\Users\\Administrator\\AppData\\Roaming\\Quake 3 Elite\\Launcher\\levelshots\\doubledm17.jpg"
-        }
-      ]
-    },
-    "C:\\Users\\Administrator\\Desktop\\Quake-3-Elite-Launcher\\baseq3\\mods\\baseq3\\jaxdm8.pk3": {
-      "signature": {
-        "size": 2353027,
-        "mtime_ns": 1790232607309257500
-      },
-      "maps": [
-        {
-          "map": "jaxdm8",
-          "name": "Iron and Stone",
-          "pak": "jaxdm8.pk3",
-          "pak_path": "C:\\Users\\Administrator\\Desktop\\Quake-3-Elite-Launcher\\baseq3\\mods\\baseq3\\jaxdm8.pk3",
-          "pak_size": 2353027,
-          "location": "Downloaded",
-          "gametype": "FFA / Duel",
-          "levelshot": "C:\\Users\\Administrator\\AppData\\Roaming\\Quake 3 Elite\\Launcher\\levelshots\\jaxdm8.jpg"
-        }
-      ]
-    },
-    "C:\\Users\\Administrator\\Desktop\\Quake-3-Elite-Launcher\\baseq3\\mods\\baseq3\\m9.pk3": {
-      "signature": {
-        "size": 930617,
-        "mtime_ns": 1790231863783200900
-      },
-      "maps": [
-        {
-          "map": "m9",
-          "name": "m9",
-          "pak": "m9.pk3",
-          "pak_path": "C:\\Users\\Administrator\\Desktop\\Quake-3-Elite-Launcher\\baseq3\\mods\\baseq3\\m9.pk3",
-          "pak_size": 930617,
-          "location": "Downloaded",
-          "gametype": "Unknown",
-          "levelshot": "C:\\Users\\Administrator\\AppData\\Roaming\\Quake 3 Elite\\Launcher\\levelshots\\m9.jpg"
-        }
-      ]
-    },
-    "C:\\Users\\Administrator\\Desktop\\Quake-3-Elite-Launcher\\baseq3\\mods\\baseq3\\map-13brute_xt.pk3": {
-      "signature": {
-        "size": 2812279,
-        "mtime_ns": 1790414896977239800
-      },
-      "maps": [
-        {
-          "map": "13brute_xt",
-          "name": "Brute Force - Extended (by sst13)",
-          "pak": "map-13brute_xt.pk3",
-          "pak_path": "C:\\Users\\Administrator\\Desktop\\Quake-3-Elite-Launcher\\baseq3\\mods\\baseq3\\map-13brute_xt.pk3",
-          "pak_size": 2812279,
-          "location": "Downloaded",
-          "gametype": "FFA / TDM / Duel",
-          "levelshot": "C:\\Users\\Administrator\\AppData\\Roaming\\Quake 3 Elite\\Launcher\\levelshots\\13brute_xt.jpg"
-        }
-      ]
-    },
-    "C:\\Users\\Administrator\\Desktop\\Quake-3-Elite-Launcher\\baseq3\\mods\\baseq3\\map-overskillctf.pk3": {
-      "signature": {
-        "size": 5136939,
-        "mtime_ns": 1790410983615338200
-      },
-      "maps": [
-        {
-          "map": "overskillctf",
-          "name": "OVerSKill CTF",
-          "pak": "map-overskillctf.pk3",
-          "pak_path": "C:\\Users\\Administrator\\Desktop\\Quake-3-Elite-Launcher\\baseq3\\mods\\baseq3\\map-overskillctf.pk3",
-          "pak_size": 5136939,
-          "location": "Downloaded",
-          "gametype": "CTF",
-          "levelshot": "C:\\Users\\Administrator\\AppData\\Roaming\\Quake 3 Elite\\Launcher\\levelshots\\overskillctf.jpg"
-        }
-      ]
-    },
-    "C:\\Users\\Administrator\\Desktop\\Quake-3-Elite-Launcher\\baseq3\\mods\\baseq3\\map.tikidm4.pk3": {
-      "signature": {
-        "size": 2158996,
-        "mtime_ns": 1790413950021496700
-      },
-      "maps": [
-        {
-          "map": "tikidm4",
-          "name": "Experience of Survival",
-          "pak": "map.tikidm4.pk3",
-          "pak_path": "C:\\Users\\Administrator\\Desktop\\Quake-3-Elite-Launcher\\baseq3\\mods\\baseq3\\map.tikidm4.pk3",
-          "pak_size": 2158996,
-          "location": "Downloaded",
-          "gametype": "FFA / Duel",
-          "levelshot": "C:\\Users\\Administrator\\AppData\\Roaming\\Quake 3 Elite\\Launcher\\levelshots\\tikidm4.jpg"
-        }
-      ]
-    },
-    "C:\\Users\\Administrator\\Desktop\\Quake-3-Elite-Launcher\\baseq3\\mods\\baseq3\\minkdm5.pk3": {
-      "signature": {
-        "size": 1045184,
-        "mtime_ns": 1790520270863947600
-      },
-      "maps": [
-        {
-          "map": "minkdm5",
-          "name": "The Cistern",
-          "pak": "minkdm5.pk3",
-          "pak_path": "C:\\Users\\Administrator\\Desktop\\Quake-3-Elite-Launcher\\baseq3\\mods\\baseq3\\minkdm5.pk3",
-          "pak_size": 1045184,
-          "location": "Downloaded",
-          "gametype": "FFA / TDM / Duel",
-          "levelshot": "C:\\Users\\Administrator\\AppData\\Roaming\\Quake 3 Elite\\Launcher\\levelshots\\minkdm5.jpg"
-        }
-      ]
-    },
-    "C:\\Users\\Administrator\\Desktop\\Quake-3-Elite-Launcher\\baseq3\\mods\\baseq3\\overkillv3.pk3": {
-      "signature": {
-        "size": 1887332,
-        "mtime_ns": 1790409758220433000
-      },
-      "maps": [
-        {
-          "map": "overkillV3",
-          "name": "Overkill! v3",
-          "pak": "overkillv3.pk3",
-          "pak_path": "C:\\Users\\Administrator\\Desktop\\Quake-3-Elite-Launcher\\baseq3\\mods\\baseq3\\overkillv3.pk3",
-          "pak_size": 1887332,
-          "location": "Downloaded",
-          "gametype": "TDM",
-          "levelshot": "C:\\Users\\Administrator\\AppData\\Roaming\\Quake 3 Elite\\Launcher\\levelshots\\overkillV3.jpg"
-        }
-      ]
-    },
-    "C:\\Users\\Administrator\\Desktop\\Quake-3-Elite-Launcher\\baseq3\\mods\\baseq3\\padcrash.pk3": {
-      "signature": {
-        "size": 8300343,
-        "mtime_ns": 1790414658869358100
-      },
-      "maps": [
-        {
-          "map": "padcrash_ctf",
-          "name": "ENTE'S PadCrash CTF",
-          "pak": "padcrash.pk3",
-          "pak_path": "C:\\Users\\Administrator\\Desktop\\Quake-3-Elite-Launcher\\baseq3\\mods\\baseq3\\padcrash.pk3",
-          "pak_size": 8300343,
-          "location": "Downloaded",
-          "gametype": "TDM / CTF",
-          "levelshot": "C:\\Users\\Administrator\\AppData\\Roaming\\Quake 3 Elite\\Launcher\\levelshots\\padcrash_ctf.jpg"
-        },
-        {
-          "map": "padcrash",
-          "name": "ENTE'S PadCrash",
-          "pak": "padcrash.pk3",
-          "pak_path": "C:\\Users\\Administrator\\Desktop\\Quake-3-Elite-Launcher\\baseq3\\mods\\baseq3\\padcrash.pk3",
-          "pak_size": 8300343,
-          "location": "Downloaded",
-          "gametype": "FFA / TDM",
-          "levelshot": "C:\\Users\\Administrator\\AppData\\Roaming\\Quake 3 Elite\\Launcher\\levelshots\\padcrash.jpg"
-        },
-        {
-          "map": "padcrash_dm17",
-          "name": "ENTE'S PadCrashDM17",
-          "pak": "padcrash.pk3",
-          "pak_path": "C:\\Users\\Administrator\\Desktop\\Quake-3-Elite-Launcher\\baseq3\\mods\\baseq3\\padcrash.pk3",
-          "pak_size": 8300343,
-          "location": "Downloaded",
-          "gametype": "FFA / TDM",
-          "levelshot": "C:\\Users\\Administrator\\AppData\\Roaming\\Quake 3 Elite\\Launcher\\levelshots\\padcrash_dm17.jpg"
-        }
-      ]
-    },
-    "C:\\Users\\Administrator\\Desktop\\Quake-3-Elite-Launcher\\baseq3\\mods\\baseq3\\q3map_fragfurnace.pk3": {
-      "signature": {
-        "size": 37246563,
-        "mtime_ns": 1790415006935748100
-      },
-      "maps": [
-        {
-          "map": "ff",
-          "name": "FragFurnace by Martinus",
-          "pak": "q3map_fragfurnace.pk3",
-          "pak_path": "C:\\Users\\Administrator\\Desktop\\Quake-3-Elite-Launcher\\baseq3\\mods\\baseq3\\q3map_fragfurnace.pk3",
-          "pak_size": 37246563,
-          "location": "Downloaded",
-          "gametype": "FFA / TDM / Duel",
-          "levelshot": "C:\\Users\\Administrator\\AppData\\Roaming\\Quake 3 Elite\\Launcher\\levelshots\\ff.jpg"
-        }
-      ]
-    },
-    "C:\\Users\\Administrator\\Desktop\\Quake-3-Elite-Launcher\\baseq3\\mods\\baseq3\\smc11_verypotent.pk3": {
-      "signature": {
-        "size": 7628128,
-        "mtime_ns": 1790414413122526200
-      },
-      "maps": [
-        {
-          "map": "smc11_verypotent",
-          "name": "speed mapping contest 11: verypotent",
-          "pak": "smc11_verypotent.pk3",
-          "pak_path": "C:\\Users\\Administrator\\Desktop\\Quake-3-Elite-Launcher\\baseq3\\mods\\baseq3\\smc11_verypotent.pk3",
-          "pak_size": 7628128,
-          "location": "Downloaded",
-          "gametype": "Unknown",
-          "levelshot": "C:\\Users\\Administrator\\AppData\\Roaming\\Quake 3 Elite\\Launcher\\levelshots\\smc11_verypotent.jpg"
-        }
-      ]
-    },
-    "C:\\Users\\Administrator\\Desktop\\Quake-3-Elite-Launcher\\baseq3\\mods\\baseq3\\z-ctfspak1.pk3": {
-      "signature": {
-        "size": 23909268,
-        "mtime_ns": 1790409774064025900
-      },
-      "maps": [
-        {
-          "map": "ctfscp1",
-          "name": "Crosstown Traffic - ctfspak1",
-          "pak": "z-ctfspak1.pk3",
-          "pak_path": "C:\\Users\\Administrator\\Desktop\\Quake-3-Elite-Launcher\\baseq3\\mods\\baseq3\\z-ctfspak1.pk3",
-          "pak_size": 23909268,
-          "location": "Downloaded",
-          "gametype": "CTF",
-          "levelshot": "C:\\Users\\Administrator\\AppData\\Roaming\\Quake 3 Elite\\Launcher\\levelshots\\ctfscp1.jpg"
-        },
-        {
-          "map": "ctfscp2",
-          "name": "Crossed Paths v.F3 - ctfspak1",
-          "pak": "z-ctfspak1.pk3",
-          "pak_path": "C:\\Users\\Administrator\\Desktop\\Quake-3-Elite-Launcher\\baseq3\\mods\\baseq3\\z-ctfspak1.pk3",
-          "pak_size": 23909268,
-          "location": "Downloaded",
-          "gametype": "CTF",
-          "levelshot": "C:\\Users\\Administrator\\AppData\\Roaming\\Quake 3 Elite\\Launcher\\levelshots\\ctfscp2.jpg"
-        },
-        {
-          "map": "ctfscp3",
-          "name": "Cement, Concrete and Stone - ctfspak1",
-          "pak": "z-ctfspak1.pk3",
-          "pak_path": "C:\\Users\\Administrator\\Desktop\\Quake-3-Elite-Launcher\\baseq3\\mods\\baseq3\\z-ctfspak1.pk3",
-          "pak_size": 23909268,
-          "location": "Downloaded",
-          "gametype": "CTF",
-          "levelshot": "C:\\Users\\Administrator\\AppData\\Roaming\\Quake 3 Elite\\Launcher\\levelshots\\ctfscp3.jpg"
-        },
-        {
-          "map": "ctfscp4",
-          "name": "White Noise - ctfspak1",
-          "pak": "z-ctfspak1.pk3",
-          "pak_path": "C:\\Users\\Administrator\\Desktop\\Quake-3-Elite-Launcher\\baseq3\\mods\\baseq3\\z-ctfspak1.pk3",
-          "pak_size": 23909268,
-          "location": "Downloaded",
-          "gametype": "CTF",
-          "levelshot": "C:\\Users\\Administrator\\AppData\\Roaming\\Quake 3 Elite\\Launcher\\levelshots\\ctfscp4.jpg"
-        },
-        {
-          "map": "ctfscp5",
-          "name": "Overkill Redux: CTF - ctfspak1",
-          "pak": "z-ctfspak1.pk3",
-          "pak_path": "C:\\Users\\Administrator\\Desktop\\Quake-3-Elite-Launcher\\baseq3\\mods\\baseq3\\z-ctfspak1.pk3",
-          "pak_size": 23909268,
-          "location": "Downloaded",
-          "gametype": "CTF",
-          "levelshot": "C:\\Users\\Administrator\\AppData\\Roaming\\Quake 3 Elite\\Launcher\\levelshots\\ctfscp5.jpg"
-        },
-        {
-          "map": "ctfscp6",
-          "name": "Midnight Keep - ctfspak1",
-          "pak": "z-ctfspak1.pk3",
-          "pak_path": "C:\\Users\\Administrator\\Desktop\\Quake-3-Elite-Launcher\\baseq3\\mods\\baseq3\\z-ctfspak1.pk3",
-          "pak_size": 23909268,
-          "location": "Downloaded",
-          "gametype": "CTF",
-          "levelshot": "C:\\Users\\Administrator\\AppData\\Roaming\\Quake 3 Elite\\Launcher\\levelshots\\ctfscp6.jpg"
-        }
-      ]
-    },
-    "C:\\Users\\Administrator\\Desktop\\Quake-3-Elite-Launcher\\baseq3\\mods\\osp\\baseq3\\geit3dm7.pk3": {
-      "signature": {
-        "size": 3933435,
-        "mtime_ns": 1790408214594384200
-      },
-      "maps": [
-        {
-          "map": "geit3dm7",
-          "name": "The Olden Domain",
-          "pak": "geit3dm7.pk3",
-          "pak_path": "C:\\Users\\Administrator\\Desktop\\Quake-3-Elite-Launcher\\baseq3\\mods\\osp\\baseq3\\geit3dm7.pk3",
-          "pak_size": 3933435,
-          "location": "Downloaded",
-          "gametype": "FFA / TDM / Duel",
-          "levelshot": "C:\\Users\\Administrator\\AppData\\Roaming\\Quake 3 Elite\\Launcher\\levelshots\\geit3dm7.jpg"
-        }
-      ]
-    },
-    "C:\\Users\\Administrator\\Desktop\\Quake-3-Elite-Launcher\\baseq3\\mods\\osp\\baseq3\\map-13brute.pk3": {
-      "signature": {
-        "size": 2356386,
-        "mtime_ns": 1790407546639480000
-      },
-      "maps": [
-        {
-          "map": "13brute",
-          "name": "Brute Force (by sst13)",
-          "pak": "map-13brute.pk3",
-          "pak_path": "C:\\Users\\Administrator\\Desktop\\Quake-3-Elite-Launcher\\baseq3\\mods\\osp\\baseq3\\map-13brute.pk3",
-          "pak_size": 2356386,
-          "location": "Downloaded",
-          "gametype": "FFA / TDM / Duel",
-          "levelshot": "C:\\Users\\Administrator\\AppData\\Roaming\\Quake 3 Elite\\Launcher\\levelshots\\13brute.jpg"
-        }
-      ]
-    },
-    "C:\\Users\\Administrator\\Desktop\\Quake-3-Elite-Launcher\\baseq3\\mods\\osp\\baseq3\\mkbase-ta.pk3": {
-      "signature": {
-        "size": 2084542,
-        "mtime_ns": 1790408028546597000
-      },
-      "maps": [
-        {
-          "map": "mkbase-ta",
-          "name": "Feel The Base (TA)",
-          "pak": "mkbase-ta.pk3",
-          "pak_path": "C:\\Users\\Administrator\\Desktop\\Quake-3-Elite-Launcher\\baseq3\\mods\\osp\\baseq3\\mkbase-ta.pk3",
-          "pak_size": 2084542,
-          "location": "Downloaded",
-          "gametype": "FFA / CTF",
-          "levelshot": "C:\\Users\\Administrator\\AppData\\Roaming\\Quake 3 Elite\\Launcher\\levelshots\\mkbase-ta.jpg"
-        }
-      ]
-    },
-    "C:\\Users\\Administrator\\Desktop\\Quake-3-Elite-Launcher\\baseq3\\mods\\osp\\baseq3\\overkillv3.pk3": {
-      "signature": {
-        "size": 1887332,
-        "mtime_ns": 1790403500859639600
-      },
-      "maps": [
-        {
-          "map": "overkillV3",
-          "name": "Overkill! v3",
-          "pak": "overkillv3.pk3",
-          "pak_path": "C:\\Users\\Administrator\\Desktop\\Quake-3-Elite-Launcher\\baseq3\\mods\\osp\\baseq3\\overkillv3.pk3",
-          "pak_size": 1887332,
-          "location": "Downloaded",
-          "gametype": "TDM",
-          "levelshot": "C:\\Users\\Administrator\\AppData\\Roaming\\Quake 3 Elite\\Launcher\\levelshots\\overkillV3.jpg"
-        }
-      ]
-    },
-    "C:\\Users\\Administrator\\Desktop\\Quake-3-Elite-Launcher\\baseq3\\mods\\osp\\baseq3\\q3map_fragfurnace.pk3": {
-      "signature": {
-        "size": 37246563,
-        "mtime_ns": 1790407623251639000
-      },
-      "maps": [
-        {
-          "map": "ff",
-          "name": "FragFurnace by Martinus",
-          "pak": "q3map_fragfurnace.pk3",
-          "pak_path": "C:\\Users\\Administrator\\Desktop\\Quake-3-Elite-Launcher\\baseq3\\mods\\osp\\baseq3\\q3map_fragfurnace.pk3",
-          "pak_size": 37246563,
-          "location": "Downloaded",
-          "gametype": "FFA / TDM / Duel",
-          "levelshot": "C:\\Users\\Administrator\\AppData\\Roaming\\Quake 3 Elite\\Launcher\\levelshots\\ff.jpg"
-        }
-      ]
-    },
-    "C:\\Users\\Administrator\\Desktop\\Quake-3-Elite-Launcher\\baseq3\\pak0.pk3": {
-      "signature": {
-        "size": 479493658,
-        "mtime_ns": 1790211827593070300
-      },
-      "maps": [
-        {
-          "map": "q3ctf1",
-          "name": "Dueling Keeps",
-          "pak": "pak0.pk3",
-          "pak_path": "C:\\Users\\Administrator\\Desktop\\Quake-3-Elite-Launcher\\baseq3\\pak0.pk3",
-          "pak_size": 479493658,
-          "location": "External",
-          "gametype": "CTF",
-          "levelshot": "C:\\Users\\Administrator\\AppData\\Roaming\\Quake 3 Elite\\Launcher\\levelshots\\q3ctf1.jpg"
-        },
-        {
-          "map": "q3ctf2",
-          "name": "Troubled Waters",
-          "pak": "pak0.pk3",
-          "pak_path": "C:\\Users\\Administrator\\Desktop\\Quake-3-Elite-Launcher\\baseq3\\pak0.pk3",
-          "pak_size": 479493658,
-          "location": "External",
-          "gametype": "CTF",
-          "levelshot": "C:\\Users\\Administrator\\AppData\\Roaming\\Quake 3 Elite\\Launcher\\levelshots\\q3ctf2.jpg"
-        },
-        {
-          "map": "q3ctf3",
-          "name": "The Stronghold",
-          "pak": "pak0.pk3",
-          "pak_path": "C:\\Users\\Administrator\\Desktop\\Quake-3-Elite-Launcher\\baseq3\\pak0.pk3",
-          "pak_size": 479493658,
-          "location": "External",
-          "gametype": "CTF",
-          "levelshot": "C:\\Users\\Administrator\\AppData\\Roaming\\Quake 3 Elite\\Launcher\\levelshots\\q3ctf3.jpg"
-        },
-        {
-          "map": "q3ctf4",
-          "name": "Space CTF",
-          "pak": "pak0.pk3",
-          "pak_path": "C:\\Users\\Administrator\\Desktop\\Quake-3-Elite-Launcher\\baseq3\\pak0.pk3",
-          "pak_size": 479493658,
-          "location": "External",
-          "gametype": "CTF",
-          "levelshot": "C:\\Users\\Administrator\\AppData\\Roaming\\Quake 3 Elite\\Launcher\\levelshots\\q3ctf4.jpg"
-        },
-        {
-          "map": "q3dm0",
-          "name": "Introduction",
-          "pak": "pak0.pk3",
-          "pak_path": "C:\\Users\\Administrator\\Desktop\\Quake-3-Elite-Launcher\\baseq3\\pak0.pk3",
-          "pak_size": 479493658,
-          "location": "External",
-          "gametype": "Unknown",
-          "levelshot": "C:\\Users\\Administrator\\AppData\\Roaming\\Quake 3 Elite\\Launcher\\levelshots\\q3dm0.jpg"
-        },
-        {
-          "map": "q3dm1",
-          "name": "Arena Gate",
-          "pak": "pak0.pk3",
-          "pak_path": "C:\\Users\\Administrator\\Desktop\\Quake-3-Elite-Launcher\\baseq3\\pak0.pk3",
-          "pak_size": 479493658,
-          "location": "External",
-          "gametype": "FFA / Duel",
-          "levelshot": "C:\\Users\\Administrator\\AppData\\Roaming\\Quake 3 Elite\\Launcher\\levelshots\\q3dm1.jpg"
-        },
-        {
-          "map": "q3dm10",
-          "name": "The Nameless Place",
-          "pak": "pak0.pk3",
-          "pak_path": "C:\\Users\\Administrator\\Desktop\\Quake-3-Elite-Launcher\\baseq3\\pak0.pk3",
-          "pak_size": 479493658,
-          "location": "External",
-          "gametype": "FFA",
-          "levelshot": "C:\\Users\\Administrator\\AppData\\Roaming\\Quake 3 Elite\\Launcher\\levelshots\\q3dm10.jpg"
-        },
-        {
-          "map": "q3dm11",
-          "name": "Deva Station",
-          "pak": "pak0.pk3",
-          "pak_path": "C:\\Users\\Administrator\\Desktop\\Quake-3-Elite-Launcher\\baseq3\\pak0.pk3",
-          "pak_size": 479493658,
-          "location": "External",
-          "gametype": "FFA",
-          "levelshot": "C:\\Users\\Administrator\\AppData\\Roaming\\Quake 3 Elite\\Launcher\\levelshots\\q3dm11.jpg"
-        },
-        {
-          "map": "q3dm12",
-          "name": "The Dredwerkz",
-          "pak": "pak0.pk3",
-          "pak_path": "C:\\Users\\Administrator\\Desktop\\Quake-3-Elite-Launcher\\baseq3\\pak0.pk3",
-          "pak_size": 479493658,
-          "location": "External",
-          "gametype": "FFA / TDM",
-          "levelshot": "C:\\Users\\Administrator\\AppData\\Roaming\\Quake 3 Elite\\Launcher\\levelshots\\q3dm12.jpg"
-        },
-        {
-          "map": "q3dm13",
-          "name": "Lost World",
-          "pak": "pak0.pk3",
-          "pak_path": "C:\\Users\\Administrator\\Desktop\\Quake-3-Elite-Launcher\\baseq3\\pak0.pk3",
-          "pak_size": 479493658,
-          "location": "External",
-          "gametype": "FFA",
-          "levelshot": "C:\\Users\\Administrator\\AppData\\Roaming\\Quake 3 Elite\\Launcher\\levelshots\\q3dm13.jpg"
-        },
-        {
-          "map": "q3dm14",
-          "name": "Grim Dungeons",
-          "pak": "pak0.pk3",
-          "pak_path": "C:\\Users\\Administrator\\Desktop\\Quake-3-Elite-Launcher\\baseq3\\pak0.pk3",
-          "pak_size": 479493658,
-          "location": "External",
-          "gametype": "FFA / TDM",
-          "levelshot": "C:\\Users\\Administrator\\AppData\\Roaming\\Quake 3 Elite\\Launcher\\levelshots\\q3dm14.jpg"
-        },
-        {
-          "map": "q3dm15",
-          "name": "Demon Keep",
-          "pak": "pak0.pk3",
-          "pak_path": "C:\\Users\\Administrator\\Desktop\\Quake-3-Elite-Launcher\\baseq3\\pak0.pk3",
-          "pak_size": 479493658,
-          "location": "External",
-          "gametype": "FFA / TDM",
-          "levelshot": "C:\\Users\\Administrator\\AppData\\Roaming\\Quake 3 Elite\\Launcher\\levelshots\\q3dm15.jpg"
-        },
-        {
-          "map": "q3dm16",
-          "name": "The Bouncy Map",
-          "pak": "pak0.pk3",
-          "pak_path": "C:\\Users\\Administrator\\Desktop\\Quake-3-Elite-Launcher\\baseq3\\pak0.pk3",
-          "pak_size": 479493658,
-          "location": "External",
-          "gametype": "FFA",
-          "levelshot": "C:\\Users\\Administrator\\AppData\\Roaming\\Quake 3 Elite\\Launcher\\levelshots\\q3dm16.jpg"
-        },
-        {
-          "map": "q3dm17",
-          "name": "The Longest Yard",
-          "pak": "pak0.pk3",
-          "pak_path": "C:\\Users\\Administrator\\Desktop\\Quake-3-Elite-Launcher\\baseq3\\pak0.pk3",
-          "pak_size": 479493658,
-          "location": "External",
-          "gametype": "FFA",
-          "levelshot": "C:\\Users\\Administrator\\AppData\\Roaming\\Quake 3 Elite\\Launcher\\levelshots\\q3dm17.jpg"
-        },
-        {
-          "map": "q3dm18",
-          "name": "Space Chamber",
-          "pak": "pak0.pk3",
-          "pak_path": "C:\\Users\\Administrator\\Desktop\\Quake-3-Elite-Launcher\\baseq3\\pak0.pk3",
-          "pak_size": 479493658,
-          "location": "External",
-          "gametype": "FFA",
-          "levelshot": "C:\\Users\\Administrator\\AppData\\Roaming\\Quake 3 Elite\\Launcher\\levelshots\\q3dm18.jpg"
-        },
-        {
-          "map": "q3dm19",
-          "name": "Apocalypse Void",
-          "pak": "pak0.pk3",
-          "pak_path": "C:\\Users\\Administrator\\Desktop\\Quake-3-Elite-Launcher\\baseq3\\pak0.pk3",
-          "pak_size": 479493658,
-          "location": "External",
-          "gametype": "FFA",
-          "levelshot": "C:\\Users\\Administrator\\AppData\\Roaming\\Quake 3 Elite\\Launcher\\levelshots\\q3dm19.jpg"
-        },
-        {
-          "map": "q3dm2",
-          "name": "House Of Pain",
-          "pak": "pak0.pk3",
-          "pak_path": "C:\\Users\\Administrator\\Desktop\\Quake-3-Elite-Launcher\\baseq3\\pak0.pk3",
-          "pak_size": 479493658,
-          "location": "External",
-          "gametype": "FFA / Duel",
-          "levelshot": "C:\\Users\\Administrator\\AppData\\Roaming\\Quake 3 Elite\\Launcher\\levelshots\\q3dm2.jpg"
-        },
-        {
-          "map": "q3dm3",
-          "name": "Arena Of Death",
-          "pak": "pak0.pk3",
-          "pak_path": "C:\\Users\\Administrator\\Desktop\\Quake-3-Elite-Launcher\\baseq3\\pak0.pk3",
-          "pak_size": 479493658,
-          "location": "External",
-          "gametype": "FFA",
-          "levelshot": "C:\\Users\\Administrator\\AppData\\Roaming\\Quake 3 Elite\\Launcher\\levelshots\\q3dm3.jpg"
-        },
-        {
-          "map": "q3dm4",
-          "name": "The Place Of Many Deaths",
-          "pak": "pak0.pk3",
-          "pak_path": "C:\\Users\\Administrator\\Desktop\\Quake-3-Elite-Launcher\\baseq3\\pak0.pk3",
-          "pak_size": 479493658,
-          "location": "External",
-          "gametype": "FFA",
-          "levelshot": "C:\\Users\\Administrator\\AppData\\Roaming\\Quake 3 Elite\\Launcher\\levelshots\\q3dm4.jpg"
-        },
-        {
-          "map": "q3dm5",
-          "name": "The Forgotten Place",
-          "pak": "pak0.pk3",
-          "pak_path": "C:\\Users\\Administrator\\Desktop\\Quake-3-Elite-Launcher\\baseq3\\pak0.pk3",
-          "pak_size": 479493658,
-          "location": "External",
-          "gametype": "FFA",
-          "levelshot": "C:\\Users\\Administrator\\AppData\\Roaming\\Quake 3 Elite\\Launcher\\levelshots\\q3dm5.jpg"
-        },
-        {
-          "map": "q3dm6",
-          "name": "The Camping Grounds",
-          "pak": "pak0.pk3",
-          "pak_path": "C:\\Users\\Administrator\\Desktop\\Quake-3-Elite-Launcher\\baseq3\\pak0.pk3",
-          "pak_size": 479493658,
-          "location": "External",
-          "gametype": "FFA / TDM",
-          "levelshot": "C:\\Users\\Administrator\\AppData\\Roaming\\Quake 3 Elite\\Launcher\\levelshots\\q3dm6.jpg"
-        },
-        {
-          "map": "q3dm7",
-          "name": "Temple of Retribution",
-          "pak": "pak0.pk3",
-          "pak_path": "C:\\Users\\Administrator\\Desktop\\Quake-3-Elite-Launcher\\baseq3\\pak0.pk3",
-          "pak_size": 479493658,
-          "location": "External",
-          "gametype": "FFA / TDM",
-          "levelshot": "C:\\Users\\Administrator\\AppData\\Roaming\\Quake 3 Elite\\Launcher\\levelshots\\q3dm7.jpg"
-        },
-        {
-          "map": "q3dm8",
-          "name": "Brimstone Abbey",
-          "pak": "pak0.pk3",
-          "pak_path": "C:\\Users\\Administrator\\Desktop\\Quake-3-Elite-Launcher\\baseq3\\pak0.pk3",
-          "pak_size": 479493658,
-          "location": "External",
-          "gametype": "FFA / TDM",
-          "levelshot": "C:\\Users\\Administrator\\AppData\\Roaming\\Quake 3 Elite\\Launcher\\levelshots\\q3dm8.jpg"
-        },
-        {
-          "map": "q3dm9",
-          "name": "Hero's Keep",
-          "pak": "pak0.pk3",
-          "pak_path": "C:\\Users\\Administrator\\Desktop\\Quake-3-Elite-Launcher\\baseq3\\pak0.pk3",
-          "pak_size": 479493658,
-          "location": "External",
-          "gametype": "FFA / TDM",
-          "levelshot": "C:\\Users\\Administrator\\AppData\\Roaming\\Quake 3 Elite\\Launcher\\levelshots\\q3dm9.jpg"
-        },
-        {
-          "map": "q3tourney1",
-          "name": "Powerstation 0218",
-          "pak": "pak0.pk3",
-          "pak_path": "C:\\Users\\Administrator\\Desktop\\Quake-3-Elite-Launcher\\baseq3\\pak0.pk3",
-          "pak_size": 479493658,
-          "location": "External",
-          "gametype": "FFA / Duel",
-          "levelshot": "C:\\Users\\Administrator\\AppData\\Roaming\\Quake 3 Elite\\Launcher\\levelshots\\q3tourney1.jpg"
-        },
-        {
-          "map": "q3tourney2",
-          "name": "The Proving Grounds",
-          "pak": "pak0.pk3",
-          "pak_path": "C:\\Users\\Administrator\\Desktop\\Quake-3-Elite-Launcher\\baseq3\\pak0.pk3",
-          "pak_size": 479493658,
-          "location": "External",
-          "gametype": "FFA / Duel",
-          "levelshot": "C:\\Users\\Administrator\\AppData\\Roaming\\Quake 3 Elite\\Launcher\\levelshots\\q3tourney2.jpg"
-        },
-        {
-          "map": "q3tourney3",
-          "name": "Hell's Gate",
-          "pak": "pak0.pk3",
-          "pak_path": "C:\\Users\\Administrator\\Desktop\\Quake-3-Elite-Launcher\\baseq3\\pak0.pk3",
-          "pak_size": 479493658,
-          "location": "External",
-          "gametype": "FFA / Duel",
-          "levelshot": "C:\\Users\\Administrator\\AppData\\Roaming\\Quake 3 Elite\\Launcher\\levelshots\\q3tourney3.jpg"
-        },
-        {
-          "map": "q3tourney4",
-          "name": "Vertical Vengeance",
-          "pak": "pak0.pk3",
-          "pak_path": "C:\\Users\\Administrator\\Desktop\\Quake-3-Elite-Launcher\\baseq3\\pak0.pk3",
-          "pak_size": 479493658,
-          "location": "External",
-          "gametype": "FFA / TDM / Duel",
-          "levelshot": "C:\\Users\\Administrator\\AppData\\Roaming\\Quake 3 Elite\\Launcher\\levelshots\\q3tourney4.jpg"
-        },
-        {
-          "map": "q3tourney5",
-          "name": "Fatal Instinct",
-          "pak": "pak0.pk3",
-          "pak_path": "C:\\Users\\Administrator\\Desktop\\Quake-3-Elite-Launcher\\baseq3\\pak0.pk3",
-          "pak_size": 479493658,
-          "location": "External",
-          "gametype": "FFA / Duel",
-          "levelshot": "C:\\Users\\Administrator\\AppData\\Roaming\\Quake 3 Elite\\Launcher\\levelshots\\q3tourney5.jpg"
-        },
-        {
-          "map": "q3tourney6",
-          "name": "The Very End Of You",
-          "pak": "pak0.pk3",
-          "pak_path": "C:\\Users\\Administrator\\Desktop\\Quake-3-Elite-Launcher\\baseq3\\pak0.pk3",
-          "pak_size": 479493658,
-          "location": "External",
-          "gametype": "FFA / Duel",
-          "levelshot": "C:\\Users\\Administrator\\AppData\\Roaming\\Quake 3 Elite\\Launcher\\levelshots\\q3tourney6.jpg"
-        },
-        {
-          "map": "test_bigbox",
-          "name": "test_bigbox",
-          "pak": "pak0.pk3",
-          "pak_path": "C:\\Users\\Administrator\\Desktop\\Quake-3-Elite-Launcher\\baseq3\\pak0.pk3",
-          "pak_size": 479493658,
-          "location": "External",
-          "gametype": "Unknown",
-          "levelshot": ""
-        }
-      ]
-    },
-    "C:\\Users\\Administrator\\Desktop\\Quake-3-Elite-Launcher\\baseq3\\pak1.pk3": {
-      "signature": {
-        "size": 374405,
-        "mtime_ns": 1790211831271797700
-      },
-      "maps": []
-    },
-    "C:\\Users\\Administrator\\Desktop\\Quake-3-Elite-Launcher\\baseq3\\pak2.pk3": {
-      "signature": {
-        "size": 7511182,
-        "mtime_ns": 1790219555725517400
-      },
-      "maps": [
-        {
-          "map": "q3dm9",
-          "name": "q3dm9",
-          "pak": "pak2.pk3",
-          "pak_path": "C:\\Users\\Administrator\\Desktop\\Quake-3-Elite-Launcher\\baseq3\\pak2.pk3",
-          "pak_size": 7511182,
-          "location": "External",
-          "gametype": "Unknown",
-          "levelshot": ""
-        },
-        {
-          "map": "q3tourney6_ctf",
-          "name": "Across Space",
-          "pak": "pak2.pk3",
-          "pak_path": "C:\\Users\\Administrator\\Desktop\\Quake-3-Elite-Launcher\\baseq3\\pak2.pk3",
-          "pak_size": 7511182,
-          "location": "External",
-          "gametype": "CTF",
-          "levelshot": "C:\\Users\\Administrator\\AppData\\Roaming\\Quake 3 Elite\\Launcher\\levelshots\\q3tourney6_ctf.tga"
-        }
-      ]
-    },
-    "C:\\Users\\Administrator\\Desktop\\Quake-3-Elite-Launcher\\baseq3\\pak3.pk3": {
-      "signature": {
-        "size": 276305,
-        "mtime_ns": 1790219558064295100
-      },
-      "maps": []
-    },
-    "C:\\Users\\Administrator\\Desktop\\Quake-3-Elite-Launcher\\baseq3\\pak4.pk3": {
-      "signature": {
-        "size": 9600350,
-        "mtime_ns": 1790219562543222000
-      },
-      "maps": []
-    },
-    "C:\\Users\\Administrator\\Desktop\\Quake-3-Elite-Launcher\\baseq3\\pak5.pk3": {
-      "signature": {
-        "size": 191872,
-        "mtime_ns": 1790219564802955200
-      },
-      "maps": []
-    },
-    "C:\\Users\\Administrator\\Desktop\\Quake-3-Elite-Launcher\\baseq3\\pak6.pk3": {
-      "signature": {
-        "size": 7346884,
-        "mtime_ns": 1790219568800236500
-      },
-      "maps": [
-        {
-          "map": "pro-q3dm13",
-          "name": "Lost World II",
-          "pak": "pak6.pk3",
-          "pak_path": "C:\\Users\\Administrator\\Desktop\\Quake-3-Elite-Launcher\\baseq3\\pak6.pk3",
-          "pak_size": 7346884,
-          "location": "External",
-          "gametype": "FFA / TDM / Duel",
-          "levelshot": "C:\\Users\\Administrator\\AppData\\Roaming\\Quake 3 Elite\\Launcher\\levelshots\\pro-q3dm13.jpg"
-        },
-        {
-          "map": "pro-q3dm6",
-          "name": "The Campgrounds II",
-          "pak": "pak6.pk3",
-          "pak_path": "C:\\Users\\Administrator\\Desktop\\Quake-3-Elite-Launcher\\baseq3\\pak6.pk3",
-          "pak_size": 7346884,
-          "location": "External",
-          "gametype": "FFA / TDM / Duel",
-          "levelshot": "C:\\Users\\Administrator\\AppData\\Roaming\\Quake 3 Elite\\Launcher\\levelshots\\pro-q3dm6.jpg"
-        },
-        {
-          "map": "pro-q3tourney2",
-          "name": "The Proving Grounds II",
-          "pak": "pak6.pk3",
-          "pak_path": "C:\\Users\\Administrator\\Desktop\\Quake-3-Elite-Launcher\\baseq3\\pak6.pk3",
-          "pak_size": 7346884,
-          "location": "External",
-          "gametype": "FFA / TDM / Duel",
-          "levelshot": "C:\\Users\\Administrator\\AppData\\Roaming\\Quake 3 Elite\\Launcher\\levelshots\\pro-q3tourney2.jpg"
-        },
-        {
-          "map": "pro-q3tourney4",
-          "name": "Vertical Vengeance II",
-          "pak": "pak6.pk3",
-          "pak_path": "C:\\Users\\Administrator\\Desktop\\Quake-3-Elite-Launcher\\baseq3\\pak6.pk3",
-          "pak_size": 7346884,
-          "location": "External",
-          "gametype": "FFA / TDM / Duel",
-          "levelshot": "C:\\Users\\Administrator\\AppData\\Roaming\\Quake 3 Elite\\Launcher\\levelshots\\pro-q3tourney4.jpg"
-        }
-      ]
-    },
-    "C:\\Users\\Administrator\\Desktop\\Quake-3-Elite-Launcher\\baseq3\\pak7.pk3": {
-      "signature": {
-        "size": 320873,
-        "mtime_ns": 1790219571151158500
-      },
-      "maps": []
-    },
-    "C:\\Users\\Administrator\\Desktop\\Quake-3-Elite-Launcher\\baseq3\\pak8.pk3": {
-      "signature": {
-        "size": 454478,
-        "mtime_ns": 1790219573597228300
-      },
-      "maps": []
     }
   }
 }

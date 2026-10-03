@@ -7,6 +7,16 @@ from base_methods import *
 from download_tools import downloader
 
 
+def _emit_status(callback, event, **payload):
+    """Send semantic PAK activity without coupling this backend to Qt."""
+    if callback is None:
+        return
+    try:
+        callback(str(event), **payload)
+    except Exception:
+        pass
+
+
 # ============================================================================
 # OFFICIAL QUAKE 3 PAK FILES
 # ============================================================================
@@ -441,7 +451,8 @@ def download_and_install_pak(
     file_url,
     expected_hash,
     control=None,
-    progress_callback=None
+    progress_callback=None,
+    status_callback=None
 ):
     """
     Download PAK to AppData cache, verify SHA-256,
@@ -485,6 +496,12 @@ def download_and_install_pak(
     print(
         f"[download] Downloading clean {file_name}..."
     )
+    _emit_status(
+        status_callback,
+        "pak_download_needed",
+        file_name=file_name,
+        url=file_url,
+    )
 
     downloaded = downloader(
         file_url,
@@ -493,7 +510,8 @@ def download_and_install_pak(
         skip=True,
         control=control,
         progress_callback=progress_callback,
-        use_part_file=True
+        use_part_file=True,
+        status_callback=status_callback
     )
 
     if not downloaded:
@@ -508,6 +526,11 @@ def download_and_install_pak(
 
     print(
         f"[hash] Verifying downloaded {file_name}..."
+    )
+    _emit_status(
+        status_callback,
+        "pak_verify_download",
+        file_name=file_name,
     )
 
     if not verify_file(
@@ -524,6 +547,11 @@ def download_and_install_pak(
         except OSError:
             pass
 
+        _emit_status(
+            status_callback,
+            "pak_hash_failed",
+            file_name=file_name,
+        )
         return False
 
     print(
@@ -550,8 +578,18 @@ def download_and_install_pak(
         print(
             f"[error] Installed copy of {file_name} failed verification."
         )
+        _emit_status(
+            status_callback,
+            "pak_install_failed",
+            file_name=file_name,
+        )
         return False
 
+    _emit_status(
+        status_callback,
+        "pak_installed",
+        file_name=file_name,
+    )
     return True
 
 
@@ -559,7 +597,7 @@ def download_and_install_pak(
 # VERIFY ALL PAKS
 # ============================================================================
 
-def verify_paks(control=None, progress_callback=None):
+def verify_paks(control=None, progress_callback=None, status_callback=None):
     """
     Verify pak0.pk3 - pak8.pk3.
 
@@ -589,6 +627,11 @@ def verify_paks(control=None, progress_callback=None):
     print()
 
     all_valid = True
+    _emit_status(
+        status_callback,
+        "paks_check_start",
+        total=len(PAK_FILES),
+    )
 
     for file_name, info in PAK_FILES.items():
 
@@ -673,11 +716,21 @@ def verify_paks(control=None, progress_callback=None):
             print(
                 f"[warning] {file_name} is modified or corrupted."
             )
+            _emit_status(
+                status_callback,
+                "pak_corrupt",
+                file_name=file_name,
+            )
 
         else:
 
             print(
                 f"[warning] {file_name} is missing."
+            )
+            _emit_status(
+                status_callback,
+                "pak_missing",
+                file_name=file_name,
             )
 
         # ====================================================================
@@ -700,6 +753,11 @@ def verify_paks(control=None, progress_callback=None):
 
                 print(
                     f"[OK] {file_name} restored from cache."
+                )
+                _emit_status(
+                    status_callback,
+                    "pak_cache_restored",
+                    file_name=file_name,
                 )
 
                 continue
@@ -746,6 +804,11 @@ def verify_paks(control=None, progress_callback=None):
                 print(
                     f"[OK] {file_name} imported from existing Quake III."
                 )
+                _emit_status(
+                    status_callback,
+                    "pak_local_imported",
+                    file_name=file_name,
+                )
 
                 continue
 
@@ -766,7 +829,8 @@ def verify_paks(control=None, progress_callback=None):
             file_url,
             expected_hash,
             control=control,
-            progress_callback=progress_callback
+            progress_callback=progress_callback,
+            status_callback=status_callback
         ):
 
             print(
@@ -777,6 +841,11 @@ def verify_paks(control=None, progress_callback=None):
 
             print(
                 f"[FAILED] Could not repair {file_name}."
+            )
+            _emit_status(
+                status_callback,
+                "pak_repair_failed",
+                file_name=file_name,
             )
 
             all_valid = False
@@ -802,6 +871,13 @@ def verify_paks(control=None, progress_callback=None):
 
     print("========================================")
     print()
+
+    _emit_status(
+        status_callback,
+        "paks_check_complete",
+        success=bool(all_valid),
+        total=len(PAK_FILES),
+    )
 
     return all_valid
 

@@ -19,7 +19,7 @@ import threading
 import base64
 import datetime
 import hashlib
-from collections import OrderedDict
+from collections import OrderedDict, deque
 
 from pathlib import Path
 
@@ -868,6 +868,9 @@ class Q3EliteDownload(QtCore.QThread):
             # Step 19 GUI will pass the user's checkbox selections here.
             # Always install/extract BASIC first. Optional components must not
             # influence Basic's manifest repair pass.
+            installation_status_callback(
+                "stage", text="Installing Q3Elite Basic…", kind="working", key="basic"
+            )
             q3components.install_basic(
                 external_maps=False,
                 music_playlist=False,
@@ -875,22 +878,37 @@ class Q3EliteDownload(QtCore.QThread):
                 control=download_control,
                 progress_callback=download_progress_callback,
             )
+            installation_status_callback(
+                "stage", text="Q3Elite Basic installed", kind="ok", key="basic"
+            )
 
             # Only after Basic is physically installed may optional components run.
             # Maps use their dedicated pCloud ZIP installer instead of falling back
             # to hundreds of individual manifest downloads.
             if self.external_maps:
                 print("\nBasic installed. Installing External Maps...")
+                installation_status_callback(
+                    "stage", text="Installing External Maps…", kind="working", key="maps"
+                )
                 q3components.install_maps(
                     download_control,
                     download_progress_callback,
                 )
+                installation_status_callback(
+                    "stage", text="External Maps installed", kind="ok", key="maps"
+                )
 
             if self.music_playlist:
                 print("\nBasic installed. Installing Music Playlist...")
+                installation_status_callback(
+                    "stage", text="Installing Music Playlist…", kind="working", key="music"
+                )
                 q3components.install_music(
                     download_control,
                     download_progress_callback,
+                )
+                installation_status_callback(
+                    "stage", text="Music Playlist installed", kind="ok", key="music"
                 )
 
             # Strong postcondition for the first-install worker.
@@ -903,6 +921,9 @@ class Q3EliteDownload(QtCore.QThread):
             self.result_ready.emit(True)
 
         except BaseException as error:
+            installation_status_callback(
+                "stage", text=f"Q3Elite Basic installation failed: {error}", kind="error", key="basic"
+            )
             print()
             print(f"[error] Quake 3 Elite installation failed: {error}")
             traceback.print_exc()
@@ -1075,7 +1096,8 @@ class FDownload(QtCore.QThread):
 
             paks_ok = verify_paks(
                 control=download_control,
-                progress_callback=download_progress_callback
+                progress_callback=download_progress_callback,
+                status_callback=installation_status_callback
             )
 
             if not paks_ok:
@@ -1121,6 +1143,9 @@ class PostInstallUpdate(QtCore.QThread):
                 self.result_ready.emit(True)
                 return
 
+            installation_status_callback(
+                "stage", text="Checking OSP2-BE…", kind="working", key="osp"
+            )
             print()
             print("========================================")
             print(" Checking OSP2-BE")
@@ -1149,6 +1174,9 @@ class PostInstallUpdate(QtCore.QThread):
                     "retried when online."
                 )
 
+            installation_status_callback(
+                "stage", text="OSP2-BE check complete", kind="ok", key="osp"
+            )
             print()
             print("========================================")
             print(" OSP2-BE check complete")
@@ -1158,6 +1186,9 @@ class PostInstallUpdate(QtCore.QThread):
             self.result_ready.emit(True)
 
         except Exception as error:
+            installation_status_callback(
+                "stage", text="OSP2-BE update service is unavailable", kind="warning", key="osp"
+            )
             # OSP2-BE is optional for launching the engine. A network/update
             # failure must therefore not brick an otherwise valid installation.
             print()
@@ -2188,6 +2219,153 @@ def download_progress_callback(downloaded, total, speed, file_name):
 dt.set_default_progress_callback(download_progress_callback)
 
 
+# Thread-safe semantic installation activity. Worker threads enqueue concise
+# events; the existing 200 ms GUI timer renders them on the Qt thread.
+_install_activity_queue = deque()
+_install_activity_items = []
+_install_activity_lock = threading.Lock()
+_INSTALL_ACTIVITY_LIMIT = 6
+
+
+def installation_status_callback(event, **payload):
+    with _install_activity_lock:
+        _install_activity_queue.append((str(event), dict(payload)))
+
+
+def _activity_set(text, kind="info", key=None):
+    """Append or replace one concise activity row; GUI thread only."""
+    global _install_activity_items
+    item = {"text": str(text), "kind": str(kind), "key": key}
+
+    if key is not None:
+        for index in range(len(_install_activity_items) - 1, -1, -1):
+            if _install_activity_items[index].get("key") == key:
+                _install_activity_items[index] = item
+                break
+        else:
+            _install_activity_items.append(item)
+    else:
+        _install_activity_items.append(item)
+
+    _install_activity_items = _install_activity_items[-_INSTALL_ACTIVITY_LIMIT:]
+    _render_install_activity()
+
+
+def _render_install_activity():
+    if "window" not in globals() or not hasattr(window, "installActivityText"):
+        return
+    icons = {
+        "info": "•",
+        "working": "•",
+        "ok": "✓",
+        "warning": "⚠",
+        "error": "✕",
+    }
+    if not _install_activity_items:
+        window.installActivityText.setText("• Waiting for installation activity…")
+        return
+    lines = [
+        f"{icons.get(item.get('kind'), '•')} {item.get('text', '')}"
+        for item in _install_activity_items
+    ]
+    window.installActivityText.setText("\n".join(lines))
+
+
+def reset_install_activity(initial=None):
+    global _install_activity_items
+    _install_activity_items = []
+    with _install_activity_lock:
+        _install_activity_queue.clear()
+    if initial:
+        _activity_set(initial, "working", key="stage")
+    else:
+        _render_install_activity()
+
+
+def _friendly_retry_text(data):
+    file_name = str(data.get("file_name") or "file")
+    host = str(data.get("host") or "download server")
+    attempt = int(data.get("attempt") or 0)
+    max_attempts = int(data.get("max_attempts") or 0)
+    code = data.get("http_code")
+    raw = (str(data.get("error") or "") + " " + str(data.get("reason") or "")).casefold()
+    suffix = f" — retrying {attempt}/{max_attempts}" if max_attempts else ""
+
+    if code == 404:
+        return f"{file_name} was not found on {host}{suffix}"
+    if code == 403:
+        return f"{host} refused the {file_name} download{suffix}"
+    if isinstance(code, int) and code >= 500:
+        return f"{host} is temporarily unavailable{suffix}"
+    if "timed out" in raw or "timeout" in raw or "handshake" in raw:
+        return f"{host} is not responding{suffix}"
+    if "getaddrinfo" in raw or "name or service" in raw or "nodename" in raw:
+        return f"Could not find {host}{suffix}"
+    if "ssl" in raw or "certificate" in raw:
+        return f"Could not establish a secure connection to {host}{suffix}"
+    return f"Could not reach {host}{suffix}"
+
+
+def _drain_install_activity():
+    pending = []
+    with _install_activity_lock:
+        while _install_activity_queue:
+            pending.append(_install_activity_queue.popleft())
+
+    for event, data in pending:
+        file_name = str(data.get("file_name") or "")
+        url = str(data.get("url") or "")
+        host = str(data.get("host") or "")
+        if not host and url:
+            try:
+                host = urllib.parse.urlparse(url).hostname or "download server"
+            except Exception:
+                host = "download server"
+
+        if event == "stage":
+            _activity_set(data.get("text", "Working…"), data.get("kind", "working"), data.get("key", "stage"))
+        elif event == "paks_check_start":
+            _activity_set("Checking Quake 3 PAKs…", "working", "paks")
+        elif event == "pak_missing":
+            _activity_set(f"{file_name} is missing", "warning", f"pak-state:{file_name}")
+        elif event == "pak_corrupt":
+            _activity_set(f"{file_name} is modified or corrupted", "warning", f"pak-state:{file_name}")
+        elif event == "pak_cache_restored":
+            _activity_set(f"{file_name} restored from local cache", "ok", f"pak-state:{file_name}")
+        elif event == "pak_local_imported":
+            _activity_set(f"{file_name} imported from an existing Quake 3 installation", "ok", f"pak-state:{file_name}")
+        elif event == "pak_download_needed":
+            source = host or "q3msk.net"
+            _activity_set(f"Downloading {file_name} from {source}…", "working", f"download:{file_name}")
+        elif event == "download_connecting":
+            # The PAK verifier is the only caller that supplies this status hook,
+            # so manifest verification never becomes a 2,800-line activity feed.
+            _activity_set(f"Connecting to {host} for {file_name}…", "working", f"download:{file_name}")
+        elif event == "download_retry":
+            _activity_set(_friendly_retry_text(data), "warning", f"download:{file_name}")
+        elif event == "download_complete":
+            _activity_set(f"{file_name} downloaded from {host}", "ok", f"download:{file_name}")
+        elif event == "download_failed":
+            _activity_set(f"Could not download {file_name} — {host} is unreachable", "error", f"download:{file_name}")
+        elif event == "download_cancelled":
+            _activity_set(f"{file_name} download cancelled", "warning", f"download:{file_name}")
+        elif event == "pak_verify_download":
+            _activity_set(f"Verifying {file_name}…", "working", f"pak-state:{file_name}")
+        elif event == "pak_hash_failed":
+            _activity_set(f"{file_name} failed SHA-256 verification", "error", f"pak-state:{file_name}")
+        elif event == "pak_install_failed":
+            _activity_set(f"Could not install {file_name}", "error", f"pak-state:{file_name}")
+        elif event == "pak_installed":
+            _activity_set(f"{file_name} installed and verified", "ok", f"pak-state:{file_name}")
+        elif event == "pak_repair_failed":
+            _activity_set(f"Could not repair {file_name}", "error", f"pak-state:{file_name}")
+        elif event == "paks_check_complete":
+            if data.get("success"):
+                _activity_set(f"Quake 3 PAKs verified — {int(data.get('total') or 9)}/9", "ok", "paks")
+            else:
+                _activity_set("Quake 3 PAK verification failed", "error", "paks")
+
+
 def _format_bytes(value):
     value = float(value or 0)
     units = ("B", "KB", "MB", "GB")
@@ -2359,6 +2537,7 @@ def set_gui_error(text="RETRY"):
 
 
 def update_download_overlay():
+    _drain_install_activity()
     name = _download_progress["name"]
     done = _download_progress["downloaded"]
     total = _download_progress["total"]
@@ -2387,11 +2566,13 @@ def toggle_download_pause():
         window.pauseButton.setText("PAUSE")
         print()
         print("[download] Resumed.")
+        _activity_set("Download resumed", "working", "pause")
     else:
         download_control.pause()
         window.pauseButton.setText("RESUME")
         print()
         print("[download] Paused.")
+        _activity_set("Download paused", "warning", "pause")
 
 
 def refresh_component_gui():
@@ -2599,6 +2780,7 @@ def start_local_check():
     download_control.reset()
 
     if q3elite_is_installed():
+        reset_install_activity("Checking installed Q3Elite files…")
         install_state["q3elite_done"] = False
         install_state["q3elite_ok"] = False
         install_state["q3elite_update_done"] = False
@@ -2636,6 +2818,7 @@ def start_first_install():
     if q3elite_download.isRunning():
         return
     _disconnect_main_button()
+    reset_install_activity("Preparing Q3Elite Basic installation…")
     # Read Qt widgets on the GUI thread before starting QThread.
     q3elite_download.set_options(
         external_maps=window.firstInstallMapsBox.isChecked(),
@@ -9744,6 +9927,24 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
         self.firstInstallCard.setVisible(not q3elite_is_installed())
         panel.addWidget(self.firstInstallCard)
 
+        self.installActivityCard = SurfaceCard()
+        self.installActivityCard.setObjectName("homeInstallActivity")
+        self.installActivityCard.setProperty("materialRadius", theme_int("radius.md", 10))
+        activity_layout = QtWidgets.QVBoxLayout(self.installActivityCard)
+        activity_layout.setContentsMargins(12, 9, 12, 9)
+        activity_layout.setSpacing(5)
+        activity_title = QtWidgets.QLabel("INSTALLATION ACTIVITY")
+        activity_title.setObjectName("homeMetaCaption")
+        activity_layout.addWidget(activity_title)
+        self.installActivityText = QtWidgets.QLabel("• Waiting for installation activity…")
+        self.installActivityText.setObjectName("homeActivityText")
+        self.installActivityText.setWordWrap(True)
+        self.installActivityText.setAlignment(QtCore.Qt.AlignmentFlag.AlignTop | QtCore.Qt.AlignmentFlag.AlignLeft)
+        self.installActivityText.setTextInteractionFlags(QtCore.Qt.TextInteractionFlag.TextSelectableByMouse)
+        self.installActivityText.setMinimumHeight(88)
+        activity_layout.addWidget(self.installActivityText, 1)
+        panel.addWidget(self.installActivityCard)
+
         panel.addStretch(1)
 
         self.playButton = GlowButton("CHECKING…")
@@ -14761,6 +14962,7 @@ def post_update_result(success):
     print()
 
     # Keep the merged launcher alive. This is now the persistent launcher.
+    _activity_set("Installation ready", "ok", "final")
     set_gui_ready(offline=install_state["offline"])
 
 

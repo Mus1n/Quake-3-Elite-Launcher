@@ -9,6 +9,7 @@ import os
 import time
 import urllib.request
 import urllib.error
+import urllib.parse
 import http.client
 import socket
 from math import floor
@@ -155,6 +156,17 @@ def _call_progress(callback, downloaded, total, speed, file_name):
         pass
 
 
+def _call_status(callback, event, **payload):
+    """Best-effort semantic status hook for launcher UI activity logs."""
+    if callback is None:
+        return
+    try:
+        callback(str(event), **payload)
+    except Exception:
+        # Status reporting must never be allowed to break a download.
+        pass
+
+
 def downloader(
     file_url,
     file_path,
@@ -169,6 +181,7 @@ def downloader(
     probe_remote_size=True,
     dynamic_stream=False,
     stall_timeout=900,
+    status_callback=None,
 ):
     """
     Download a file with resume, pause/resume control and progress reporting.
@@ -186,6 +199,7 @@ def downloader(
         dynamic_stream         tolerate temporary read stalls without reconnecting.
                               Intended for pCloud getpubzip streams.
         stall_timeout          maximum cumulative no-data stall before giving up.
+        status_callback        callback(event, **payload) for concise GUI activity.
 
     Incomplete downloads use <name>.part by default for every launcher download
     (Q3Elite, official PAKs, OSP2-BE and updater files). The final filename is
@@ -198,6 +212,20 @@ def downloader(
     os.makedirs(file_path, exist_ok=True)
 
     print(f"Downloading {file_name}...")
+
+    try:
+        source_host = urllib.parse.urlparse(str(file_url)).hostname or "download server"
+    except Exception:
+        source_host = "download server"
+
+    _call_status(
+        status_callback,
+        "download_start",
+        file_name=file_name,
+        url=str(file_url),
+        host=source_host,
+        max_attempts=max_attempts,
+    )
 
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
@@ -282,6 +310,17 @@ def downloader(
             request_headers["Range"] = f"bytes={downloaded}-"
 
         request = urllib.request.Request(file_url, headers=request_headers)
+
+        _call_status(
+            status_callback,
+            "download_connecting",
+            file_name=file_name,
+            url=str(file_url),
+            host=source_host,
+            attempt=attempt + 1,
+            max_attempts=max_attempts,
+            resumed=bool(append_requested),
+        )
 
         try:
             with urllib.request.urlopen(
@@ -458,10 +497,26 @@ def downloader(
                     os.replace(working_path, final_path)
 
                 print("\nDownloaded successfully.")
+                _call_status(
+                    status_callback,
+                    "download_complete",
+                    file_name=file_name,
+                    url=str(file_url),
+                    host=source_host,
+                    downloaded=downloaded,
+                    total=total_length,
+                )
                 return final_path
 
         except DownloadCancelled:
             print(f"\nDownload cancelled: {file_name}")
+            _call_status(
+                status_callback,
+                "download_cancelled",
+                file_name=file_name,
+                url=str(file_url),
+                host=source_host,
+            )
             return None
 
         except urllib.error.HTTPError as error:
@@ -505,6 +560,18 @@ def downloader(
                 f"\nNetwork issue: HTTP {error.code}: {error.reason}. "
                 f"Retrying ({attempt}/{max_attempts})..."
             )
+            _call_status(
+                status_callback,
+                "download_retry",
+                file_name=file_name,
+                url=str(file_url),
+                host=source_host,
+                attempt=attempt,
+                max_attempts=max_attempts,
+                http_code=int(error.code),
+                reason=str(error.reason or ""),
+                error=str(error),
+            )
             time.sleep(1)
 
         except (
@@ -519,11 +586,31 @@ def downloader(
                 f"\nNetwork issue: {error}. "
                 f"Retrying ({attempt}/{max_attempts})..."
             )
+            _call_status(
+                status_callback,
+                "download_retry",
+                file_name=file_name,
+                url=str(file_url),
+                host=source_host,
+                attempt=attempt,
+                max_attempts=max_attempts,
+                http_code=None,
+                reason=str(getattr(error, "reason", "") or ""),
+                error=str(error),
+            )
             time.sleep(1)
 
     print(
         f"\nFailed to download {file_name} "
         f"after {max_attempts} attempts."
+    )
+    _call_status(
+        status_callback,
+        "download_failed",
+        file_name=file_name,
+        url=str(file_url),
+        host=source_host,
+        attempts=max_attempts,
     )
     return None
 
