@@ -5340,7 +5340,10 @@ class TelegramTextView(QWebEngineView if QWebEngineView is not None else QtWidge
         web_link_css = theme_color("changelog.web_link", "#C7C7C7").name()
         quote_color = theme_color("changelog.quote_bg", theme_value("changelog.web_bg", "#050505"))
         quote_css = quote_color.name()
-        quote_border_css = css_color(theme_value("material.web.quote_border", "rgba(255,255,255,46)"))
+        quote_border_css = css_color(theme_value(
+            "material.web.quote_material.border_base",
+            theme_value("material.web.quote_border", "rgba(255,255,255,46)"),
+        ))
 
         # Telegram content is Chromium-rendered, so Qt's SurfaceCard edge pass
         # cannot reach it. Feed the same Obsidian edge language into the DOM.
@@ -5386,17 +5389,29 @@ class TelegramTextView(QWebEngineView if QWebEngineView is not None else QtWidge
             opacity=theme_float("material.web.texture_opacity", 0.16),
             base_color=web_bg_color, max_size=640,
         ) if OBSIDIAN_MATERIAL.enabled(ui_theme) else ""
+        quote_material_enabled = theme_bool("material.web.quote_material.enabled", True)
+        quote_texture_key = (
+            "material.web.quote_material.texture_path"
+            if str(theme_value("material.web.quote_material.texture_path", "") or "").strip()
+            else "material.web.quote_texture_path"
+        )
         quote_uri = OBSIDIAN_MATERIAL.texture_data_uri(
-            ui_theme, "material.card_texture",
-            opacity=theme_float("material.web.quote_texture_opacity", 0.10),
+            ui_theme, quote_texture_key,
+            opacity=theme_float(
+                "material.web.quote_material.texture_opacity",
+                theme_float("material.web.quote_texture_opacity", 0.10),
+            ),
             base_color=quote_color, max_size=420,
-        ) if OBSIDIAN_MATERIAL.enabled(ui_theme) else ""
+        ) if OBSIDIAN_MATERIAL.enabled(ui_theme) and quote_material_enabled else ""
         bg_image_css = f'url("{bg_uri}")' if bg_uri else "none"
         quote_image_css = f'url("{quote_uri}")' if quote_uri else "none"
         web_radius = int(theme_float("material.web.radius", 12.0)) if OBSIDIAN_MATERIAL.enabled(ui_theme) else int(theme_float("radius.lg", 13.0))
         web_padding = int(theme_float("material.web.padding", 12.0)) if OBSIDIAN_MATERIAL.enabled(ui_theme) else 10
         web_inner_radius = max(4, web_radius - 2)
-        quote_radius = max(4, web_radius - 3)
+        quote_radius = max(
+            4,
+            int(theme_float("material.web.quote_material.radius", web_radius - 3)),
+        )
         js = (js.replace("__Q3_BG__", web_bg_css)
                 .replace("__Q3_TEXT__", web_text_css)
                 .replace("__Q3_LINK__", web_link_css)
@@ -5446,18 +5461,33 @@ class TelegramTextView(QWebEngineView if QWebEngineView is not None else QtWidge
                 opacity=theme_float("material.web.texture_opacity", 0.16),
                 base_color=bg, max_size=640,
             ) if OBSIDIAN_MATERIAL.enabled(ui_theme) else ""
+            quote_material_enabled = theme_bool("material.web.quote_material.enabled", True)
+            quote_texture_key = (
+                "material.web.quote_material.texture_path"
+                if str(theme_value("material.web.quote_material.texture_path", "") or "").strip()
+                else "material.web.quote_texture_path"
+            )
             quote_uri = OBSIDIAN_MATERIAL.texture_data_uri(
-                ui_theme, "material.web.quote_texture_path",
-                opacity=theme_float("material.web.quote_texture_opacity", 0.10),
+                ui_theme, quote_texture_key,
+                opacity=theme_float(
+                    "material.web.quote_material.texture_opacity",
+                    theme_float("material.web.quote_texture_opacity", 0.10),
+                ),
                 base_color=quote, max_size=420,
-            ) if OBSIDIAN_MATERIAL.enabled(ui_theme) else ""
+            ) if OBSIDIAN_MATERIAL.enabled(ui_theme) and quote_material_enabled else ""
             bg_image = f'url("{bg_uri}")' if bg_uri else 'none'
             quote_image = f'url("{quote_uri}")' if quote_uri else 'none'
-            quote_border = css_color(theme_value("material.web.quote_border", "rgba(255,255,255,46)"))
+            quote_border = css_color(theme_value(
+                "material.web.quote_material.border_base",
+                theme_value("material.web.quote_border", "rgba(255,255,255,46)"),
+            ))
             web_radius = int(theme_float("material.web.radius", 12.0)) if OBSIDIAN_MATERIAL.enabled(ui_theme) else int(theme_float("radius.lg", 13.0))
             web_padding = int(theme_float("material.web.padding", 12.0)) if OBSIDIAN_MATERIAL.enabled(ui_theme) else 10
             web_inner_radius = max(4, web_radius - 2)
-            quote_radius = max(4, web_radius - 3)
+            quote_radius = max(
+                4,
+                int(theme_float("material.web.quote_material.radius", web_radius - 3)),
+            )
 
             tg_border = css_color(theme_value(
                 "material.web.telegram_content.border_base",
@@ -9963,6 +9993,10 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
         activity_layout.addWidget(self.installActivityText, 1)
         panel.addWidget(self.installActivityCard)
 
+        # Give the activity feed a little more breathing room before the primary
+        # install/play action. The panel's normal 10 px spacing was visually too
+        # tight once the activity card became a permanent Home element.
+        panel.addSpacing(8)
         panel.addStretch(1)
 
         self.playButton = GlowButton("CHECKING…")
