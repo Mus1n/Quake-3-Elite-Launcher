@@ -6,7 +6,7 @@ Q3Elite Launcher self-updater.
 
 Remote:
   Launcher_Version.json  -> version/update type/changelog
-  Launcher_manifest.json -> SHA-256 manifest, fetched only when update/repair is needed
+  Launcher_Manifest.json -> SHA-256 manifest, fetched only when update/repair is needed
 
 Only Q3Elite/Launcher/ files may be updated.
 """
@@ -34,10 +34,10 @@ REMOTE_ROOT = (
     f"{GITHUB_OWNER}/{GITHUB_REPO}/{GITHUB_BRANCH}"
 )
 REMOTE_VERSION_URL = f"{REMOTE_ROOT}/Q3Elite/Launcher/Launcher_Version.json"
-REMOTE_MANIFEST_URL = f"{REMOTE_ROOT}/Q3Elite/Launcher/Launcher_manifest.json"
+REMOTE_MANIFEST_URL = f"{REMOTE_ROOT}/Q3Elite/Launcher/Launcher_Manifest.json"
 
 LOCAL_VERSION_FILE = LAUNCHER_DIR / "Launcher_Version.json"
-LOCAL_MANIFEST_FILE = LAUNCHER_DIR / "Launcher_manifest.json"
+LOCAL_MANIFEST_FILE = LAUNCHER_DIR / "Launcher_Manifest.json"
 
 SELF_UPDATE_DIR = Q3ELITE_LAUNCHER_DATA_DIR / "self_update"
 STAGING_DIR = SELF_UPDATE_DIR / "staging"
@@ -115,9 +115,18 @@ def _normalize_manifest_path(value):
     return normalized, launcher_relative
 
 
+
+def _is_metadata_repo_path(repo_path):
+    normalized = str(repo_path).replace("\\", "/").casefold()
+    return normalized in {
+        "q3elite/launcher/launcher_version.json",
+        "q3elite/launcher/launcher_manifest.json",
+    }
+
+
 def _parse_manifest(data):
     if not isinstance(data, dict) or not data:
-        raise ValueError("Launcher_manifest.json is empty or invalid.")
+        raise ValueError("Launcher_Manifest.json is empty or invalid.")
 
     # v1 compatibility: {repo_path: sha256}
     if "files" not in data:
@@ -135,6 +144,8 @@ def _parse_manifest(data):
     parsed_files = []
     for raw_path, raw_hash in raw_files.items():
         repo_path, launcher_relative = _normalize_manifest_path(raw_path)
+        if _is_metadata_repo_path(repo_path):
+            continue
         expected_hash = str(raw_hash).strip().lower()
         if len(expected_hash) != 64 or any(c not in "0123456789abcdef" for c in expected_hash):
             raise ValueError(f"Invalid SHA-256 for {repo_path}")
@@ -147,6 +158,8 @@ def _parse_manifest(data):
     deleted = []
     for raw_path in raw_deleted:
         repo_path, launcher_relative = _normalize_manifest_path(raw_path)
+        if _is_metadata_repo_path(repo_path):
+            continue
         deleted.append({
             "repo_path": repo_path,
             "launcher_relative": launcher_relative,
@@ -174,13 +187,15 @@ def _github_tree_files():
 
     excluded = {
         "Q3Elite/Launcher/Launcher_Version.json",
-        "Q3Elite/Launcher/Launcher_manifest.json",
+        "Q3Elite/Launcher/Launcher_Manifest.json",
         "Q3Elite/Launcher/update/generate_launcher_manifest.py",
     }
     entries = []
     for item in data["tree"]:
         repo_path = str(item.get("path", "")).replace("\\", "/")
-        if item.get("type") != "blob" or not repo_path.startswith(ALLOWED_PREFIX) or repo_path in excluded:
+        if item.get("type") != "blob" or not repo_path.startswith(ALLOWED_PREFIX):
+            continue
+        if repo_path.lower() in {path.lower() for path in excluded}:
             continue
         _, rel = _normalize_manifest_path(repo_path)
         entries.append({"repo_path": repo_path, "launcher_relative": rel, "sha256": None})
@@ -286,7 +301,7 @@ def check_for_update():
     if local_version == remote_version and not local_version_missing:
         local_manifest = get_local_manifest()
         if local_manifest is None:
-            print("Local Launcher_manifest.json is missing.")
+            print("Local Launcher_Manifest.json is missing.")
             print("Downloading remote manifest for repair...")
             try:
                 remote_manifest = get_remote_manifest()
@@ -378,15 +393,43 @@ def check_for_repair():
     try:
         remote_info = get_remote_version_info()
         remote_version = str(remote_info["version"]).strip()
-        manifest = get_remote_manifest()
-        changed = _find_changed_files(manifest["files"])
-        deletions = _existing_deleted_entries(manifest["deleted"])
     except Exception as error:
-        print(f"[offline] Launcher repair check unavailable: {error}")
+        print(f"[offline] Launcher version check unavailable during repair: {error}")
         return None
 
+    manifest_data = None
+    try:
+        manifest = get_remote_manifest()
+        manifest_data = manifest["raw"]
+        print("Launcher repair is using the remote file manifest.")
+    except Exception as remote_manifest_error:
+        print(f"[warning] Remote launcher manifest unavailable: {remote_manifest_error}")
+        manifest = get_local_manifest()
+        if manifest is not None:
+            # A local manifest contains the SHA-256 values needed to repair
+            # corrupt as well as missing files. Preserve it when staging.
+            manifest_data = manifest["raw"]
+            print("Repairing from the verified local manifest.")
+        else:
+            # The version-8 updater already supports staging files whose
+            # SHA-256 is unknown by calculating it after download. GitHub's
+            # tree endpoint can at least recover missing files when both
+            # manifests are absent; it cannot prove that existing bytes match.
+            try:
+                manifest = {"files": _all_remote_launcher_files_without_manifest(), "deleted": []}
+            except Exception as tree_error:
+                print(f"[offline] Launcher repair check unavailable: {tree_error}")
+                return None
+            print("Repair is using the GitHub file list; no manifest hashes are available.")
+
+    changed = _find_changed_files(manifest["files"])
+    deletions = _existing_deleted_entries(manifest["deleted"])
+
     if not changed and not deletions:
-        print("Launcher integrity check passed.")
+        if manifest_data is None:
+            print("No missing launcher files found. Without a local or remote manifest, existing file hashes cannot be verified.")
+        else:
+            print("Launcher integrity check passed.")
         return None
 
     return {
@@ -395,7 +438,8 @@ def check_for_repair():
         "remote_version_info": remote_info,
         "files": changed,
         "deleted": deletions,
-        "manifest_data": manifest["raw"],
+        "manifest_data": manifest_data,
+        "full_bootstrap": manifest_data is None,
     }
 
 

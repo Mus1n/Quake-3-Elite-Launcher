@@ -54,28 +54,6 @@ REMOTE_VERSION = "Q3Elite/Version.json"
 FULL = "full"
 CORE = "core"
 
-# Installed once from the manifest, then owned by the user.
-USER_CONFIG = "baseq3/mods/osp/UserConfig.cfg"
-
-# These paths must never be removed by Manifest.json "deleted" entries.
-PRESERVED_FILES = {
-    "q3elite/.q3eliteignore",
-    "q3elite/q3eliteignore",  # defensive: pCloud non-ZIP mode may strip the dot
-    USER_CONFIG.casefold(),
-}
-PRESERVED_PREFIXES = (
-    "q3elite/update/",
-)
-
-
-def is_user_config(path):
-    return norm(path).casefold() == USER_CONFIG.casefold()
-
-
-def is_preserved_from_delete(path):
-    p = norm(path).casefold()
-    return p in PRESERVED_FILES or any(p.startswith(prefix) for prefix in PRESERVED_PREFIXES)
-
 
 def norm(value):
     return str(PurePosixPath(str(value).replace("\\", "/").lstrip("/")))
@@ -286,9 +264,6 @@ def full_hash_scan(manifest, profile):
         target = GAME_ROOT / Path(rel)
         if not target.is_file():
             missing.append(rel)
-        elif is_user_config(rel):
-            # Install the default config when missing, then preserve user edits.
-            current.append(rel)
         elif sha256_file(target).lower() == wanted:
             current.append(rel)
         else:
@@ -321,12 +296,6 @@ def download_one(rel, wanted_hash, control=None, progress_callback=None):
     from download_tools import downloader
 
     destination = GAME_ROOT / Path(rel)
-
-    # UserConfig.cfg is downloaded only when missing. Existing user edits win.
-    if is_user_config(rel) and destination.is_file():
-        print(f"[preserved user config] {rel}")
-        return
-
     destination.parent.mkdir(parents=True, exist_ok=True)
     info = resolve_remote(rel)
 
@@ -354,13 +323,6 @@ def download_one(rel, wanted_hash, control=None, progress_callback=None):
         raise RuntimeError(f"Download failed/cancelled: {rel}")
 
     result = Path(result)
-
-    if is_user_config(rel):
-        # Install the default once, but never treat it as immutable payload.
-        # After this point the user may edit it freely.
-        print(f"[installed user config] {rel}")
-        return
-
     actual = sha256_file(result)
     if actual.lower() != wanted_hash.lower():
         bad = result.with_name(result.name + ".bad")
@@ -395,9 +357,6 @@ def apply_deleted(remote_manifest, profile):
     for rel in remote_manifest.get("deleted", []):
         rel = norm(rel)
         if not applies(rel, profile):
-            continue
-        if is_preserved_from_delete(rel):
-            print(f"[preserved] {rel}")
             continue
         target = GAME_ROOT / Path(rel)
         # Never recursively delete arbitrary directories.
@@ -448,9 +407,7 @@ def update_release(local_manifest, remote_manifest, remote_version_data,
     for rel in candidates:
         target = GAME_ROOT / Path(rel)
         wanted = managed[rel]
-        if is_user_config(rel) and target.is_file():
-            already_new.append(rel)
-        elif target.is_file() and sha256_file(target).lower() == wanted:
+        if target.is_file() and sha256_file(target).lower() == wanted:
             already_new.append(rel)
         else:
             needed.append(rel)
@@ -472,8 +429,6 @@ def update_release(local_manifest, remote_manifest, remote_version_data,
         target = GAME_ROOT / Path(rel)
         if not target.is_file():
             raise RuntimeError(f"Final verification: missing {rel}")
-        if is_user_config(rel):
-            continue
         if sha256_file(target).lower() != managed[rel]:
             raise RuntimeError(f"Final verification failed: {rel}")
 
@@ -542,10 +497,6 @@ def recover_from_remote_manifest(remote_manifest, remote_version_data,
         target = GAME_ROOT / Path(rel)
         if not target.is_file():
             raise RuntimeError(f"Recovery verification: missing {rel}")
-        if is_user_config(rel):
-            # UserConfig is install-once. Presence is enough; from now on it is
-            # user-owned and must never be SHA-verified or overwritten.
-            continue
         if sha256_file(target).lower() != managed[rel]:
             raise RuntimeError(f"Recovery verification failed: {rel}")
 
@@ -567,7 +518,7 @@ def recover_from_remote_manifest(remote_manifest, remote_version_data,
     }
 
 
-def check_and_update(profile=FULL, control=None, progress_callback=None):
+def check_and_update(profile=FULL, control=None, progress_callback=None, check_only=False):
     print("=" * 72)
     print(" Q3Elite updater — Step 18.1")
     print("=" * 72)
@@ -598,6 +549,22 @@ def check_and_update(profile=FULL, control=None, progress_callback=None):
 
     print(f"Local version:  {local_version or '<missing/invalid>'}")
     print(f"Remote version: {remote_version}")
+
+    # Status checks must not repair or download game files. The launcher uses
+    # this path when automatic Q3Elite updates are disabled, so HOME can still
+    # show the remote version and the player can decide when to update.
+    if check_only:
+        is_available = local_version != remote_version
+        status = "update_available" if is_available else "current"
+        print("\nUpdate available; automatic download is disabled." if is_available else "\nVersion is current.")
+        return {
+            "status": status,
+            "update_available": is_available,
+            "from_version": local_version,
+            "to_version": remote_version,
+            "downloaded": [],
+            "deleted": [],
+        }
 
     # FAST PATH: valid local manifest + same version.
     if local_manifest is not None and local_version == remote_version:
