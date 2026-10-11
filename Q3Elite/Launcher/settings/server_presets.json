@@ -1,0 +1,294 @@
+[
+  {
+    "id": "meat_ru",
+    "name": "Meat",
+    "address": "92.38.139.65:7700",
+    "regions": [
+      "ru"
+    ],
+    "route_label": "MSK",
+    "preset_id": "meat"
+  },
+  {
+    "id": "meat_en",
+    "name": "Meat",
+    "address": "57.128.201.189:7703",
+    "regions": [
+      "en"
+    ],
+    "route_label": "PL Proxy",
+    "preset_id": "meat"
+  },
+  {
+    "id": "freeze_ru",
+    "name": "Freeze",
+    "address": "92.38.139.65:27977",
+    "regions": [
+      "ru"
+    ],
+    "route_label": "MSK",
+    "preset_id": "freeze"
+  },
+  {
+    "id": "freeze_en",
+    "name": "Freeze",
+    "address": "57.128.201.189:773",
+    "regions": [
+      "en"
+    ],
+    "route_label": "PL Proxy",
+    "preset_id": "freeze"
+  },
+  {
+    "id": "ctf_en",
+    "name": "CTF",
+    "address": "199.247.5.0:27960",
+    "regions": [
+      "en"
+    ],
+    "route_label": "DE",
+    "preset_id": "ctf"
+  },
+  {
+    "id": "ctf_ru",
+    "name": "CTF",
+    "address": "92.38.139.65:777",
+    "regions": [
+      "ru"
+    ],
+    "route_label": "RU Proxy",
+    "preset_id": "ctf"
+  },
+  {
+    "id": "ca_en",
+    "name": "Clan Arena",
+    "address": "57.128.201.189:27960",
+    "regions": [
+      "en"
+    ],
+    "route_label": "PL",
+    "preset_id": "ca"
+  },
+  {
+    "id": "ca_ru",
+    "name": "Clan Arena",
+    "address": "92.38.139.65:999",
+    "regions": [
+      "ru"
+    ],
+    "route_label": "RU Proxy",
+    "preset_id": "ca"
+  },
+  {
+    "id": "ca_t1_en",
+    "name": "Clan Arena Tournament #1",
+    "address": "57.128.201.189:27961",
+    "regions": [
+      "en"
+    ],
+    "route_label": "PL",
+    "preset_id": "ca_t1"
+  },
+  {
+    "id": "ca_t1_ru",
+    "name": "Clan Arena Tournament #1",
+    "address": "92.38.139.65:9991",
+    "regions": [
+      "ru"
+    ],
+    "route_label": "RU Proxy",
+    "preset_id": "ca_t1"
+  },
+  {
+    "id": "ca_t2_en",
+    "name": "Clan Arena Tournament #2",
+    "address": "57.128.201.189:27962",
+    "regions": [
+      "en"
+    ],
+    "route_label": "PL",
+    "preset_id": "ca_t2"
+  },
+  {
+    "id": "ca_t2_ru",
+    "name": "Clan Arena Tournament #2",
+    "address": "92.38.139.65:9992",
+    "regions": [
+      "ru"
+    ],
+    "route_label": "RU Proxy",
+    "preset_id": "ca_t2"
+  },
+  {
+    "id": "ca_t3_en",
+    "name": "Clan Arena Tournament #3",
+    "address": "57.128.201.189:27963",
+    "regions": [
+      "en"
+    ],
+    "route_label": "PL",
+    "preset_id": "ca_t3"
+  },
+  {
+    "id": "ca_t3_ru",
+    "name": "Clan Arena Tournament #3",
+    "address": "92.38.139.65:9993",
+    "regions": [
+      "ru"
+    ],
+    "route_label": "RU Proxy",
+    "preset_id": "ca_t3"
+  },
+  {
+    "id": "duel1_ru",
+    "name": "Duel #1",
+    "address": "92.38.139.65:27961",
+    "regions": [
+      "ru"
+    ],
+    "route_label": "MSK",
+    "preset_id": "duel1"
+  },
+  {
+    "id": "duel1_en",
+    "name": "Duel #1",
+    "address": "57.128.201.189:61",
+    "regions": [
+      "en"
+    ],
+    "route_label": "PL Proxy",
+    "preset_id": "duel1"
+  },
+  {
+    "id": "duel2_ru",
+    "name": "Duel #2",
+    "address": "92.38.139.65:27962",
+    "regions": [
+      "ru"
+    ],
+    "route_label": "MSK",
+    "preset_id": "duel2"
+  },
+  {
+    "id": "duel2_en",
+    "name": "Duel #2",
+    "address": "57.128.201.189:62",
+    "regions": [
+      "en"
+    ],
+    "route_label": "PL Proxy",
+    "preset_id": "duel2"
+  },
+  {
+    "id": "duel3_ru",
+    "name": "Duel #3",
+    "address": "92.38.139.65:27963",
+    "regions": [
+      "ru"
+    ],
+    "route_label": "MSK",
+    "preset_id": "duel3"
+  },
+  {
+    "id": "duel3_en",
+    "name": "Duel #3",
+    "address": "57.128.201.189:63",
+    "regions": [
+      "en"
+    ],
+    "route_label": "PL Proxy",
+    "preset_id": "duel3"
+  },
+  {
+    "id": "aim1v1_ru",
+    "name": "Aim 1v1",
+    "address": "92.38.139.65:55555",
+    "regions": [
+      "ru"
+    ],
+    "route_label": "MSK",
+    "preset_id": "aim1v1"
+  },
+  {
+    "id": "aim1v1_en",
+    "name": "Aim 1v1",
+    "address": "57.128.201.189:55555",
+    "regions": [
+      "en"
+    ],
+    "route_label": "PL Proxy",
+    "preset_id": "aim1v1"
+  },
+  {
+    "id": "training_ru",
+    "name": "Training",
+    "address": "92.38.139.65:29000",
+    "regions": [
+      "ru"
+    ],
+    "route_label": "MSK",
+    "preset_id": "training"
+  },
+  {
+    "id": "training_en",
+    "name": "Training",
+    "address": "57.128.201.189:29000",
+    "regions": [
+      "en"
+    ],
+    "route_label": "PL Proxy",
+    "preset_id": "training"
+  },
+  {
+    "id": "q3msk_aim_ru",
+    "name": "Q3MSK AIM",
+    "address": "92.38.139.65:27964",
+    "regions": [
+      "ru"
+    ],
+    "route_label": "MSK",
+    "preset_id": "q3msk_aim"
+  },
+  {
+    "id": "q3msk_aim_en",
+    "name": "Q3MSK AIM",
+    "address": "57.128.201.189:64",
+    "regions": [
+      "en"
+    ],
+    "route_label": "PL Proxy",
+    "preset_id": "q3msk_aim"
+  },
+  {
+    "id": "q3aspace_ru",
+    "name": "Q3A.Space",
+    "address": "5.188.224.180:27960",
+    "regions": [
+      "ru"
+    ],
+    "route_label": "MSK",
+    "preset_id": "q3aspace"
+  },
+  {
+    "id": "q3aspace_en",
+    "name": "Q3A.Space",
+    "address": "13.143.241.36:27960",
+    "regions": [
+      "en"
+    ],
+    "route_label": "PL Proxy",
+    "preset_id": "q3aspace"
+  },
+  {
+    "id": "freeze_eu_shared",
+    "name": "Freeze EU",
+    "address": "45.76.87.87:27960",
+    "regions": [
+      "en",
+      "ru"
+    ],
+    "route_label": "EU/RU Proxy",
+    "shared": true,
+    "preset_id": "freeze_eu"
+  }
+]

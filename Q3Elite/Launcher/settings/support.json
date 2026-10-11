@@ -1,0 +1,25 @@
+{
+  "fallback_motd": "Frag now, debug later. 🙃",
+  "methods": {
+    "trc20": {
+      "label": "TRC20",
+      "value": "TCEUQ6fxVVDL23QeXXR5m3zQ2GHcLtNSwP",
+      "kind": "copy"
+    },
+    "ton": {
+      "label": "TON",
+      "value": "UQCe1bNgQpOMjQH-jr8Inu2TVRNOaMEdOJ-R_Q5n-oB2Vkvu",
+      "kind": "copy"
+    },
+    "paypal": {
+      "label": "PayPal",
+      "value": "https://www.paypal.com/paypalme/Mus1n",
+      "kind": "url"
+    },
+    "dalink": {
+      "label": "DA.link",
+      "value": "https://dalink.to/mus1n",
+      "kind": "url"
+    }
+  }
+}
