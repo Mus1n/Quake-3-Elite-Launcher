@@ -176,6 +176,7 @@ QFrame#navIndicator {
 }
 
 QPushButton#navButton {
+    border-radius: {{layout.nav_button}}px;
     min-width: {{layout.nav_button}}px;
     max-width: {{layout.nav_button}}px;
     min-height: {{layout.nav_button}}px;
@@ -230,6 +231,27 @@ QPushButton#closeButton:hover {
     background: {{colors.semantic.danger_soft}};
     border-color: rgba(229, 76, 76, 85);
     color: {{colors.semantic.danger}};
+}
+
+/* Icon-only support/donation action: preserve contrast in both palettes. */
+QPushButton#iconButton {
+    min-width: 34px;
+    max-width: 34px;
+    min-height: 34px;
+    max-height: 34px;
+    padding: 0;
+    border-radius: 17px;
+    border: 1px solid {{colors.border.normal}};
+    background: {{colors.surface.card}};
+    color: {{colors.text.primary}};
+}
+QPushButton#iconButton:hover {
+    background: {{colors.surface.hover}};
+    border-color: {{colors.border.strong}};
+    color: {{colors.text.primary}};
+}
+QPushButton#iconButton:pressed {
+    background: {{colors.surface.pressed}};
 }
 
 /* =====================================================================
@@ -3037,4 +3059,98 @@ QWidget#matchmakingScrollBody {
         stop:1 {{colors.surface.void}}
     );
     border: none;
+}
+
+
+/* Final sidebar-state override: keep Paper hover/selection pill-shaped. */
+QPushButton#navButton,
+QPushButton#navButton:hover,
+QPushButton#navButton:checked,
+QPushButton#navButton:pressed,
+QPushButton#navButton:focus {
+    border-radius: 13px;
+    outline: none;
+}
+QFrame#navIndicator {
+    border-radius: 13px;
+    border: none;
+}
+
+
+/* V23.1: remove per-cell focus edges that look like vertical stripes. */
+QTableWidget#mapsTable::item,
+QTableWidget#mapsTable::item:selected,
+QTableWidget#mapsTable::item:focus { border: none; outline: none; }
+
+
+/* V6.2: dedicated support button selector, independent of utility icon buttons. */
+QPushButton#supportButton,
+QPushButton#supportButton:focus {
+    background: rgba(18, 18, 20, 220);
+    color: #F2F2F2;
+    border: 1px solid rgba(255,255,255,42);
+    border-radius: 17px;
+}
+QPushButton#supportButton:hover {
+    background: rgba(42, 42, 46, 235);
+    border-color: rgba(255,255,255,90);
+}
+QPushButton#supportButton:pressed {
+    background: rgba(8, 8, 10, 240);
+}
+
+
+/* V6.8 geometry-only override: Donation keeps navButton colors and states. */
+QPushButton#navButton[q3SupportCompact="true"],
+QPushButton#navButton[q3SupportCompact="true"]:hover,
+QPushButton#navButton[q3SupportCompact="true"]:checked,
+QPushButton#navButton[q3SupportCompact="true"]:pressed,
+QPushButton#navButton[q3SupportCompact="true"]:focus {
+    min-width: 40px; max-width: 40px;
+    min-height: 40px; max-height: 40px;
+    border-radius: 11px;
+}
+
+/* V6.8.7: Dedicated Donation button — preserve Steel's dark treatment. */
+QPushButton#donationButton,
+QPushButton#donationButton:focus {
+    min-width: 40px;
+    max-width: 40px;
+    min-height: 40px;
+    max-height: 40px;
+    padding: 0;
+    border-radius: 11px;
+    border: 1px solid rgba(255,255,255,42);
+    background: rgba(18,18,20,220);
+    color: #FFFFFF;
+    outline: none;
+}
+QPushButton#donationButton:hover {
+    border-radius: 11px;
+    border-color: rgba(255,255,255,90);
+    background: rgba(42,42,46,235);
+    color: #FFFFFF;
+}
+QPushButton#donationButton:pressed {
+    border-radius: 11px;
+    background: rgba(8,8,10,240);
+    color: #FFFFFF;
+}
+
+
+/* V6.9.9: Sidebar has no frame line; its custom painter follows shell corners. */
+QFrame#sidebar {
+    border: none;
+}
+
+
+/* V6.10.0: Donation control has no QSS outline/background. */
+QPushButton#donationButton,
+QPushButton#donationButton:hover,
+QPushButton#donationButton:pressed,
+QPushButton#donationButton:focus {
+    background: transparent;
+    border: none;
+    outline: none;
+    padding: 0;
 }

@@ -23,7 +23,7 @@ from base_methods import BASEQ3_DIR, Q3ELITE_LAUNCHER_DATA_DIR
 # The state file is updated ONLY after a successful download/install.
 # ============================================================================
 
-GITHUB_REPO = "scoqx/osp2-be"
+GITHUB_REPO = "scoqx/OSP2-BE"
 
 # OSP2-BE deliberately uses a release named "latest", so the release tag
 # itself is NOT the real mod version. The real version is maintained in

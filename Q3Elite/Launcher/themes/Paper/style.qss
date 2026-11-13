@@ -176,6 +176,7 @@ QFrame#navIndicator {
 }
 
 QPushButton#navButton {
+    border-radius: {{layout.nav_button}}px;
     min-width: {{layout.nav_button}}px;
     max-width: {{layout.nav_button}}px;
     min-height: {{layout.nav_button}}px;
@@ -3201,4 +3202,158 @@ QPushButton#changelogLinkButton:hover {
 /* V22.3 compatibility: dark-only material backdrops remain neutral in paper. */
 QFrame#changelogWebBackdrop {
     border-radius: {{radius.lg}}px;
+}
+
+
+/* Final sidebar-state override: keep Paper hover/selection pill-shaped. */
+QPushButton#navButton,
+QPushButton#navButton:hover,
+QPushButton#navButton:checked,
+QPushButton#navButton:pressed,
+QPushButton#navButton:focus {
+    border-radius: 13px;
+    outline: none;
+}
+QFrame#navIndicator {
+    border-radius: 13px;
+    border: none;
+}
+
+
+/* V23.1: paper rail buttons use the same circular silhouette as Steel. */
+QPushButton#navButton,
+QPushButton#navButton:hover,
+QPushButton#navButton:checked,
+QPushButton#navButton:pressed,
+QPushButton#navButton:focus { border-radius: 26px; outline: none; }
+QFrame#navIndicator { border-radius: 26px; border: none; }
+
+/* Prevent bottom edge clipping on server connect buttons in card layouts. */
+QFrame#serverCard QPushButton#serverConnectButton,
+QPushButton#serverConnectButton {
+    border-bottom: 1px solid {{colors.border.default}};
+    margin-bottom: 2px;
+    padding-bottom: 1px;
+}
+QFrame#serverCard QPushButton#serverConnectButton:hover,
+QPushButton#serverConnectButton:hover {
+    border-bottom: 1px solid {{colors.border.hover}};
+}
+
+/* Remove cell-level focus edges. */
+QTableWidget#mapsTable::item,
+QTableWidget#mapsTable::item:selected,
+QTableWidget#mapsTable::item:focus { border: none; outline: none; }
+
+
+/* V24: runtime theme-switch hardening — circular rail buttons in every state. */
+QPushButton#navButton,
+QPushButton#navButton:hover,
+QPushButton#navButton:checked,
+QPushButton#navButton:pressed,
+QPushButton#navButton:focus,
+QPushButton#navButton:disabled {
+    border-radius: 24px;
+    outline: none;
+}
+QPushButton#iconButton,
+QPushButton#iconButton:hover,
+QPushButton#iconButton:pressed,
+QPushButton#iconButton:focus {
+    border-radius: 17px;
+    outline: none;
+}
+
+
+/* V6.8 geometry-only override: Donation keeps navButton colors and states. */
+QPushButton#navButton[q3SupportCompact="true"],
+QPushButton#navButton[q3SupportCompact="true"]:hover,
+QPushButton#navButton[q3SupportCompact="true"]:checked,
+QPushButton#navButton[q3SupportCompact="true"]:pressed,
+QPushButton#navButton[q3SupportCompact="true"]:focus {
+    min-width: 34px; max-width: 34px;
+    min-height: 34px; max-height: 34px;
+    border-radius: 9px;
+}
+
+
+/* V6.8.5: Donation hover/pressed/focus geometry must stay rounded-square. */
+QPushButton#navButton[q3SupportCompact="true"],
+QPushButton#navButton[q3SupportCompact="true"]:hover,
+QPushButton#navButton[q3SupportCompact="true"]:pressed,
+QPushButton#navButton[q3SupportCompact="true"]:checked,
+QPushButton#navButton[q3SupportCompact="true"]:focus,
+QPushButton#navButton[q3SupportCompact="true"]:disabled {
+    min-width: 34px;
+    max-width: 34px;
+    min-height: 34px;
+    max-height: 34px;
+    border-radius: 9px;
+    outline: none;
+}
+
+/* V6.8.7: Dedicated Donation button — warm red heart on Paper. */
+QPushButton#donationButton,
+QPushButton#donationButton:focus {
+    min-width: 34px;
+    max-width: 34px;
+    min-height: 34px;
+    max-height: 34px;
+    padding: 0;
+    border-radius: 9px;
+    border: 1px solid #E8D5D8;
+    background: #FFF9FA;
+    color: #D94B5B;
+    outline: none;
+}
+QPushButton#donationButton:hover {
+    border-radius: 9px;
+    border-color: #E7A6AF;
+    background: #FCEBED;
+    color: #C93649;
+}
+QPushButton#donationButton:pressed {
+    border-radius: 9px;
+    border-color: #D98591;
+    background: #F6DADD;
+    color: #B92D40;
+}
+QPushButton#donationButton:disabled {
+    border-radius: 9px;
+    background: #F7F3F4;
+    border-color: #E9E2E3;
+    color: #C9AEB2;
+}
+
+
+/* V6.8.9: Donation surface is painted by MaterialPushButton, not QSS. */
+QPushButton#donationButton {
+    background: transparent;
+    border: none;
+    padding: 0;
+}
+QPushButton#donationButton:hover,
+QPushButton#donationButton:pressed,
+QPushButton#donationButton:focus {
+    background: transparent;
+    border: none;
+    outline: none;
+}
+
+
+/* V6.9.9: Sidebar has no frame line; its custom painter follows shell corners. */
+QFrame#sidebar {
+    border: none;
+}
+
+
+/* V6.10.0: Donation control has no QSS outline/background. */
+QPushButton#donationButton,
+QPushButton#donationButton:hover,
+QPushButton#donationButton:pressed,
+QPushButton#donationButton:focus {
+    background: transparent;
+    border: none;
+    outline: none;
+    padding: 0;
 }
