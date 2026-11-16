@@ -98,6 +98,20 @@ class ThemeManager(QtCore.QObject):
     def reload(self):
         try:
             self.apply()
+            # QApplication.setStyleSheet normally propagates QSS changes, but
+            # custom widgets and dynamic properties can retain stale polished
+            # state after switching themes. Re-polish every live widget once.
+            for top in self.app.topLevelWidgets():
+                widgets = [top, *top.findChildren(QtWidgets.QWidget)]
+                for widget in widgets:
+                    try:
+                        style = widget.style()
+                        style.unpolish(widget)
+                        style.polish(widget)
+                        widget.updateGeometry()
+                        widget.update()
+                    except (RuntimeError, AttributeError):
+                        pass
             self.themeReloaded.emit()
             print(f"[ui] Theme reloaded: {self.theme_name}")
         except Exception as error:

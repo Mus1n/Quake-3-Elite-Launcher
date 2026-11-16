@@ -25,6 +25,7 @@ from pathlib import Path, PurePosixPath
 import pcloud_q3elite as pcloud
 import q3elite_music as music
 from download_tools import DownloadControl, downloader
+import network_proxy
 
 ROOT = pcloud.ROOT
 APPDATA = Path(os.environ.get("APPDATA", Path.home()))
@@ -128,7 +129,7 @@ def fetch_json(remote):
     info = pcloud.resolve(pcloud.remote_for(remote))
     import urllib.request
     req = urllib.request.Request(info["url"], headers={"User-Agent": "Q3Elite-18B"})
-    with urllib.request.urlopen(req, timeout=30) as r:
+    with network_proxy.open_url(req, timeout=30) as r:
         return json.loads(r.read().decode("utf-8-sig"))
 
 

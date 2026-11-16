@@ -3,6 +3,7 @@ setlocal
 
 set "PYTHON=%APPDATA%\Python\venv\Scripts\python.exe"
 set "Q3ELITE_UI_DEV=1"
+set "Q3ELITE_PROFILE=1"
 
 rem Works whether this BAT is placed in Launcher\modules or Launcher itself.
 if exist "%~dp0launch.pyw" (

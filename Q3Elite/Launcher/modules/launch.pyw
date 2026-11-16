@@ -3,6 +3,10 @@ import platform
 import sqlite3
 from concurrent.futures import ThreadPoolExecutor
 import sys
+
+# Profiling is opt-in only through Q3Elite_Launch_Debug.bat.
+# --ui-dev remains responsible for UI/theme development, not profiling.
+_Q3_PROFILE_ENABLED = os.environ.get("Q3ELITE_PROFILE", "").strip() == "1"
 import traceback
 import shutil
 import json
@@ -14,6 +18,7 @@ import urllib.request
 import http.cookiejar
 import zipfile
 import time
+_Q3_IMPORT_T0 = time.perf_counter()
 import uuid
 import subprocess
 import threading
@@ -22,6 +27,7 @@ import contextlib
 import csv
 import datetime
 import hashlib
+import html as _html
 import configparser
 from collections import OrderedDict, deque
 
@@ -44,10 +50,22 @@ if os.name == "nt":
             _q3_chromium_flags = (_q3_chromium_flags + " " + _flag).strip()
     os.environ["QTWEBENGINE_CHROMIUM_FLAGS"] = _q3_chromium_flags
 
-try:
-    from PyQt6 import QtMultimedia
-except Exception:
-    QtMultimedia = None
+QtMultimedia = None
+_Q3_QTMULTIMEDIA_CHECKED = False
+
+def _ensure_qtmultimedia():
+    """Load QtMultimedia on first actual sound use, not during launcher boot."""
+    global QtMultimedia, _Q3_QTMULTIMEDIA_CHECKED
+    if _Q3_QTMULTIMEDIA_CHECKED:
+        return QtMultimedia
+    _Q3_QTMULTIMEDIA_CHECKED = True
+    try:
+        from PyQt6 import QtMultimedia as _QtMultimedia
+        QtMultimedia = _QtMultimedia
+    except Exception as error:
+        QtMultimedia = None
+        print(f"[startup] QtMultimedia unavailable: {error}")
+    return QtMultimedia
 
 try:
     from PyQt6.QtWebEngineWidgets import QWebEngineView
@@ -73,10 +91,20 @@ try:
 except Exception:
     pywinstyles = None
 
-try:
-    from PIL import Image as PILImage
-except Exception:
-    PILImage = None
+PILImage = None
+_Q3_PIL_CHECKED = False
+
+def _ensure_pil_image():
+    global PILImage, _Q3_PIL_CHECKED
+    if _Q3_PIL_CHECKED:
+        return PILImage
+    _Q3_PIL_CHECKED = True
+    try:
+        from PIL import Image as _PILImage
+        PILImage = _PILImage
+    except Exception:
+        PILImage = None
+    return PILImage
 
 
 # ============================================================================
@@ -327,6 +355,8 @@ os.chdir(LAUNCHER_DIR)
 # ============================================================================
 # Q3ELITE MODULES
 # ============================================================================
+# v13 performance pass: lazy server-player tables, batched Matchmaking build
+# turns, and duplicate screenshot preview decode suppression.
 
 import download_tools as dt
 import q3elite_components as q3components
@@ -1145,79 +1175,38 @@ class PostInstallUpdate(QtCore.QThread):
 
     result_ready = pyqtSignal(bool)
     offline = pyqtSignal(str)
+    update_checked = pyqtSignal(object)
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._force_update = False
+
+    def set_force_update(self, enabled=True):
+        self._force_update = bool(enabled)
 
     def run(self):
-
-        osp_file = (
-            BASEQ3_DIR
-            / "mods"
-            / "osp"
-            / "zz-osp-pak8be.pk3"
-        )
-
+        osp_file = BASEQ3_DIR / "mods" / "osp" / "zz-osp-pak8be.pk3"
         try:
-            if not launcher_settings.get("auto_update_osp", True):
-                print("[settings] Automatic OSP2-BE update is disabled.")
-                self.result_ready.emit(True)
-                return
-
-            installation_status_callback(
-                "stage", text="Checking OSP2-BE…", kind="working", key="osp"
-            )
-            print()
-            print("========================================")
-            print(" Checking OSP2-BE")
-            print("========================================")
-            print()
-
-            if osp_file.is_file():
-                print(f"Installed file: {osp_file}")
-            else:
-                print(f"OSP2-BE file is missing: {osp_file}")
-
-            result = check_and_update_osp()
-
-            print()
-            print(
-                "OSP2-BE status: "
-                f"{result['action']}"
-            )
-
-            if osp_file.is_file():
-                print(f"OSP2-BE verified: {osp_file}")
-            else:
-                print("[warning] OSP2-BE is still missing.")
-                print(
-                    "PLAY remains available; repair will be "
-                    "retried when online."
-                )
-
-            installation_status_callback(
-                "stage", text="OSP2-BE check complete", kind="ok", key="osp"
-            )
-            print()
-            print("========================================")
-            print(" OSP2-BE check complete")
-            print("========================================")
-            print()
-
+            auto_install = bool(launcher_settings.get("auto_update_osp", True))
+            if not auto_install and not self._force_update:
+                print("[settings] Automatic OSP2-BE download is disabled; checking availability only.")
+            installation_status_callback("stage", text="Checking OSP2-BE…", kind="working", key="osp")
+            result = check_and_update_osp(force=self._force_update, auto_install=auto_install,
+                                          control=download_control,
+                                          progress_callback=download_progress_callback,
+                                          status_callback=installation_status_callback)
+            self.update_checked.emit(result)
+            action = result.get("action", "unknown")
+            print(f"OSP2-BE status: {action}")
+            installation_status_callback("stage", text=f"OSP2-BE {action}", kind="ok", key="osp")
+            self._force_update = False
             self.result_ready.emit(True)
-
         except Exception as error:
-            installation_status_callback(
-                "stage", text="OSP2-BE update service is unavailable", kind="warning", key="osp"
-            )
-            # OSP2-BE is optional for launching the engine. A network/update
-            # failure must therefore not brick an otherwise valid installation.
-            print()
-            print(
-                f"[offline] OSP2-BE update check unavailable: "
-                f"{error}"
-            )
-            print("Continuing without blocking PLAY.")
-            print()
-
+            self.update_checked.emit({"status": "offline", "update_available": None, "error": str(error)})
+            installation_status_callback("stage", text="OSP2-BE version check unavailable", kind="warning", key="osp")
+            print(f"[offline] OSP2-BE update check unavailable: {error}")
             self.offline.emit(str(error))
+            self._force_update = False
             self.result_ready.emit(True)
 
 
@@ -1565,6 +1554,89 @@ def read_launcher_metadata():
 
 
 CHANGELOG_FILE = LAUNCHER_DIR / "Changelog.json"
+CHANGELOG_STATE_FILE = LAUNCHER_DATA_DIR / "changelog_state.json"
+# Persistent archive of launcher releases observed in Launcher_Version.json.
+# This keeps older launcher versions visible after the remote version file is updated.
+LAUNCHER_CHANGELOG_HISTORY_FILE = LAUNCHER_DATA_DIR / "launcher_changelog_history.json"
+# Persistent archive of Q3Elite releases observed in %ROOT%/Q3Elite/Version.json.
+Q3ELITE_CHANGELOG_HISTORY_FILE = LAUNCHER_DATA_DIR / "q3elite_changelog_history.json"
+Q3ELITE_VERSION_FILE = GAME_ROOT / "Q3Elite" / "Version.json"
+
+
+def _changelog_version_key(value):
+    """Return a numeric comparison key for versions such as 1.05 or v1.06."""
+    text = str(value or "").strip()
+    match = re.search(r"\d+(?:\.\d+)*", text)
+    if not match:
+        return None
+    try:
+        parts = [int(part) for part in match.group(0).split(".")]
+        while len(parts) > 1 and parts[-1] == 0:
+            parts.pop()
+        return tuple(parts)
+    except ValueError:
+        return None
+
+
+def _latest_changelog_version(entries, track=None):
+    """Pick the highest version from one independent release track."""
+    aliases = {
+        "launcher": {"launcher", "changelog"},
+        "q3elite": {"q3elite", "quake 3 news", "quake3 news", "quake 3 elite"},
+    }
+    candidates = []
+    for entry in entries or []:
+        if not isinstance(entry, dict):
+            continue
+        if track:
+            entry_type = str(entry.get("type", "") or "").strip().casefold()
+            if entry_type not in aliases.get(track, {str(track).casefold()}):
+                continue
+        value = str(entry.get("version", "") or "").strip()
+        key = _changelog_version_key(value)
+        if value and value not in ("?", "—", "-") and key is not None:
+            candidates.append((key, value, entry))
+    if candidates:
+        return max(candidates, key=lambda item: item[0])[1]
+    if not track:
+        return ""
+    # Versioned tracks are expected in Changelog.json; do not borrow another
+    # track's version when this one is absent.
+    return ""
+
+
+def _load_notification_state():
+    try:
+        if CHANGELOG_STATE_FILE.is_file():
+            raw = json.loads(CHANGELOG_STATE_FILE.read_text(encoding="utf-8"))
+            if isinstance(raw, dict):
+                state = dict(raw)
+                versions = dict(state.get("last_read_versions", {}) or {})
+                # The old last_read_version mixed multiple entry types, so it
+                # cannot safely be assigned to either independent version track.
+                state["last_read_versions"] = versions
+                return state
+    except Exception as error:
+        print(f"[changelog] Could not read notification state: {error}")
+    return {"last_read_versions": {}}
+
+
+def _save_notification_state(state):
+    try:
+        CHANGELOG_STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
+        CHANGELOG_STATE_FILE.write_text(json.dumps(state, indent=2), encoding="utf-8")
+    except Exception as error:
+        print(f"[changelog] Could not save notification state: {error}")
+
+
+def _version_is_unread(latest, last_read):
+    if not latest:
+        return False
+    if not last_read:
+        return False
+    latest_key = _changelog_version_key(latest)
+    read_key = _changelog_version_key(last_read)
+    return latest_key > read_key if latest_key is not None and read_key is not None else latest != last_read
 
 
 def _html_escape(value):
@@ -1719,6 +1791,22 @@ def _store_telegram_cached_post(url, data):
         pass
 
 
+def _telegram_forget_cached_post(url):
+    """Remove one Telegram post from the in-memory and disk cache."""
+    value = str(url or "").strip()
+    if not value:
+        return
+    try:
+        with _TELEGRAM_POST_CACHE_LOCK:
+            _TELEGRAM_POST_CACHE.pop(value, None)
+    except Exception:
+        pass
+    try:
+        _telegram_cache_path(value).unlink(missing_ok=True)
+    except OSError:
+        pass
+
+
 def _telegram_public_post_data(url):
     """Best-effort extraction of text + media from a Telegram public post."""
     value = str(url or "").strip()
@@ -1776,7 +1864,6 @@ def _telegram_public_post_data(url):
                 raise last_error
             return {}
 
-        import html as _html
         result = {}
 
         # Narrow to the requested message when possible, so neighbouring /s/
@@ -1927,7 +2014,7 @@ def _telegram_channel_post_urls(channel="Q3News", before=None, limit=2):
 
     Telegram's public /s/ channel page contains data-post="channel/id" markers.
     `before` asks that public page for older messages. The launcher only keeps
-    public post URLs here; the existing Telegram renderer/cache loads content.
+    public post URLs and published timestamps here; the existing Telegram renderer/cache loads content.
     """
     channel = re.sub(r"[^A-Za-z0-9_]", "", str(channel or "Q3News")) or "Q3News"
     limit = max(1, min(12, int(limit or 2)))
@@ -1948,38 +2035,207 @@ def _telegram_channel_post_urls(channel="Q3News", before=None, limit=2):
     with urllib.request.urlopen(request, timeout=14) as response:
         html_text = response.read().decode("utf-8", errors="replace")
     escaped = re.escape(channel)
-    raw_ids = re.findall(rf"""data-post=["']{escaped}/(\d+)["']""", html_text, flags=re.I)
-    if not raw_ids:
-        raw_ids = re.findall(rf"https?://t\.me/{escaped}/(\d+)", html_text, flags=re.I)
-    ids = sorted({int(value) for value in raw_ids if str(value).isdigit()})
+    post_matches = list(re.finditer(rf"""data-post=["']{escaped}/(\d+)["']""", html_text, flags=re.I))
+    if not post_matches:
+        post_matches = list(re.finditer(rf"https?://t\.me/{escaped}/(\d+)", html_text, flags=re.I))
+    post_dates = {}
+    for index, match in enumerate(post_matches):
+        post_id = int(match.group(1))
+        segment_end = post_matches[index + 1].start() if index + 1 < len(post_matches) else min(len(html_text), match.end() + 12000)
+        segment = html_text[match.start():segment_end]
+        date_match = re.search(r'<time[^>]+datetime=["\']([^"\']+)', segment, flags=re.I)
+        if date_match:
+            post_dates[post_id] = date_match.group(1).strip()
+    ids = sorted({int(match.group(1)) for match in post_matches if str(match.group(1)).isdigit()})
     if before:
         try:
             ids = [value for value in ids if value < int(before)]
         except (TypeError, ValueError):
             pass
     ids = ids[-limit:]
-    return [{"id": value, "url": f"https://t.me/{channel}/{value}"} for value in ids]
+    return [{"id": value, "url": f"https://t.me/{channel}/{value}", "date": post_dates.get(value, "")} for value in ids]
+
+def _launcher_release_from_version_metadata():
+    """Convert the current Launcher_Version.json release into a changelog card."""
+    metadata = read_launcher_metadata()
+    raw = metadata.get("raw") if isinstance(metadata, dict) else None
+    if not isinstance(raw, dict):
+        return None
+
+    version = str(raw.get("version", raw.get("Version", metadata.get("version", ""))) or "").strip()
+    changes = raw.get("changelog", raw.get("changes", raw.get("notes", [])))
+    if isinstance(changes, str):
+        changes = [changes]
+    if not version or not isinstance(changes, list) or not changes:
+        return None
+
+    return {
+        "type": "Launcher",
+        "version": version,
+        "date": str(raw.get("date", raw.get("release_date", raw.get("published_at", ""))) or ""),
+        "changelog": [str(item) for item in changes if str(item).strip()],
+        "list": True,
+    }
+
+
+def _q3elite_release_from_version_metadata():
+    """Convert the installed Q3Elite Version.json release into a changelog card."""
+    try:
+        raw = json.loads(Q3ELITE_VERSION_FILE.read_text(encoding="utf-8"))
+    except (OSError, ValueError, TypeError) as error:
+        print(f"[changelog] Could not read Q3Elite Version.json: {error}")
+        return None
+    if not isinstance(raw, dict):
+        return None
+
+    version = str(raw.get("version", raw.get("Version", "")) or "").strip()
+    changes = raw.get("changelog", raw.get("changes", raw.get("notes", [])))
+    if isinstance(changes, str):
+        changes = [changes]
+    if not version or not isinstance(changes, list) or not changes:
+        return None
+
+    return {
+        "type": "Q3Elite",
+        "version": version,
+        "date": str(raw.get("date", raw.get("release_date", raw.get("published_at", ""))) or ""),
+        "update_type": str(raw.get("update_type", "") or ""),
+        "changelog": [str(item) for item in changes if str(item).strip()],
+        "list": True,
+    }
+
+
+def _load_q3elite_changelog_history():
+    try:
+        raw = json.loads(Q3ELITE_CHANGELOG_HISTORY_FILE.read_text(encoding="utf-8"))
+        if isinstance(raw, dict):
+            raw = raw.get("releases", [])
+        if isinstance(raw, list):
+            return [item for item in raw if isinstance(item, dict)]
+    except (OSError, ValueError, TypeError):
+        pass
+    return []
+
+
+def _save_q3elite_changelog_history(entries):
+    """Atomically persist observed Q3Elite releases outside the game install."""
+    try:
+        Q3ELITE_CHANGELOG_HISTORY_FILE.parent.mkdir(parents=True, exist_ok=True)
+        temp = Q3ELITE_CHANGELOG_HISTORY_FILE.with_suffix(".tmp")
+        temp.write_text(json.dumps({"releases": entries}, ensure_ascii=False, indent=2), encoding="utf-8")
+        temp.replace(Q3ELITE_CHANGELOG_HISTORY_FILE)
+    except OSError as error:
+        print(f"[changelog] Could not save Q3Elite release history: {error}")
+
+
+def _load_launcher_changelog_history():
+    try:
+        raw = json.loads(LAUNCHER_CHANGELOG_HISTORY_FILE.read_text(encoding="utf-8"))
+        if isinstance(raw, dict):
+            raw = raw.get("releases", [])
+        if isinstance(raw, list):
+            return [item for item in raw if isinstance(item, dict)]
+    except (OSError, ValueError, TypeError):
+        pass
+    return []
+
+
+def _save_launcher_changelog_history(entries):
+    """Atomically persist observed Launcher_Version releases outside install files."""
+    try:
+        LAUNCHER_CHANGELOG_HISTORY_FILE.parent.mkdir(parents=True, exist_ok=True)
+        temp = LAUNCHER_CHANGELOG_HISTORY_FILE.with_suffix(".tmp")
+        temp.write_text(json.dumps({"releases": entries}, ensure_ascii=False, indent=2), encoding="utf-8")
+        temp.replace(LAUNCHER_CHANGELOG_HISTORY_FILE)
+    except OSError as error:
+        print(f"[changelog] Could not save launcher release history: {error}")
+
 
 def read_changelog_entries():
     """
-    Changelog.json is the preferred rich feed. It may be:
-      - one JSON array of entries (recommended), or
-      - {"releases": [...]}.
-
-    Launcher_Version.json remains a fallback for backwards compatibility.
+    Merge the manually maintained Changelog.json with every Launcher_Version.json
+    release observed by this installation. Launcher release history is persisted
+    in AppData, so replacing Launcher_Version.json (for example 0.2 -> 0.21)
+    adds a new card without losing the previously observed 0.2 card.
     """
+    entries = []
     if CHANGELOG_FILE.is_file():
         try:
             raw = json.loads(CHANGELOG_FILE.read_text(encoding="utf-8"))
             if isinstance(raw, dict):
                 raw = raw.get("releases", raw.get("changelog", [raw]))
             if isinstance(raw, list):
-                return [item for item in raw if isinstance(item, dict)]
+                entries = [item for item in raw if isinstance(item, dict)]
         except Exception as error:
             print(f"[changelog] Could not read {CHANGELOG_FILE.name}: {error}")
+    else:
+        # Backwards-compatible launcher-only metadata when no rich feed exists.
+        entries = [item for item in sorted_launcher_releases() if isinstance(item, dict)]
 
-    # Backwards-compatible launcher-only metadata.
-    return sorted_launcher_releases()
+    history = _load_launcher_changelog_history()
+    current = _launcher_release_from_version_metadata()
+    observed = history + ([current] if current else [])
+
+    # Keep one launcher card per version. A manually authored Changelog.json
+    # entry wins over the generated Launcher_Version.json representation.
+    known = set()
+    for item in entries:
+        kind = re.sub(r"[^a-z0-9]", "", str(item.get("type", "")).casefold())
+        version = str(item.get("version", "")).strip().casefold()
+        if kind in {"launcher", "changelog"} and version:
+            known.add(version)
+
+    merged_history = []
+    for item in observed:
+        version = str(item.get("version", "")).strip()
+        key = version.casefold()
+        if not key or key in known:
+            continue
+        known.add(key)
+        merged_history.append(item)
+        entries.append(item)
+
+    if merged_history:
+        # Save all previously observed versions, including the current one.
+        history_by_version = {
+            str(item.get("version", "")).strip().casefold(): item
+            for item in history if str(item.get("version", "")).strip()
+        }
+        for item in merged_history:
+            history_by_version[str(item.get("version", "")).strip().casefold()] = item
+        _save_launcher_changelog_history(list(history_by_version.values()))
+
+    # Q3Elite releases are archived independently from launcher releases.
+    q3elite_history = _load_q3elite_changelog_history()
+    q3elite_current = _q3elite_release_from_version_metadata()
+    q3elite_observed = q3elite_history + ([q3elite_current] if q3elite_current else [])
+    q3elite_known = set()
+    for item in entries:
+        kind = re.sub(r"[^a-z0-9]", "", str(item.get("type", "")).casefold())
+        version = str(item.get("version", "")).strip().casefold()
+        if kind in {"q3elite", "quake3elite"} and version:
+            q3elite_known.add(version)
+
+    q3elite_history_by_version = {
+        str(item.get("version", "")).strip().casefold(): item
+        for item in q3elite_history if str(item.get("version", "")).strip()
+    }
+    q3elite_history_changed = False
+    for item in q3elite_observed:
+        version = str(item.get("version", "")).strip()
+        key = version.casefold()
+        if not key:
+            continue
+        if key not in q3elite_history_by_version:
+            q3elite_history_by_version[key] = item
+            q3elite_history_changed = True
+        if key not in q3elite_known:
+            entries.append(item)
+            q3elite_known.add(key)
+    if q3elite_history_changed:
+        _save_q3elite_changelog_history(list(q3elite_history_by_version.values()))
+
+    return entries
 
 
 def _rich_changelog_html(entries):
@@ -2238,42 +2494,57 @@ GAME_LAUNCH_BEHAVIOR_OPTIONS = (
 PLAYTIME_DB = LAUNCHER_DATA_DIR / "playtime.sqlite3"
 
 DEFAULT_SETTINGS = {
-    "auto_update_q3elite": False,
-    "auto_update_launcher": False,
-    "auto_update_osp": True,
+    "auto_update_q3elite": True,
+    "auto_update_launcher": True,
+    "auto_update_osp": False,
+    "disable_changelog_notifications": False,
+    "disable_q3news_notifications": False,
     "start_with_windows": False,
     "start_minimized": False,
     "minimize_to_tray": False,
-    "starting_section": "home",
+    "starting_section": "servers",
     "last_section": "home",
-    "game_launch_behavior": "keep",
+    "game_launch_behavior": "minimize",
     "server_region_en": True,
     "server_region_ru": False,
     "server_region_initialized": False,
     # Logical official server presets enabled on the Servers page. Populated
     # from server_presets.json after that file is parsed.
     "server_preset_ids": [],
-    "show_changelog_media": False,
-    "cleanup_screenshots_days": 0,
-    "cleanup_demos_days": 0,
+    "show_changelog_media": True,
+    "cleanup_screenshots_days": 14,
+    "cleanup_demos_days": 14,
     "pause_server_refresh_unfocused": False,
     "pause_matchmaking_when_game_launched": False,
     "screenshot_source": "reshade",
     "suppress_startup_notification_sound": False,
     "matchmaking_sound_volume": 30,
     "disable_matchmaking_popup": False,
-    "launcher_sounds_enabled": False,
-    "launcher_sound_volume": 30,
+    "launcher_sounds_enabled": True,
+    "launcher_sound_volume": 20,
     "launcher_start_button_sound_enabled": True,
     "launcher_startup_sound_enabled": True,
     "launcher_audio_schema": 1,
     # Privacy-first diagnostics are opt-in. Account linking is a separate
     # choice so anonymous telemetry stays anonymous even while signed in.
-    "send_diagnostics": False,
-    "auto_crash_reports": False,
-    "diagnostics_link_account": False,
+    "send_diagnostics": True,
+    "auto_crash_reports": True,
+    "diagnostics_link_account": True,
     "statistics_profile_url": "",
     "statistics_period": "week",
+    # Browser preferences are local UI state, not cloud/game configuration.
+    "maps_location_filter": "Preinstalled",
+    "maps_sort_mode": 0,
+    "screenshots_sort_mode": "Date ↓",
+    "screenshots_gametype": "All",
+    "demos_sort_mode": "Date ↓",
+    "demos_gametype": "Others",
+    "keep_window_position": True,
+    "fullscreen_mode": False,
+    "window_x": -1,
+    "window_y": -1,
+    "window_width": 1366,
+    "window_height": 768,
 }
 
 
@@ -2330,7 +2601,15 @@ for _route in SERVER_ROUTE_PRESETS:
     _seen_server_preset_ids.add(_preset_id)
     SERVER_LOGICAL_PRESETS.append((_preset_id, str(_route.get("name") or _preset_id).strip()))
 SERVER_LOGICAL_PRESET_IDS = [preset_id for preset_id, _name in SERVER_LOGICAL_PRESETS]
-DEFAULT_SETTINGS["server_preset_ids"] = list(SERVER_LOGICAL_PRESET_IDS)
+# Defaults for a fresh installation only. Existing user selections are loaded
+# from launcher_settings.json and are not overwritten by this list.
+SERVER_DEFAULT_PRESET_IDS = [
+    preset_id for preset_id in (
+        "meat", "freeze", "ctf", "clan_arena", "freeze_eu"
+    )
+    if preset_id in set(SERVER_LOGICAL_PRESET_IDS)
+]
+DEFAULT_SETTINGS["server_preset_ids"] = list(SERVER_DEFAULT_PRESET_IDS)
 
 
 def _server_route_entries(en_enabled, ru_enabled, enabled_preset_ids=None):
@@ -2480,7 +2759,7 @@ recover_incomplete_game_sessions()
 
 CLEANUP_SCREENSHOT_DIRS = (
     Path("baseq3") / "mods" / "osp" / "screenshots",
-    Path("Q3Elite") / "Screenshots",
+    Path("Q3Elite") / "screenshots",
 )
 CLEANUP_DEMO_DIRS = (
     Path("baseq3") / "mods" / "osp" / "demos",
@@ -2513,8 +2792,31 @@ def cleanup_old_files(relative_dirs, days):
 
 def load_launcher_settings():
     data = dict(DEFAULT_SETTINGS)
+    settings_file_exists = SETTINGS_FILE.is_file()
+    if settings_file_exists:
+        # Conservative compatibility defaults for existing installations that
+        # predate these preferences. New clean installs use DEFAULT_SETTINGS.
+        legacy_missing_defaults = {
+            "auto_update_q3elite": False,
+            "auto_update_launcher": False,
+            "auto_update_osp": True,
+            "starting_section": "home",
+            "game_launch_behavior": "keep",
+            "show_changelog_media": False,
+            "cleanup_screenshots_days": 0,
+            "cleanup_demos_days": 0,
+            "screenshot_source": "both",
+            "launcher_sounds_enabled": False,
+            "launcher_sound_volume": 30,
+            "send_diagnostics": False,
+            "auto_crash_reports": False,
+            "diagnostics_link_account": False,
+            "maps_location_filter": "All",
+            "demos_gametype": "All",
+        }
+        data.update(legacy_missing_defaults)
     try:
-        if SETTINGS_FILE.is_file():
+        if settings_file_exists:
             raw = json.loads(SETTINGS_FILE.read_text(encoding="utf-8"))
             if isinstance(raw, dict):
                 for key in DEFAULT_SETTINGS:
@@ -2537,11 +2839,38 @@ def load_launcher_settings():
                         elif key == "screenshot_source":
                             value = str(raw[key]).lower()
                             data[key] = value if value in ("reshade", "osp", "both") else "reshade"
+                        elif key in ("window_x", "window_y"):
+                            try:
+                                data[key] = int(raw[key])
+                            except (TypeError, ValueError):
+                                data[key] = -1
+                        elif key in ("window_width", "window_height"):
+                            try:
+                                data[key] = max(640 if key == "window_width" else 480, int(raw[key]))
+                            except (TypeError, ValueError):
+                                data[key] = DEFAULT_SETTINGS[key]
                         elif key == "statistics_profile_url":
                             data[key] = str(raw[key] or "").strip()
                         elif key == "statistics_period":
                             value = str(raw[key] or "week").lower()
                             data[key] = value if value in ("week", "month") else "week"
+                        elif key == "maps_location_filter":
+                            value = str(raw[key] or "All")
+                            data[key] = value if value in ("All", "Preinstalled", "Downloaded") else "All"
+                        elif key == "maps_sort_mode":
+                            try:
+                                data[key] = max(0, min(3, int(raw[key])))
+                            except (TypeError, ValueError):
+                                data[key] = 0
+                        elif key in ("screenshots_sort_mode", "demos_sort_mode"):
+                            value = str(raw[key] or "Date ↓")
+                            data[key] = value if value in ("Date ↓", "Date ↑", "Name ↓", "Name ↑") else "Date ↓"
+                        elif key == "screenshots_gametype":
+                            value = str(raw[key] or "All")
+                            data[key] = value if value in ("All", "FFA", "TDM", "CTF", "Singleplayer", "Others") else "All"
+                        elif key == "demos_gametype":
+                            value = str(raw[key] or "All")
+                            data[key] = value if value in ("All", "Singleplayer", "Others") else "All"
                         elif key == "starting_section":
                             value = str(raw[key] or "home").lower()
                             valid = set(NAV_PAGE_ORDER) | {"last"}
@@ -2561,7 +2890,7 @@ def load_launcher_settings():
                                     if str(value).strip().lower() in valid
                                 ]
                             else:
-                                data[key] = list(SERVER_LOGICAL_PRESET_IDS)
+                                data[key] = list(SERVER_DEFAULT_PRESET_IDS)
                         else:
                             data[key] = bool(raw[key])
 
@@ -2717,6 +3046,13 @@ def _render_install_activity():
         for item in _install_activity_items
     ]
     window.installActivityText.setText("\n".join(lines))
+    scroll = getattr(window, "installActivityScroll", None)
+    if scroll is not None:
+        QtCore.QTimer.singleShot(
+            0, lambda area=scroll: area.verticalScrollBar().setValue(
+                area.verticalScrollBar().maximum()
+            )
+        )
 
 
 def reset_install_activity(initial=None):
@@ -2912,7 +3248,7 @@ def _disconnect_main_button():
         pass
 
 
-home_update_checks = {"launcher": None, "q3elite": None}
+home_update_checks = {"launcher": None, "q3elite": None, "osp2be": None}
 home_update_sound_signatures = set()
 
 
@@ -2943,9 +3279,23 @@ def update_home_updates(label=None, result=None):
     global home_update_sound_signatures
     if label not in home_update_checks:
         return
+    previous_state = home_update_checks.get(label)
+    previous_osp_version = (
+        str(previous_state.get("remote_version") or "")
+        if label == "osp2be" and isinstance(previous_state, dict) else ""
+    )
     home_update_checks[label] = result
     if "window" not in globals() or not hasattr(window, "homeUpdatesValue"):
         return
+    if label == "osp2be" and isinstance(result, dict):
+        new_osp_version = str(result.get("remote_version") or "")
+        if new_osp_version and new_osp_version != previous_osp_version:
+            try:
+                window._refresh_changelog_notification()
+                if getattr(window, "changelogPage", None) is not None:
+                    QtCore.QTimer.singleShot(0, window.rebuild_changelog_page)
+            except Exception as error:
+                print(f"[changelog] OSP2-BE refresh deferred: {error}")
 
     # Announce each newly discovered version once. The status line itself can
     # refresh repeatedly, so it must not replay the sound on every poll.
@@ -2976,29 +3326,94 @@ def update_home_updates(label=None, result=None):
             current = state.get("from_version") or state.get("local_version") or "?"
             latest = state.get("to_version") or state.get("remote_version") or "?"
             available.append(f"{friendly} {current} → {latest}")
+            notes = state.get("changelog") or state.get("notes") or []
+            if isinstance(notes, str):
+                notes = [notes]
+            # Component versions are displayed as separate rows below.
         elif _home_state_needs_repair(state):
-            files = len(state.get("files") or []) + len(state.get("deleted") or [])
-            repairs.append(f"{friendly} repair required" + (f" ({files} files)" if files else ""))
+            installed = state.get("local_version") or state.get("from_version") or "?"
+            repairs.append(f"{friendly} {installed}  •  repair required")
         elif status in {"offline", "error", "unavailable"} or state.get("update_available") is None:
             unavailable.append(friendly)
 
-    if available:
-        text = "  •  ".join(available)
-        if repairs:
-            text += "  •  " + "  •  ".join(repairs)
+    # OSP2-BE has a separate website/PK3 version check.
+    osp_state = home_update_checks.get("osp2be")
+    if isinstance(osp_state, dict):
+        if osp_state.get("update_available"):
+            local_osp = osp_state.get("local_version", "missing")
+            remote_osp = osp_state.get("remote_version", "?")
+            available.append(f"OSP2-BE {local_osp} → {remote_osp}")
+        elif osp_state.get("status") in {"offline", "error", "unavailable"}:
+            unavailable.append("OSP2-BE")
+
+    # Keep every component/version visible without relying on a scroll area.
+    # In compact windows use short, single-line labels; long release notes are
+    # moved to the expandable-height area below.
+    rows = list(available)
+    rows.extend(repairs)
+    if not rows:
         if checking:
-            text += "  •  Checking…"
-    elif repairs:
-        text = "  •  ".join(repairs)
-        if checking:
-            text += "  •  Checking…"
-    elif checking:
-        text = "Checking for updates…"
-    elif unavailable:
-        text = "Update check unavailable: " + ", ".join(unavailable)
-    else:
-        text = "No new updates available"
-    window.homeUpdatesValue.setText(text)
+            rows = ["Checking for updates…"]
+        elif unavailable:
+            rows = ["Update check unavailable: " + ", ".join(unavailable)]
+        else:
+            rows = ["No new updates available"]
+    window.homeUpdatesValue.setText("\n".join(rows))
+    compact_home = int(window.height()) < 820
+    update_font = window.homeUpdatesValue.font()
+    update_font.setPointSizeF(9.0 if compact_home else 9.6)
+    window.homeUpdatesValue.setFont(update_font)
+    window.homeUpdatesValue.setMaximumHeight(52 if compact_home else 62)
+    window.homeUpdatesValue.setToolTip("")
+    has_component_updates = bool(available or repairs)
+    status_detail = getattr(window, "statusDetail", None)
+    if status_detail is not None:
+        # "Update available" is already the title; this line is redundant and
+        # costs valuable vertical space at the minimum window size.
+        status_detail.setVisible(not has_component_updates)
+
+    # Keep the Home navigation notification in sync with update detection.
+    try:
+        window._refresh_home_update_notification()
+    except Exception:
+        pass
+
+    # The Home indicator is an aggregate notification marker, not just the
+    # READY/ERROR state indicator. It lights up for any available component.
+    has_update = any(
+        _home_state_has_version_update(home_update_checks.get(key))
+        or _home_state_needs_repair(home_update_checks.get(key))
+        for key in ("launcher", "q3elite")
+    ) or bool(isinstance(osp_state, dict) and osp_state.get("update_available"))
+    has_news = bool(
+        getattr(window, "_q3news_unread", False)
+        and not launcher_settings.get("disable_q3news_notifications", False)
+    )
+    has_changelog = bool(
+        getattr(window, "_changelog_unread", False)
+        and not launcher_settings.get("disable_changelog_notifications", False)
+    )
+    if hasattr(window, "homeNotificationDot"):
+        window.homeNotificationDot.setVisible(has_update or has_news or has_changelog)
+    update_button = getattr(window, "homeUpdateButton", None)
+    if update_button is not None:
+        actionable = []
+        for key in ("launcher", "q3elite", "osp2be"):
+            state = home_update_checks.get(key)
+            if _home_state_has_version_update(state) or _home_state_needs_repair(state) or (key == "osp2be" and isinstance(state, dict) and state.get("update_available")):
+                actionable.append(key)
+        update_button.setVisible(bool(actionable))
+        update_button.setEnabled(bool(actionable))
+        if len(actionable) > 1:
+            update_button.setText("CHOOSE UPDATE")
+        elif actionable and actionable[0] == "launcher":
+            update_button.setText("UPDATE LAUNCHER")
+        elif actionable and actionable[0] == "osp2be":
+            update_button.setText("UPDATE OSP2-BE")
+        elif actionable:
+            update_button.setText("UPDATE Q3ELITE")
+        else:
+            update_button.setText("UPDATE")
 
 
 def set_status(title, detail="", kind="normal"):
@@ -3255,9 +3670,17 @@ def apply_settings():
         "auto_update_q3elite": window.autoQ3Box.isChecked(),
         "auto_update_launcher": window.autoLauncherBox.isChecked(),
         "auto_update_osp": window.autoOspBox.isChecked(),
+        "disable_changelog_notifications": window.disableChangelogNotificationsBox.isChecked(),
+        "disable_q3news_notifications": window.disableQ3NewsNotificationsBox.isChecked(),
         "start_with_windows": window.startWindowsBox.isChecked(),
         "start_minimized": window.startMinimizedBox.isChecked(),
         "minimize_to_tray": window.trayBox.isChecked(),
+        "keep_window_position": window.keepWindowPositionBox.isChecked(),
+        "fullscreen_mode": window.fullscreenModeBox.isChecked(),
+        "window_x": launcher_settings.get("window_x", -1),
+        "window_y": launcher_settings.get("window_y", -1),
+        "window_width": launcher_settings.get("window_width", 1366),
+        "window_height": launcher_settings.get("window_height", 768),
         "starting_section": str(window.startSectionCombo.currentData() or "home"),
         "last_section": launcher_settings.get("last_section", "home"),
         "game_launch_behavior": str(window.gameLaunchBehaviorCombo.currentData() or "keep"),
@@ -3266,7 +3689,7 @@ def apply_settings():
         "server_region_en": launcher_settings.get("server_region_en", True),
         "server_region_ru": launcher_settings.get("server_region_ru", False),
         "server_region_initialized": launcher_settings.get("server_region_initialized", False),
-        "server_preset_ids": list(launcher_settings.get("server_preset_ids", SERVER_LOGICAL_PRESET_IDS)),
+        "server_preset_ids": list(launcher_settings.get("server_preset_ids", SERVER_DEFAULT_PRESET_IDS)),
         # Despite the historical label, this controls ALL changelog media.
         "show_changelog_media": window.changelogMediaBox.isChecked(),
         "cleanup_screenshots_days": cleanup_screenshots_days,
@@ -3289,6 +3712,12 @@ def apply_settings():
         # pressing APPLY on the Settings page.
         "statistics_profile_url": launcher_settings.get("statistics_profile_url", ""),
         "statistics_period": launcher_settings.get("statistics_period", "week"),
+        "maps_location_filter": launcher_settings.get("maps_location_filter", "All"),
+        "maps_sort_mode": launcher_settings.get("maps_sort_mode", 0),
+        "screenshots_sort_mode": launcher_settings.get("screenshots_sort_mode", "Date ↓"),
+        "screenshots_gametype": launcher_settings.get("screenshots_gametype", "All"),
+        "demos_sort_mode": launcher_settings.get("demos_sort_mode", "Date ↓"),
+        "demos_gametype": launcher_settings.get("demos_gametype", "All"),
     }
     try:
         set_start_with_windows(launcher_settings["start_with_windows"])
@@ -3297,6 +3726,23 @@ def apply_settings():
         # ReShade is managed from INSTALL ADDONS and is intentionally not
         # changed by SAVE SETTINGS.
         save_launcher_settings(launcher_settings)
+        if hasattr(window, "_refresh_changelog_notification"):
+            window._refresh_changelog_notification()
+            window._refresh_q3news_notification()
+        if not launcher_settings.get("disable_q3news_notifications", False):
+            current_worker = getattr(window, "_q3news_notification_worker", None)
+            try:
+                worker_running = current_worker is not None and current_worker.isRunning()
+            except RuntimeError:
+                worker_running = False
+            if not worker_running:
+                worker = Q3NewsWorker(before=None, limit=1, parent=window)
+                window._q3news_notification_worker = worker
+                worker.result_ready.connect(
+                    lambda ok, rows: window._refresh_q3news_notification(rows, success=ok)
+                )
+                worker.finished.connect(worker.deleteLater)
+                worker.start()
         if hasattr(window, "diagnosticsManager"):
             window.diagnosticsManager.set_preferences(
                 enabled=launcher_settings.get("send_diagnostics", False),
@@ -3325,7 +3771,7 @@ def apply_settings():
         if old_cleanup_screenshots_days != cleanup_screenshots_days:
             removed = cleanup_old_files(
                 [GAME_ROOT / "baseq3" / "mods" / "osp" / "screenshots",
-                 GAME_ROOT / "Q3Elite" / "Screenshots"],
+                 GAME_ROOT / "Q3Elite" / "screenshots"],
                 cleanup_screenshots_days,
             )
             window.refresh_screenshots()
@@ -3451,6 +3897,7 @@ def start_first_install():
 def start_game_checks():
     """Start Q3Elite/PAK/OSP pipeline after launcher self-update resolves."""
     if q3elite_is_installed():
+        reset_install_activity("Checking installed Q3Elite files…")
         print()
         print("Existing Q3Elite installation detected.")
         print("Verifying local PAK files and checking OSP2-BE...")
@@ -3956,6 +4403,96 @@ class GothicShell(QtWidgets.QFrame):
 class GlassFrame(QtWidgets.QFrame):
     """Low-cost backdrop glass sampling the shell's pre-blurred artwork."""
     def paintEvent(self, event):
+        # Sidebar is rendered explicitly instead of relying on QSS. Its backdrop
+        # is static between resize/theme/shell-blur changes, so compose it once
+        # into a widget-sized pixmap rather than resampling and overlaying the
+        # shell blur on every expose/repaint of the navigation rail.
+        if self.objectName() == "sidebar":
+            expanded = bool(self.window().isMaximized() or self.window().isFullScreen())
+            shell_radius = 0.0 if expanded else float(theme_value("radius.window", 15))
+            shell = self.window().findChild(GothicShell, "shell")
+            blurred = shell._blurred if shell is not None else QtGui.QPixmap()
+            surface = theme_color("materials.sidebar", "#050505")
+            overlay = theme_color("effects.sidebar_glass_overlay", "rgba(3,3,4,176)")
+            cache_key = (
+                self.width(), self.height(),
+                blurred.cacheKey() if not blurred.isNull() else 0,
+                shell.width() if shell is not None else 0,
+                shell.height() if shell is not None else 0,
+                surface.rgba(), overlay.rgba(), shell_radius,
+            )
+            cached = getattr(self, "_q3_sidebar_backdrop", None)
+            _sidebar_cache_started = time.perf_counter()
+            if getattr(self, "_q3_sidebar_backdrop_key", None) != cache_key or cached is None:
+                _previous_hits = int(getattr(self, "_q3_sidebar_cache_hits", 0))
+                _previous_draw_ms = float(getattr(self, "_q3_sidebar_last_draw_ms", 0.0))
+                _compose_started = time.perf_counter()
+                backdrop = QtGui.QPixmap(max(1, self.width()), max(1, self.height()))
+                backdrop.fill(surface)
+                if shell is not None and not blurred.isNull():
+                    top_left = self.mapTo(shell, QtCore.QPoint(0, 0))
+                    sx = max(0, int(top_left.x() / max(1, shell.width()) * blurred.width()))
+                    sy = max(0, int(top_left.y() / max(1, shell.height()) * blurred.height()))
+                    sw = max(1, int(self.width() / max(1, shell.width()) * blurred.width()))
+                    sh = max(1, int(self.height() / max(1, shell.height()) * blurred.height()))
+                    src = QtCore.QRect(sx, sy, sw, sh).intersected(blurred.rect())
+                    if src.isValid():
+                        compose = QtGui.QPainter(backdrop)
+                        compose.setRenderHint(QtGui.QPainter.RenderHint.SmoothPixmapTransform, True)
+                        compose.drawPixmap(backdrop.rect(), blurred, src)
+                        compose.fillRect(backdrop.rect(), overlay)
+                        compose.end()
+                self._q3_sidebar_backdrop = backdrop
+                self._q3_sidebar_backdrop_key = cache_key
+                cached = backdrop
+                self._q3_sidebar_cache_hits = 0
+                self._q3_sidebar_last_compose_ms = (time.perf_counter() - _compose_started) * 1000.0
+                try:
+                    owner = self.window()
+                    profile = getattr(owner, "_q3_write_section_profile", None)
+                    if callable(profile):
+                        profile(
+                            "sidebar_backdrop_cache", "sidebar",
+                            compose_ms=self._q3_sidebar_last_compose_ms,
+                            previous_cache_hits=_previous_hits,
+                            previous_last_draw_ms=_previous_draw_ms,
+                            width=self.width(), height=self.height(),
+                        )
+                except Exception:
+                    pass
+            else:
+                self._q3_sidebar_cache_hits = int(getattr(self, "_q3_sidebar_cache_hits", 0)) + 1
+
+            painter = QtGui.QPainter(self)
+            painter.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing, True)
+            path = QtGui.QPainterPath()
+            path.addRoundedRect(
+                QtCore.QRectF(0.0, 0.0, self.width() + shell_radius, self.height()),
+                shell_radius, shell_radius,
+            )
+            painter.setClipPath(path)
+            painter.drawPixmap(0, 0, cached)
+            painter.end()
+            self._q3_sidebar_last_draw_ms = (time.perf_counter() - _sidebar_cache_started) * 1000.0
+            if getattr(self, "_q3_sidebar_backdrop_key", None) == cache_key:
+                self._q3_sidebar_draw_batch_ms = float(getattr(self, "_q3_sidebar_draw_batch_ms", 0.0)) + self._q3_sidebar_last_draw_ms
+                _hit_count = int(getattr(self, "_q3_sidebar_cache_hits", 0))
+                if _hit_count and _hit_count % 25 == 0:
+                    try:
+                        owner = self.window()
+                        profile = getattr(owner, "_q3_write_section_profile", None)
+                        if callable(profile):
+                            profile(
+                                "sidebar_backdrop_cache_hits", "sidebar",
+                                cache_hits=25,
+                                avg_draw_ms=self._q3_sidebar_draw_batch_ms / 25.0,
+                                last_draw_ms=self._q3_sidebar_last_draw_ms,
+                            )
+                    except Exception:
+                        pass
+                    self._q3_sidebar_draw_batch_ms = 0.0
+            return
+
         shell = self.window().findChild(GothicShell, "shell")
         if shell is not None and not shell._blurred.isNull():
             painter = QtGui.QPainter(self)
@@ -3963,18 +4500,7 @@ class GlassFrame(QtWidgets.QFrame):
             painter.setRenderHint(QtGui.QPainter.RenderHint.SmoothPixmapTransform, True)
             radius = float(theme_value("radius.lg", 14))
             path = QtGui.QPainterPath()
-            if self.objectName() == "sidebar":
-                # The rail touches the native left edge. V1/V2 left it square,
-                # so its blurred backdrop leaked through the shell's rounded
-                # top-left/bottom-left pixels. Extend the rounded rectangle past
-                # the right edge: left corners stay rounded, right edge stays flat.
-                shell_radius = 0.0 if (self.window().isMaximized() or self.window().isFullScreen()) else float(theme_value("radius.window", 15))
-                path.addRoundedRect(
-                    QtCore.QRectF(0.0, 0.0, self.width() + shell_radius, self.height()),
-                    shell_radius, shell_radius,
-                )
-            else:
-                path.addRoundedRect(QtCore.QRectF(self.rect()), radius, radius)
+            path.addRoundedRect(QtCore.QRectF(self.rect()), radius, radius)
             painter.setClipPath(path)
             top_left = self.mapTo(shell, QtCore.QPoint(0, 0))
             sx = max(0, int(top_left.x() / max(1, shell.width()) * shell._blurred.width()))
@@ -3984,8 +4510,7 @@ class GlassFrame(QtWidgets.QFrame):
             src = QtCore.QRect(sx, sy, sw, sh).intersected(shell._blurred.rect())
             if src.isValid():
                 painter.drawPixmap(self.rect(), shell._blurred, src)
-            overlay_key = "effects.sidebar_glass_overlay" if self.objectName() == "sidebar" else "effects.glass_overlay"
-            painter.fillRect(self.rect(), theme_color(overlay_key, "rgba(3,3,4,176)"))
+            painter.fillRect(self.rect(), theme_color("effects.glass_overlay", "rgba(3,3,4,176)"))
             painter.end()
         super().paintEvent(event)
 
@@ -4829,40 +5354,64 @@ class FullRowHoverDelegate(QtWidgets.QStyledItemDelegate):
                     viewport.update()
         return super().eventFilter(obj, event)
 
-    def paint(self, painter, option, index):
-        if index.column() == 0:
-            is_selected = False
-            try:
-                is_selected = self.view.selectionModel().isRowSelected(index.row(), QtCore.QModelIndex())
-            except Exception:
-                pass
-            row_rect = QtCore.QRect(0, option.rect.top(), self.view.viewport().width(), option.rect.height())
-            hovered = index.row() == self.hover_row
-            if OBSIDIAN_MATERIAL.enabled(ui_theme):
-                painter.save()
-                seed = index.row() + 17
-                if theme_bool("performance.cache_table_rows", True):
-                    size = QtCore.QSize(max(1, row_rect.width()), max(1, row_rect.height()))
-                    key = (seed, bool(is_selected), bool(hovered))
-                    pm = _render_cached_surface(
-                        "obsidian-table-row", key, size,
-                        lambda qp, qr: OBSIDIAN_MATERIAL.paint_row(
-                            qp, qr, ui_theme, selected=is_selected, hovered=hovered, seed=seed
-                        ),
-                    )
-                    painter.drawPixmap(row_rect.topLeft(), pm)
-                else:
-                    OBSIDIAN_MATERIAL.paint_row(
-                        painter, QtCore.QRectF(row_rect), ui_theme,
-                        selected=is_selected, hovered=hovered, seed=seed,
-                    )
-                painter.restore()
-            elif hovered or is_selected:
-                color = theme_color(
-                    "effects.row_selected" if is_selected else "effects.row_hover",
-                    "rgba(255,255,255,22)" if is_selected else "rgba(255,255,255,10)",
+    def _paint_row_surface(self, painter, option, index):
+        is_selected = False
+        try:
+            selection_model = self.view.selectionModel()
+            selected_rows = {
+                selected_index.row()
+                for selected_index in selection_model.selectedIndexes()
+            }
+            current = self.view.currentIndex()
+            # SelectRows can report the current row through currentIndex even
+            # while selectedIndexes/selectedRows are transient during a click.
+            if selection_model.hasSelection() and current.isValid():
+                selected_rows.add(current.row())
+            is_selected = index.row() in selected_rows
+        except (AttributeError, RuntimeError):
+            pass
+        row_rect = QtCore.QRect(0, option.rect.top(), self.view.viewport().width(), option.rect.height())
+        # Selection is dominant: moving over PLAY/DELETE must not add a second
+        # hover layer to the selected row.
+        hovered = index.row() == self.hover_row and not is_selected
+
+        # The row surface spans the whole viewport, but every delegate paint
+        # call belongs to one cell. Clip to that cell before drawing the row;
+        # otherwise each column repaints the entire row and composites the
+        # material several times (the bright/doubled selection reported before).
+        painter.save()
+        painter.setClipRect(option.rect, QtCore.Qt.ClipOperation.IntersectClip)
+        if OBSIDIAN_MATERIAL.enabled(ui_theme):
+            seed = index.row() + 17
+            if theme_bool("performance.cache_table_rows", True):
+                size = QtCore.QSize(max(1, row_rect.width()), max(1, row_rect.height()))
+                key = (seed, bool(is_selected), bool(hovered))
+                pm = _render_cached_surface(
+                    "obsidian-table-row", key, size,
+                    lambda qp, qr: OBSIDIAN_MATERIAL.paint_row(
+                        qp, qr, ui_theme, selected=is_selected, hovered=hovered, seed=seed
+                    ),
                 )
-                painter.save(); painter.fillRect(row_rect, color); painter.restore()
+                painter.drawPixmap(row_rect.topLeft(), pm)
+            else:
+                OBSIDIAN_MATERIAL.paint_row(
+                    painter, QtCore.QRectF(row_rect), ui_theme,
+                    selected=is_selected, hovered=hovered, seed=seed,
+                )
+        elif hovered or is_selected:
+            color = theme_color(
+                "effects.row_selected" if is_selected else "effects.row_hover",
+                "rgba(255,255,255,22)" if is_selected else "rgba(255,255,255,10)",
+            )
+            painter.fillRect(row_rect, color)
+        painter.restore()
+
+    def paint(self, painter, option, index):
+        # Paint the unified row surface in every cell. _paint_row_surface clips
+        # to option.rect, so each column contributes only its own slice. This is
+        # required for QTreeWidget/QTableWidget row selection: suppressing Qt's
+        # native State_Selected flag below otherwise leaves columns 1..N blank.
+        self._paint_row_surface(painter, option, index)
         clean = QtWidgets.QStyleOptionViewItem(option)
         # The delegate owns whole-row hover/selection painting.  Removing both
         # native focus and selected flags prevents Qt/Windows from drawing
@@ -4870,6 +5419,11 @@ class FullRowHoverDelegate(QtWidgets.QStyledItemDelegate):
         clean.state &= ~QtWidgets.QStyle.StateFlag.State_HasFocus
         clean.state &= ~QtWidgets.QStyle.StateFlag.State_Selected
         clean.state &= ~QtWidgets.QStyle.StateFlag.State_MouseOver
+        clean.state &= ~QtWidgets.QStyle.StateFlag.State_KeyboardFocusChange
+        clean.state &= ~QtWidgets.QStyle.StateFlag.State_Active
+        # Keep keyboard navigation on the view, but do not let the style draw
+        # per-cell focus/selection seams over the delegate's continuous row.
+        clean.showDecorationSelected = False
         super().paint(painter, clean, index)
 
 
@@ -4911,14 +5465,19 @@ class MaterialPushButton(QtWidgets.QPushButton):
         painter.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing, True)
         painter.setRenderHint(QtGui.QPainter.RenderHint.SmoothPixmapTransform, True)
         rect = QtCore.QRectF(self.rect()).adjusted(0.45, 0.45, -0.45, -0.45)
-        # Navigation is intentionally a true circle instead of the old square
-        # QSS plate. Other controls use the theme radius.
-        if self.objectName() == "navButton":
+        # Sidebar navigation remains circular. The Donation control is the
+        # deliberate exception: its hover/pressed material is a rounded square
+        # in both renderers, matching the compact Paper treatment.
+        is_donation_button = self.objectName() == "donationButton"
+        if is_donation_button:
+            radius = min(9.0, min(rect.width(), rect.height()) * 0.27)
+        elif self.objectName() in {"navButton", "supportButton"}:
             radius = min(rect.width(), rect.height()) * 0.5
         else:
             radius = float(theme_value("radius.md", 10))
         seed = (sum(ord(c) for c in (self.objectName() or self.text() or self.toolTip() or "button")) + self.width() * 7 + self.height() * 11) & 0x7fffffff
-        hovered = bool(self.underMouse()) and not _scroll_perf_active(self)
+        hover_override = self.property("_q3_delegate_hover")
+        hovered = (bool(hover_override) if hover_override is not None else bool(self.underMouse())) and not _scroll_perf_active(self)
         pressed = bool(self.isDown())
         checked = bool(self.isChecked())
         enabled = bool(self.isEnabled())
@@ -4926,7 +5485,29 @@ class MaterialPushButton(QtWidgets.QPushButton):
 
         def render_surface(qp, qr):
             local = qr.adjusted(0.45, 0.45, -0.45, -0.45)
-            if self.objectName() == "navButton" and checked:
+            if is_donation_button and _q3_is_paper_theme():
+                # Donation is intentionally isolated from the global Paper
+                # blue-accent hover system. Paint a soft warm surface directly.
+                path = QtGui.QPainterPath()
+                path.addRoundedRect(local, radius, radius)
+                if not enabled:
+                    fill, border = "#F7F1F2", "#E9DEE0"
+                elif pressed:
+                    fill, border = "#F4D5DA", "#E8B8C0"
+                elif hovered:
+                    fill, border = "#FCE8EB", "#EFC4CB"
+                else:
+                    fill, border = "#FFF8F9", "#F0DDE0"
+                qp.save()
+                qp.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing, True)
+                qp.fillPath(path, QtGui.QColor(fill))
+                pen = QtGui.QPen(QtGui.QColor(border))
+                pen.setWidthF(1.0)
+                qp.setPen(pen)
+                qp.setBrush(QtCore.Qt.BrushStyle.NoBrush)
+                qp.drawPath(path)
+                qp.restore()
+            elif self.objectName() == "navButton" and checked:
                 orb = QtGui.QPainterPath(); orb.addEllipse(local)
                 OBSIDIAN_MATERIAL.paint_silver_surface(qp, orb, local, ui_theme)
                 OBSIDIAN_MATERIAL._paint_imperfect_edge(
@@ -4937,11 +5518,11 @@ class MaterialPushButton(QtWidgets.QPushButton):
                 OBSIDIAN_MATERIAL.paint_button_surface(
                     qp, local, radius, ui_theme, hovered=hovered, pressed=pressed,
                     checked=checked, enabled=enabled, primary=primary, seed=seed,
-                    edge_occlusion=(self.objectName() != "navButton"),
+                    edge_occlusion=(self.objectName() not in {"navButton", "supportButton", "donationButton"}),
                 )
 
         if theme_bool("performance.cache_material_buttons", True):
-            state_key = (self.objectName(), seed, round(radius,2), hovered, pressed, checked, enabled, primary)
+            state_key = (self.objectName(), _q3_is_paper_theme() if is_donation_button else None, seed, round(radius,2), hovered, pressed, checked, enabled, primary)
             painter.drawPixmap(0, 0, _render_cached_surface("obsidian-button", state_key, self.size(), render_surface))
         else:
             render_surface(painter, QtCore.QRectF(self.rect()))
@@ -4956,10 +5537,14 @@ class MaterialPushButton(QtWidgets.QPushButton):
         text = self.text()
         icon_size = self.iconSize()
         custom_nav_icon = False
-        if self.objectName() == "navButton" and qta is not None:
+        if (self.objectName() == "navButton" or is_donation_button) and qta is not None:
             sz = max(1, theme_int("icons.size_navigation", icon_size.width() or 22))
+            if is_donation_button:
+                sz = 19 if _q3_is_paper_theme() else 21
+                nav_color = "#D94B5B" if _q3_is_paper_theme() else "#FFFFFF"
+            else:
+                nav_color = theme_value("icons.nav_active_color", "#15171A") if self.isChecked() else theme_value("icons.nav_idle_color", "#E8E8EA")
             ir = QtCore.QRectF(content.center().x()-sz/2.0, content.center().y()-sz/2.0, sz, sz)
-            nav_color = theme_value("icons.nav_active_color", "#15171A") if self.isChecked() else theme_value("icons.nav_idle_color", "#E8E8EA")
             custom_nav_icon = _paint_smooth_qta_icon(
                 painter,
                 (getattr(self, "_q3_icon_preferred", None), getattr(self, "_q3_icon_fallback", None)),
@@ -5212,6 +5797,10 @@ class GlowButton(MaterialPushButton):
     def _to(self, value):
         self._anim.stop()
         value = max(0.0, float(value))
+        if self.objectName() in {"supportButton", "donationButton"}:
+            self._glow.setBlurRadius(0)
+            self._glow.setEnabled(False)
+            return
         theme_has_glow = max(theme_int("effects.hover_glow_radius", 0), theme_int("effects.active_glow_radius", 0)) > 0
         if not theme_has_glow:
             self._glow.setBlurRadius(0)
@@ -5243,6 +5832,11 @@ class GlowButton(MaterialPushButton):
             pass
 
     def refresh_theme_effect(self):
+        if self.objectName() in {"supportButton", "donationButton"}:
+            self._anim.stop()
+            self._glow.setBlurRadius(0)
+            self._glow.setEnabled(False)
+            return
         enabled = max(theme_int("effects.hover_glow_radius", 0), theme_int("effects.active_glow_radius", 0)) > 0
         self._glow.setColor(theme_color("colors.brand.primary", "#D9DDE1"))
         active = enabled and self._glow.blurRadius() > 0.01
@@ -5252,6 +5846,9 @@ class GlowButton(MaterialPushButton):
             self._glow.setBlurRadius(0)
 
     def refresh_active_glow(self):
+        if self.objectName() in {"supportButton", "donationButton"}:
+            self._to(0)
+            return
         target = theme_int("effects.active_glow_radius", 19) if self.isCheckable() and self.isChecked() else 0
         self._to(target)
 
@@ -5343,7 +5940,7 @@ class ServerPresetDialog(MaterialDialog):
 
         selected = {
             str(x or "").strip().lower()
-            for x in (selected_ids if isinstance(selected_ids, (list, tuple, set)) else SERVER_LOGICAL_PRESET_IDS)
+            for x in (selected_ids if isinstance(selected_ids, (list, tuple, set)) else SERVER_DEFAULT_PRESET_IDS)
         }
 
         root = QtWidgets.QVBoxLayout(self)
@@ -5411,17 +6008,35 @@ class ServerPresetDialog(MaterialDialog):
         grid.setHorizontalSpacing(26)
         grid.setVerticalSpacing(7)
         self.presetBoxes = {}
-        columns = 2
-        for index, (preset_id, preset_name) in enumerate(SERVER_LOGICAL_PRESETS):
+        duel_ids = ("duel_1", "duel_2", "duel_3")
+        duel_set = set(duel_ids)
+        non_duels = [item for item in SERVER_LOGICAL_PRESETS if item[0] not in duel_set]
+        # Keep the familiar two-column list, but reserve one full horizontal
+        # row for Duel #1 / #2 / #3 so the three servers are visually grouped.
+        positions = {}
+        top_items = non_duels[:5]
+        tail_items = non_duels[5:]
+        for index, item in enumerate(top_items):
+            positions[item[0]] = (index // 2, index % 2)
+        duel_row = max(1, (len(top_items) + 1) // 2)
+        for column, preset_id in enumerate(duel_ids):
+            if any(item[0] == preset_id for item in SERVER_LOGICAL_PRESETS):
+                positions[preset_id] = (duel_row, column)
+        tail_start_row = duel_row + 1
+        for index, item in enumerate(tail_items):
+            positions[item[0]] = (tail_start_row + index // 2, index % 2)
+
+        for preset_id, preset_name in SERVER_LOGICAL_PRESETS:
             box = MaterialCheckBox(preset_name)
             box.setChecked(preset_id in selected)
             box.setToolTip(f"Include {preset_name}")
             box.toggled.connect(self._refresh_summary)
             self.presetBoxes[preset_id] = box
-            grid.addWidget(box, index // columns, index % columns)
-        for column in range(columns):
+            row, column = positions[preset_id]
+            grid.addWidget(box, row, column)
+        for column in range(3):
             grid.setColumnStretch(column, 1)
-        grid.setRowStretch((len(SERVER_LOGICAL_PRESETS) + columns - 1) // columns, 1)
+        grid.setRowStretch(max(row for row, _column in positions.values()) + 1, 1)
         scroll.setWidget(list_host)
         root.addWidget(scroll, 1)
 
@@ -5678,10 +6293,14 @@ class AccountAuthDialog(MaterialDialog):
     @staticmethod
     def _repolish(widget):
         try:
-            widget.style().unpolish(widget)
-            widget.style().polish(widget)
+            # Reapply the widget style after changing its Qt objectName.
+            # There is no local/global `polish` flag here; the previous
+            # conditional raised NameError while constructing the auth dialog.
+            style = widget.style()
+            style.unpolish(widget)
+            style.polish(widget)
             widget.update()
-        except RuntimeError:
+        except (RuntimeError, AttributeError):
             pass
 
     def _set_mode(self, mode):
@@ -7209,7 +7828,6 @@ class TelegramSnapshotView(QtWidgets.QLabel):
     The launcher therefore never gains/removes a Chromium child surface when the
     Changelog page is selected, avoiding the Windows DWM full-window flash.
     """
-    mediaDetected = QtCore.pyqtSignal(object)
     ready = QtCore.pyqtSignal()
     failed = QtCore.pyqtSignal(str)
 
@@ -7247,7 +7865,6 @@ class TelegramSnapshotView(QtWidgets.QLabel):
             return
 
         try:
-            self._renderer.mediaDetected.connect(self.mediaDetected.emit)
             self._renderer.ready.connect(self._renderer_ready)
             self._renderer.failed.connect(self.failed.emit)
         except RuntimeError:
@@ -7498,8 +8115,10 @@ class TelegramSnapshotView(QtWidgets.QLabel):
 
 
 class ChangelogImage(QtWidgets.QLabel):
-    """Fixed 16:9 media viewport with rounded clipping and fullscreen preview."""
+    """Aspect-preserving media preview with rounded clipping and fullscreen preview."""
     BASE_WIDTH = 720
+    MAX_HEIGHT = 540
+    geometryChanged = pyqtSignal(int, int)
 
     def __init__(self, url="", parent=None):
         super().__init__(parent)
@@ -7512,8 +8131,8 @@ class ChangelogImage(QtWidgets.QLabel):
         self._pixmap_original = None
         self._url = str(url or "")
 
-        # Reserve final geometry immediately. This prevents the "large -> small"
-        # jump when a remote image finishes loading.
+        # Temporary placeholder geometry; replaced by the source image's
+        # natural aspect ratio as soon as its cached/downloaded pixmap is ready.
         self.setFixedSize(self.BASE_WIDTH, round(self.BASE_WIDTH * 9 / 16))
         self._apply_rounded_mask()
         self.setText("Loading image...")
@@ -7555,7 +8174,15 @@ class ChangelogImage(QtWidgets.QLabel):
             pix = QtGui.QPixmap()
             if data and pix.loadFromData(data):
                 self._pixmap_original = pix
+                scale = min(
+                    self.BASE_WIDTH / max(1, pix.width()),
+                    self.MAX_HEIGHT / max(1, pix.height()),
+                )
+                target_w = max(1, int(round(pix.width() * scale)))
+                target_h = max(1, int(round(pix.height() * scale)))
+                self.setFixedSize(target_w, target_h)
                 self.setText("")
+                self.geometryChanged.emit(target_w, target_h)
                 self._render_pixmap()
             else:
                 self.setText("Image preview unavailable")
@@ -7619,7 +8246,9 @@ class ChangelogMediaCarousel(QtWidgets.QFrame):
     def __init__(self, urls, parent=None):
         super().__init__(parent)
         self.setObjectName("changelogMedia")
-        self.setFixedSize(720, 429)
+        self.setFrameShape(QtWidgets.QFrame.Shape.NoFrame)
+        self.setStyleSheet("background: transparent;")
+        self.setFixedSize(720, 405)
         self.urls = [str(u) for u in urls if str(u).strip()]
         self.index = 0
 
@@ -7630,14 +8259,17 @@ class ChangelogMediaCarousel(QtWidgets.QFrame):
         self.stage = QtWidgets.QWidget()
         self.stage.setObjectName("changelogMediaStage")
         self.stage.setFixedSize(720, 405)
+        self.stage.setAttribute(QtCore.Qt.WidgetAttribute.WA_TranslucentBackground, True)
+        self.stage.setStyleSheet("background: transparent;")
 
         self.image = ChangelogImage(parent=self.stage)
         self.image.move(0, 0)
+        self.image.geometryChanged.connect(self._fit_to_image)
 
         self.prevButton = MaterialPushButton("", self.stage)
         self.prevButton.setObjectName("changelogArrow")
         self.prevButton.setFixedSize(38, 58)
-        self.prevButton.move(12, (405 - 58) // 2)
+        self.prevButton.move(12, (self.stage.height() - 58) // 2)
         if qta is not None:
             self.prevButton.setIcon(qta.icon("fa5s.chevron-left", color=theme_value("icons.action_icon_color", theme_value("colors.text.secondary", "#C3C5C8"))))
         else:
@@ -7647,22 +8279,42 @@ class ChangelogMediaCarousel(QtWidgets.QFrame):
         self.nextButton = MaterialPushButton("", self.stage)
         self.nextButton.setObjectName("changelogArrow")
         self.nextButton.setFixedSize(38, 58)
-        self.nextButton.move(720 - 50, (405 - 58) // 2)
+        self.nextButton.move(self.stage.width() - 50, (self.stage.height() - 58) // 2)
         if qta is not None:
             self.nextButton.setIcon(qta.icon("fa5s.chevron-right", color=theme_value("icons.action_icon_color", theme_value("colors.text.secondary", "#C3C5C8"))))
         else:
             self.nextButton.setText("›")
         self.nextButton.clicked.connect(lambda: self.change(1))
 
-        lay.addWidget(self.stage)
+        lay.addWidget(self.stage, 0, QtCore.Qt.AlignmentFlag.AlignHCenter)
 
-        self.counter = QtWidgets.QLabel("")
+        self.counter = QtWidgets.QLabel("", self.stage)
         self.counter.setObjectName("changelogCounter")
         self.counter.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
-        self.counter.setFixedHeight(20)
-        lay.addWidget(self.counter)
-
+        self.counter.setAttribute(QtCore.Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+        self.counter.setStyleSheet(
+            "QLabel#changelogCounter { background: transparent; border: none; "
+            "color: rgba(235,235,235,220); padding: 0px 5px; }"
+        )
+        self.counter.adjustSize()
+        self.counter.move(max(0, self.stage.width() - self.counter.width() - 8),
+                          max(0, self.stage.height() - self.counter.height() - 7))
         self.show_current()
+
+    def _fit_to_image(self, width, height):
+        self.image.move(0, 0)
+        self.stage.setFixedSize(width, height)
+        self.prevButton.move(12, max(0, (height - self.prevButton.height()) // 2))
+        self.nextButton.move(max(0, width - self.nextButton.width() - 12),
+                             max(0, (height - self.nextButton.height()) // 2))
+        self.counter.adjustSize()
+        self.counter.move(max(0, width - self.counter.width() - 8),
+                          max(0, height - self.counter.height() - 7))
+        self.setFixedSize(width, height)
+        self.updateGeometry()
+        parent = self.parentWidget()
+        if parent is not None:
+            parent.updateGeometry()
 
     def show_current(self):
         count = len(self.urls)
@@ -7674,7 +8326,10 @@ class ChangelogMediaCarousel(QtWidgets.QFrame):
         self.image.setPixmap(QtGui.QPixmap())
         self.image.setText("Loading image...")
         self.image._load()
-        self.counter.setText(f"{self.index + 1} / {count}" if count > 1 else "")
+        self.counter.setText(f"{self.index + 1}/{count}" if count > 1 else "")
+        self.counter.adjustSize()
+        self.counter.move(max(0, self.stage.width() - self.counter.width() - 8),
+                          max(0, self.stage.height() - self.counter.height() - 7))
         self.prevButton.setVisible(count > 1)
         self.nextButton.setVisible(count > 1)
         self.prevButton.raise_()
@@ -7925,7 +8580,7 @@ class ChangelogVideoContainer(QtWidgets.QFrame):
             self.player = YoutubeThumbnail(self.url, self)
         else:
             self.player = ChangelogVideoView(self.url, self)
-        lay.addWidget(self.player)
+        lay.addWidget(self.player, 0, QtCore.Qt.AlignmentFlag.AlignHCenter)
 
     def paintEvent(self, event):
         super().paintEvent(event)
@@ -8002,6 +8657,7 @@ class ChangelogCard(SurfaceCard):
         title.setObjectName("changelogCardTitle")
         title.setTextFormat(QtCore.Qt.TextFormat.RichText)
         header_title = str(release.get("header_title") or "").strip()
+        self._is_q3news_post = header_title.upper().startswith("Q3NEWS")
         if header_title:
             title.setText(_html_escape(header_title))
         else:
@@ -8123,15 +8779,24 @@ class ChangelogCard(SurfaceCard):
         if native_parts or self._native_uses_telegram or self._telegram_web_only:
             native = QtWidgets.QTextBrowser()
             native.setObjectName("changelogSelectableText")
-            native.setMaximumWidth(820)
+            if self._is_q3news_post:
+                native.setFixedWidth(900)
+            else:
+                native.setMaximumWidth(720)
             native.setOpenExternalLinks(True)
             native.setFrameShape(QtWidgets.QFrame.Shape.NoFrame)
             native.setVerticalScrollBarPolicy(QtCore.Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
             native.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-            native.setSizePolicy(
-                QtWidgets.QSizePolicy.Policy.Expanding,
-                QtWidgets.QSizePolicy.Policy.Fixed,
-            )
+            if self._is_q3news_post:
+                native.setSizePolicy(
+                    QtWidgets.QSizePolicy.Policy.Fixed,
+                    QtWidgets.QSizePolicy.Policy.Fixed,
+                )
+            else:
+                native.setSizePolicy(
+                    QtWidgets.QSizePolicy.Policy.Expanding,
+                    QtWidgets.QSizePolicy.Policy.Fixed,
+                )
             native.document().setDefaultStyleSheet("""
                 body { color:#ded9d3; font-size:13px; margin:0; padding:0; }
                 .body { margin:0 0 7px 0; line-height:1.45; }
@@ -8150,7 +8815,10 @@ class ChangelogCard(SurfaceCard):
             )
             native.setFixedHeight(max(28, int(native.document().size().height()) + 8))
             self.nativeTextView = native
-            lay.addWidget(native)
+            if self._is_q3news_post:
+                lay.addWidget(native, 0, QtCore.Qt.AlignmentFlag.AlignHCenter)
+            else:
+                lay.addWidget(native)
             if (self._native_uses_telegram
                     and not str(tg.get("text", "") or "").strip()
                     and (self._telegram_auto_fetch or self._expanded)):
@@ -8163,8 +8831,9 @@ class ChangelogCard(SurfaceCard):
         self.dynamicMediaLayout = QtWidgets.QVBoxLayout(self.dynamicMediaHost)
         self.dynamicMediaLayout.setContentsMargins(0, 0, 0, 0)
         self.dynamicMediaLayout.setSpacing(0)
+        self.dynamicMediaLayout.setAlignment(QtCore.Qt.AlignmentFlag.AlignHCenter)
         self.dynamicMediaHost.hide()
-        lay.addWidget(self.dynamicMediaHost, 0, QtCore.Qt.AlignmentFlag.AlignLeft)
+        lay.addWidget(self.dynamicMediaHost, 0, QtCore.Qt.AlignmentFlag.AlignHCenter)
 
         images = release.get("images", release.get("image", []))
         if isinstance(images, str):
@@ -8181,6 +8850,11 @@ class ChangelogCard(SurfaceCard):
         self._telegram_media_payload = {}
         self._media_preview_enabled = bool(launcher_settings.get("show_changelog_media", False))
         self._build_changelog_media()
+        # Keep screenshots directly above the text body so each media preview
+        # visually belongs to its post/release. The carousel itself remains 16:9.
+        if self.dynamicMediaLayout.count() and self.nativeTextView is not None:
+            bodyLayout.removeWidget(self.dynamicMediaHost)
+            bodyLayout.insertWidget(0, self.dynamicMediaHost)
         video = str(release.get("video", "") or tg.get("video", "")).strip()
 
         # Native action buttons ---------------------------------------------
@@ -8212,6 +8886,15 @@ class ChangelogCard(SurfaceCard):
             live_post.clicked.connect(self._telegram_live_action)
             self._telegram_live_button = live_post
             buttons.addWidget(live_post)
+
+        if source_url:
+            reload_post = GlowButton("RELOAD POST")
+            reload_post.setObjectName("changelogLinkButton")
+            reload_post.setToolTip("Fetch this Telegram post again and refresh its text/media")
+            if qta is not None:
+                reload_post.setIcon(qta.icon("fa5s.sync-alt", color=theme_value("icons.action_icon_color", theme_value("colors.text.secondary", "#C3C5C8"))))
+            reload_post.clicked.connect(self._reload_telegram_post)
+            buttons.addWidget(reload_post)
 
         if source_link:
             source = GlowButton("OPEN SOURCE")
@@ -8287,6 +8970,36 @@ class ChangelogCard(SurfaceCard):
         self._media_preview_enabled = True
         self._build_changelog_media()
 
+    def _reload_telegram_post(self, checked=False):
+        """Invalidate this post's disk/memory cache and refetch it in background."""
+        url = str(getattr(self, "telegram_url", "") or "").strip()
+        if not url:
+            return
+        try:
+            _telegram_forget_cached_post(url)
+        except Exception as error:
+            print(f"[changelog] Could not clear Telegram cache: {error}")
+        self._set_native_telegram_text("Reloading Telegram post…")
+        self._telegram_media_payload = {}
+        self._build_changelog_media()
+        self._telegram_polling = True
+        fetcher = getattr(self, "_telegram_fetcher", None)
+        if callable(fetcher):
+            try:
+                fetcher(url, force=True)
+            except TypeError:
+                fetcher(url)
+        QtCore.QTimer.singleShot(120, lambda: self._poll_telegram_cache(0))
+        if self.telegramView is not None:
+            try:
+                self.telegramView.reload_post()
+            except RuntimeError:
+                pass
+        elif self._telegram_source_url and QWebEngineView is not None:
+            # RELOAD POST is also the recovery path for cards that were never
+            # among the three startup-prewarmed Telegram posts.
+            self.activate_telegram_renderer()
+
     def _telegram_live_action(self, checked=False):
         if self.telegramView is None:
             self.activate_telegram_renderer()
@@ -8317,7 +9030,13 @@ class ChangelogCard(SurfaceCard):
             body_layout = self.bodyWidget.layout()
             if body_layout is None:
                 return False
-            body_layout.insertWidget(0, backdrop)
+            if self._is_q3news_post:
+                backdrop.setFixedWidth(900)
+                body_layout.insertWidget(
+                    0, backdrop, 0, QtCore.Qt.AlignmentFlag.AlignHCenter
+                )
+            else:
+                body_layout.insertWidget(0, backdrop)
             self.telegramBackdrop = backdrop
             self._telegram_layout = web_l
             return True
@@ -8354,12 +9073,19 @@ class ChangelogCard(SurfaceCard):
                 print("[changelog] Telegram detached renderer unavailable")
                 return None
 
+            # Connect the renderer signal directly to the card. Forwarding a
+            # PyQt signal through QLabel's .emit caused a fatal signature error
+            # on some PyQt6 builds while Home remained active.
+            try:
+                renderer.mediaDetected.connect(self._apply_telegram_media)
+            except (AttributeError, RuntimeError, TypeError) as error:
+                print(f"[changelog] Telegram media signal unavailable: {error}")
+
             view = TelegramSnapshotView(
                 self._telegram_source_url,
                 renderer,
                 self.telegramBackdrop,
             )
-            view.mediaDetected.connect(self._apply_telegram_media)
             view.ready.connect(self._telegram_web_ready)
             view.failed.connect(self._telegram_web_failed)
             self._telegram_layout.addWidget(view)
@@ -8543,7 +9269,21 @@ class ChangelogCard(SurfaceCard):
             layout.addWidget(TelegramVideoThumbnail(poster, self.telegram_url, self))
 
         host.setVisible(layout.count() > 0)
+        # Telegram media often arrives asynchronously after the card is built.
+        # Keep it above the post body every time the media host is populated.
+        body_widget = getattr(self, "bodyWidget", None)
+        body_layout = body_widget.layout() if body_widget is not None else None
+        native_view = getattr(self, "nativeTextView", None)
+        if layout.count() and body_layout is not None:
+            body_layout.removeWidget(host)
+            body_layout.insertWidget(0, host, 0, QtCore.Qt.AlignmentFlag.AlignHCenter)
+            if native_view is not None:
+                body_layout.removeWidget(native_view)
+                body_layout.insertWidget(1, native_view)
         host.updateGeometry()
+        if body_layout is not None:
+            body_layout.invalidate()
+            body_layout.activate()
 
     def _toggle(self):
         self._expanded = not self._expanded
@@ -8551,6 +9291,17 @@ class ChangelogCard(SurfaceCard):
         self._update_toggle_icon()
 
         if self._expanded:
+            # Only the newest Changelog cards are prewarmed at startup. Older
+            # cards must create/take a detached Telegram renderer when expanded;
+            # otherwise they can remain on the native "Loading Telegram post…"
+            # placeholder even though the first three posts render correctly.
+            if (
+                self._telegram_source_url
+                and self.telegramView is None
+                and QWebEngineView is not None
+            ):
+                self.activate_telegram_renderer()
+
             if self._native_uses_telegram and self.telegram_url:
                 data = _telegram_cached_post(self.telegram_url)
                 if not data:
@@ -8718,6 +9469,9 @@ class Q3NameDelegate(QtWidgets.QStyledItemDelegate):
         opt.text = ""
         style = opt.widget.style() if opt.widget else QtWidgets.QApplication.style()
         style.drawControl(QtWidgets.QStyle.ControlElement.CE_ItemViewItem, opt, painter, opt.widget)
+        # Quake nicknames can be much wider than the first column. Clip custom
+        # color-code rendering to this cell so it never paints over SCORE/PING.
+        painter.setClipRect(option.rect.adjusted(0, 0, -3, 0), QtCore.Qt.ClipOperation.IntersectClip)
         x = option.rect.left() + 9
         baseline = option.rect.center().y() + painter.fontMetrics().ascent() // 2 - 1
         raw_text = str(raw or "")
@@ -8738,7 +9492,52 @@ class Q3NameDelegate(QtWidgets.QStyledItemDelegate):
         painter.restore()
 
 
-_PIXMAP_FILE_CACHE = _PixmapLRUCache("performance.pixmap_cache_mb", 192)
+# 256 MB keeps the full observed Maps levelshot working set (~190 MB) resident.
+# This affects only the decoded-source cache; thumbnail dimensions/quality are unchanged.
+_PIXMAP_FILE_CACHE = _PixmapLRUCache("performance.pixmap_cache_mb", 256)
+
+# Maps thumbnails are rendered from the decoded source pixmap into a fixed
+# cover-cropped, rounded surface. Keep those final surfaces in a separate,
+# byte-budgeted cache so table rebuilds and label resizes do not repeat the
+# SmoothTransformation + crop + antialiased rounded-mask work.
+_MAP_THUMBNAIL_CACHE = _PixmapLRUCache("performance.map_thumbnail_cache_mb", 64)
+_MAP_LEVELSHOT_DECODE_CACHE = _PixmapLRUCache("performance.map_levelshot_cache_mb", 64)
+# Server cards reuse a small set of maps. Cache the scaled source and its blurred
+# cinematic surface separately so reopening Servers does not repeat expensive
+# QPixmap scaling + QGraphicsScene blur work.
+_SERVER_LEVELSHOT_SOURCE_CACHE = _PixmapLRUCache("performance.server_levelshot_cache_mb", 64)
+_SERVER_LEVELSHOT_BLUR_CACHE = _PixmapLRUCache("performance.server_blur_cache_mb", 96)
+_LEVELSHOT_DIRECTORY_INDEX_CACHE = {}
+_LEVELSHOT_RESOLVE_CACHE = {}
+_MAP_LEVELSHOT_CACHE_STATS = {"hits": 0, "misses": 0, "decode_ms": 0.0}
+_MAP_THUMBNAIL_CACHE_HITS = 0
+_MAP_THUMBNAIL_CACHE_MISSES = 0
+_PIXMAP_FILE_CACHE_HITS = 0
+_PIXMAP_FILE_CACHE_MISSES = 0
+_PIXMAP_FILE_DECODE_MS = 0.0
+_MAP_THUMBNAIL_SCALE_MS = 0.0
+_MAP_THUMBNAIL_ROUND_MS = 0.0
+
+# Map rows share the same trash icon. QIcon is implicitly shared by Qt, so
+# creating it once per theme color avoids repeated SVG/fontawesome rendering.
+_MAP_DELETE_ICON_CACHE = {}
+
+
+def _map_delete_icon(color_override=None):
+    color = str(color_override or theme_value("colors.semantic.danger", "#E54C4C"))
+    cached = _MAP_DELETE_ICON_CACHE.get(color)
+    if cached is not None:
+        return cached
+    icon = QtGui.QIcon()
+    if qta is not None:
+        try:
+            icon = qta.icon("ph.trash", color=color)
+        except Exception:
+            pass
+    _MAP_DELETE_ICON_CACHE[color] = icon
+    return icon
+
+
 
 def _load_pixmap_file(path):
     """Load common image files without asking Qt to decode legacy TGA files.
@@ -8752,6 +9551,7 @@ def _load_pixmap_file(path):
     these files; when available, V15 converts them once to PNG under AppData.
     If Pillow is absent or the TGA is broken, return an empty pixmap silently.
     """
+    global _PIXMAP_FILE_CACHE_HITS, _PIXMAP_FILE_CACHE_MISSES, _PIXMAP_FILE_DECODE_MS
     if path is None:
         return QtGui.QPixmap()
     path = Path(path)
@@ -8764,13 +9564,19 @@ def _load_pixmap_file(path):
         return QtGui.QPixmap()
     cached_pm = _PIXMAP_FILE_CACHE.get(cache_key)
     if cached_pm is not None and not cached_pm.isNull():
-        return QtGui.QPixmap(cached_pm)
+        _PIXMAP_FILE_CACHE_HITS += 1
+        # QPixmap uses implicit sharing. Returning the cached value avoids an
+        # unnecessary wrapper/copy; display code scales/crops into new pixmaps.
+        return cached_pm
+    _PIXMAP_FILE_CACHE_MISSES += 1
+    _decode_t0 = time.perf_counter()
     if path.suffix.casefold() != ".tga":
         pm = QtGui.QPixmap(str(path))
+        _PIXMAP_FILE_DECODE_MS += (time.perf_counter() - _decode_t0) * 1000.0
         if not pm.isNull():
             _PIXMAP_FILE_CACHE[cache_key] = QtGui.QPixmap(pm)
         return pm
-    if PILImage is None:
+    if _ensure_pil_image() is None:
         return QtGui.QPixmap()
     try:
         digest = hashlib.blake2b(
@@ -8783,48 +9589,170 @@ def _load_pixmap_file(path):
             with PILImage.open(path) as image:
                 image.convert("RGBA").save(cached, format="PNG", optimize=True)
         pm = QtGui.QPixmap(str(cached))
+        _PIXMAP_FILE_DECODE_MS += (time.perf_counter() - _decode_t0) * 1000.0
         if not pm.isNull():
             _PIXMAP_FILE_CACHE[cache_key] = QtGui.QPixmap(pm)
         return pm
     except Exception:
+        _PIXMAP_FILE_DECODE_MS += (time.perf_counter() - _decode_t0) * 1000.0
         return QtGui.QPixmap()
+
+
+
+def _load_map_levelshot_pixmap(path, target_size=QtCore.QSize(144, 82)):
+    """Decode Local Maps levelshots near their display resolution.
+
+    Supported image plugins can downsample while decoding. The existing
+    thumbnail delegate still performs the final smooth cover crop and rounding.
+    Legacy TGA variants retain the established full-resolution Pillow path.
+    """
+    if path is None:
+        return QtGui.QPixmap()
+    path = Path(path)
+    if not path.is_file():
+        return QtGui.QPixmap()
+
+    try:
+        stat = path.stat()
+        cache_key = (
+            str(path.resolve()), stat.st_mtime_ns, stat.st_size,
+            max(1, int(target_size.width())), max(1, int(target_size.height())),
+        )
+    except OSError:
+        return QtGui.QPixmap()
+
+    cached = _MAP_LEVELSHOT_DECODE_CACHE.get(cache_key)
+    if cached is not None and not cached.isNull():
+        _MAP_LEVELSHOT_CACHE_STATS["hits"] += 1
+        return cached
+    _MAP_LEVELSHOT_CACHE_STATS["misses"] += 1
+    _decode_t0 = time.perf_counter()
+
+    if path.suffix.casefold() == ".tga":
+        pixmap = _load_pixmap_file(path)
+        _MAP_LEVELSHOT_CACHE_STATS["decode_ms"] += (time.perf_counter() - _decode_t0) * 1000.0
+        if not pixmap.isNull():
+            _MAP_LEVELSHOT_DECODE_CACHE[cache_key] = pixmap
+        return pixmap
+
+    reader = QtGui.QImageReader(str(path))
+    reader.setAutoTransform(True)
+    source_size = reader.size()
+    pixmap = QtGui.QPixmap()
+
+    if source_size.isValid():
+        width = max(1, int(target_size.width()))
+        height = max(1, int(target_size.height()))
+        if source_size.width() > width or source_size.height() > height:
+            # KeepAspectRatioByExpanding dimensions: enough pixels to cover
+            # the target while preserving the original image proportions.
+            scale = max(
+                width / float(source_size.width()),
+                height / float(source_size.height()),
+            )
+            scaled_size = QtCore.QSize(
+                max(1, int(round(source_size.width() * scale))),
+                max(1, int(round(source_size.height() * scale))),
+            )
+            reader.setScaledSize(scaled_size)
+
+    image = reader.read()
+    if not image.isNull():
+        pixmap = QtGui.QPixmap.fromImage(image)
+
+    # Unsupported plugin scaling or malformed input: use the established path.
+    if pixmap.isNull():
+        pixmap = _load_pixmap_file(path)
+
+    _MAP_LEVELSHOT_CACHE_STATS["decode_ms"] += (time.perf_counter() - _decode_t0) * 1000.0
+    if not pixmap.isNull():
+        _MAP_LEVELSHOT_DECODE_CACHE[cache_key] = pixmap
+    return pixmap
+
+
+def _levelshot_directory_index(directory):
+    """Return a cached alias -> paths index for one levelshot directory."""
+    directory = Path(directory)
+    try:
+        if not directory.is_dir():
+            return {}
+        stat = directory.stat()
+        cache_key = (str(directory.resolve()), stat.st_mtime_ns)
+    except OSError:
+        return {}
+    cached = _LEVELSHOT_DIRECTORY_INDEX_CACHE.get(cache_key)
+    if cached is not None:
+        return cached
+
+    index = {}
+    supported = {".png", ".jpg", ".jpeg", ".webp", ".tga"}
+    try:
+        for path in directory.iterdir():
+            if not path.is_file() or path.suffix.casefold() not in supported:
+                continue
+            stem = path.stem
+            priority = stem.startswith("!")
+            if priority:
+                stem = stem[1:]
+            for alias in (part.strip().casefold() for part in stem.split("&")):
+                if alias:
+                    index.setdefault(alias, [[], []])[0 if priority else 1].append(path)
+    except OSError:
+        return {}
+    for buckets in index.values():
+        buckets[0].sort(key=lambda item: item.name.casefold())
+        buckets[1].sort(key=lambda item: item.name.casefold())
+
+    # Keep the most recent few directory revisions; old entries are harmless
+    # but retaining them indefinitely would grow after map-pack updates.
+    _LEVELSHOT_DIRECTORY_INDEX_CACHE[cache_key] = index
+    while len(_LEVELSHOT_DIRECTORY_INDEX_CACHE) > 8:
+        _LEVELSHOT_DIRECTORY_INDEX_CACHE.pop(next(iter(_LEVELSHOT_DIRECTORY_INDEX_CACHE)))
+    return index
 
 
 def _resolve_levelshot_path(mapname, primary_dir=None):
     wanted = str(mapname or "").strip().casefold()
-    supported = {".png", ".jpg", ".jpeg", ".webp", ".tga"}
     dirs = []
     if primary_dir is not None:
         dirs.append(Path(primary_dir))
-    for d in (MAP_LEVELSHOTS_DIR, MAP_DISCOVERED_LEVELSHOTS_DIR):
-        if d not in dirs:
-            dirs.append(d)
-    priority, normal = [], []
+    for directory in (MAP_LEVELSHOTS_DIR, MAP_DISCOVERED_LEVELSHOTS_DIR):
+        if directory not in dirs:
+            dirs.append(directory)
+
+    directory_revisions = []
     for directory in dirs:
-        if not directory.is_dir() or not wanted:
-            continue
         try:
-            for path in directory.iterdir():
-                if not path.is_file() or path.suffix.casefold() not in supported:
-                    continue
-                stem = path.stem
-                important = stem.startswith("!")
-                if important:
-                    stem = stem[1:]
-                aliases = [part.strip().casefold() for part in stem.split("&") if part.strip()]
-                if wanted in aliases:
-                    (priority if important else normal).append(path)
+            stat = directory.stat()
+            directory_revisions.append((str(directory.resolve()), stat.st_mtime_ns))
         except OSError:
-            pass
-    priority.sort(key=lambda p: p.name.casefold())
-    normal.sort(key=lambda p: p.name.casefold())
+            directory_revisions.append((str(directory), -1))
+    resolve_key = (wanted, tuple(directory_revisions))
+    cached_path = _LEVELSHOT_RESOLVE_CACHE.get(resolve_key)
+    if cached_path is not None and cached_path.is_file():
+        return cached_path
+
+    priority, normal = [], []
+    if wanted:
+        for directory in dirs:
+            buckets = _levelshot_directory_index(directory).get(wanted)
+            if buckets:
+                priority.extend(buckets[0])
+                normal.extend(buckets[1])
+    priority.sort(key=lambda item: item.name.casefold())
+    normal.sort(key=lambda item: item.name.casefold())
     fallbacks = [
         MAP_LEVELSHOTS_DIR / "unknownmap.png",
         MAP_UNKNOWN_LEVELSHOT,
         ASSETS_DIR / "servers" / "levelshots" / "unknownmap.png",
         ASSETS_DIR / "servers" / "levelshots" / "unknown.png",
     ]
-    return next((path for path in priority + normal + fallbacks if path.is_file()), None)
+    result = next((path for path in priority + normal + fallbacks if path.is_file()), None)
+    if result is not None:
+        _LEVELSHOT_RESOLVE_CACHE[resolve_key] = result
+        if len(_LEVELSHOT_RESOLVE_CACHE) > 512:
+            _LEVELSHOT_RESOLVE_CACHE.pop(next(iter(_LEVELSHOT_RESOLVE_CACHE)))
+    return result
 
 
 def _blur_pixmap(pixmap, radius=18.0, sample=QtCore.QSize(720, 405)):
@@ -8952,9 +9880,28 @@ class ServerCard(QtWidgets.QFrame):
     aliasRequested = QtCore.pyqtSignal(str)
     wheelRequested = QtCore.pyqtSignal(int)
 
-    def __init__(self, server, levelshots_dir, parent=None):
+    def __init__(self, server, levelshots_dir, parent=None, profile_callback=None):
+        _server_card_started = time.perf_counter()
+        _server_card_phase_started = _server_card_started
+        def _server_card_mark(phase):
+            nonlocal _server_card_phase_started
+            if profile_callback is None:
+                return
+            _now = time.perf_counter()
+            try:
+                profile_callback(
+                    "server_card_phase", "servers",
+                    phase=phase,
+                    phase_ms=(_now - _server_card_phase_started) * 1000.0,
+                )
+            except Exception:
+                pass
+            _server_card_phase_started = _now
         super().__init__(parent)
+        self._profile_callback = profile_callback
         self.server = dict(server)
+        self._pending_server_result = None
+        self._pending_server_details_scheduled = False
         self.levelshots_dir = Path(levelshots_dir)
         self.setObjectName("serverCard")
         self.setFixedWidth(theme_int("servers.card_min_width", 330))
@@ -8968,6 +9915,7 @@ class ServerCard(QtWidgets.QFrame):
         self._bg_timer.setInterval(max(50, theme_int("servers.card_background_motion_ms", 90)))
         self._bg_timer.timeout.connect(self._advance_background)
         self._bg_timer.start()
+        _server_card_mark("base_setup_and_animation_timer")
 
         lay = QtWidgets.QVBoxLayout(self)
         lay.setContentsMargins(13, 13, 13, 13)
@@ -8985,6 +9933,7 @@ class ServerCard(QtWidgets.QFrame):
         self.stateLabel.setToolTip("Checking server…")
         top.addWidget(self.stateLabel, 0, QtCore.Qt.AlignmentFlag.AlignTop | QtCore.Qt.AlignmentFlag.AlignRight)
         lay.addLayout(top)
+        _server_card_mark("header_widgets")
 
         self.levelshotLabel = None
         if self.presentation == "thumbnail":
@@ -8998,34 +9947,49 @@ class ServerCard(QtWidgets.QFrame):
         else:
             # Cinematic Noctra card exposes the slowly moving levelshot behind content.
             lay.addSpacing(78)
+        _server_card_mark("levelshot_slot")
 
         telemetry = QtWidgets.QHBoxLayout(); telemetry.setSpacing(6)
         self.mapLabel = QtWidgets.QLabel("MAP  —"); self.mapLabel.setObjectName("serverMetric"); telemetry.addWidget(self.mapLabel, 1)
         self.playersLabel = QtWidgets.QLabel("PLAYERS  — / —"); self.playersLabel.setObjectName("serverMetric"); telemetry.addWidget(self.playersLabel)
         self.pingLabel = QtWidgets.QLabel("PING  —"); self.pingLabel.setObjectName("serverMetric"); telemetry.addWidget(self.pingLabel)
         lay.addLayout(telemetry)
+        _server_card_mark("telemetry_widgets")
 
-        self.playerList = ServerPlayerTable(); self.playerList.setObjectName("serverPlayerList")
-        self.playerList.setHeader(MaterialHeaderView(QtCore.Qt.Orientation.Horizontal, self.playerList))
-        self.playerList.setItemDelegate(Q3NameDelegate(self.playerList)); self.playerList.setColumnCount(3); self.playerList.setHeaderLabels(["PLAYER", "SCORE", "PING"])
-        self.playerList.setRootIsDecorated(False); self.playerList.setIndentation(0); self.playerList.setSelectionMode(QtWidgets.QAbstractItemView.SelectionMode.NoSelection); self.playerList.setFocusPolicy(QtCore.Qt.FocusPolicy.NoFocus)
-        self.playerList.setUniformRowHeights(True); self.playerList.setAlternatingRowColors(False); self.playerList.setVerticalScrollMode(QtWidgets.QAbstractItemView.ScrollMode.ScrollPerPixel)
-        self.playerList.header().setSectionResizeMode(0, QtWidgets.QHeaderView.ResizeMode.Stretch); self.playerList.header().setSectionResizeMode(1, QtWidgets.QHeaderView.ResizeMode.Fixed); self.playerList.header().setSectionResizeMode(2, QtWidgets.QHeaderView.ResizeMode.Fixed)
-        self.playerList.setColumnWidth(1, 58); self.playerList.setColumnWidth(2, 72)
-        self.playerList.headerItem().setTextAlignment(1, int(QtCore.Qt.AlignmentFlag.AlignRight | QtCore.Qt.AlignmentFlag.AlignVCenter)); self.playerList.headerItem().setTextAlignment(2, int(QtCore.Qt.AlignmentFlag.AlignRight | QtCore.Qt.AlignmentFlag.AlignVCenter))
-        self.playerList.setMinimumHeight(180); self.playerList.wheelRequested.connect(self.wheelRequested.emit); lay.addWidget(self.playerList, 1)
+        # Keep the table's vertical footprint, but defer the expensive QTreeWidget,
+        # header and delegate construction until the first server response arrives.
+        # This keeps card creation cheap and avoids building tables for cards that
+        # are removed before their first result.
+        self.playerList = None
+        self._player_table_placeholder = QtWidgets.QWidget(self)
+        self._player_table_placeholder.setObjectName("serverPlayerListPlaceholder")
+        self._player_table_placeholder.setMinimumHeight(180)
+        self._player_table_placeholder.setSizePolicy(
+            QtWidgets.QSizePolicy.Policy.Expanding,
+            QtWidgets.QSizePolicy.Policy.Expanding,
+        )
+        self._card_layout = lay
+        lay.addWidget(self._player_table_placeholder, 1)
+        # Both themes keep the lightweight placeholder during card construction.
+        # Build the real player table only when the first server response arrives
+        # in apply_result(). This avoids eagerly creating five QTreeWidgets,
+        # headers and delegates while preserving the card's vertical geometry.
 
         # EDIT replaces the normal bottom action row instead of adding another
         # row. This keeps the PLAYER table geometry stable in short server cards.
         self.editActions = QtWidgets.QWidget(); self.editActions.setObjectName("serverEditActions")
         self.editActions.setFixedHeight(40)
         edit_l = QtWidgets.QHBoxLayout(self.editActions); edit_l.setContentsMargins(0,0,0,0); edit_l.setSpacing(6)
-        left_btn = MaterialPushButton("◀"); left_btn.setObjectName("serverEditButton"); left_btn.setToolTip("Move left"); left_btn.clicked.connect(lambda: self.moveRequested.emit(self.server.get("address", ""), -1)); edit_l.addWidget(left_btn)
-        right_btn = MaterialPushButton("▶"); right_btn.setObjectName("serverEditButton"); right_btn.setToolTip("Move right"); right_btn.clicked.connect(lambda: self.moveRequested.emit(self.server.get("address", ""), 1)); edit_l.addWidget(right_btn)
-        alias_btn = MaterialPushButton("ALIAS"); alias_btn.setObjectName("serverEditButton"); alias_btn.clicked.connect(lambda: self.aliasRequested.emit(self.server.get("address", ""))); edit_l.addWidget(alias_btn)
+        left_btn = MaterialPushButton("◀"); left_btn.setObjectName("serverEditButton"); left_btn.setFixedSize(30, 36); left_btn.setToolTip("Move left"); left_btn.clicked.connect(lambda: self.moveRequested.emit(self.server.get("address", ""), -1)); edit_l.addWidget(left_btn)
+        right_btn = MaterialPushButton("▶"); right_btn.setObjectName("serverEditButton"); right_btn.setFixedSize(30, 36); right_btn.setToolTip("Move right"); right_btn.clicked.connect(lambda: self.moveRequested.emit(self.server.get("address", ""), 1)); edit_l.addWidget(right_btn)
+        alias_btn = MaterialPushButton("ALIAS"); alias_btn.setObjectName("serverEditButton"); alias_btn.setFixedSize(58, 36); alias_btn.clicked.connect(lambda: self.aliasRequested.emit(self.server.get("address", ""))); edit_l.addWidget(alias_btn)
         edit_l.addStretch(1)
-        remove_btn = MaterialPushButton("REMOVE"); remove_btn.setObjectName("serverRemoveButton"); remove_btn.clicked.connect(lambda: self.removeRequested.emit(self.server.get("address", ""))); edit_l.addWidget(remove_btn)
+        remove_btn = MaterialPushButton("REMOVE"); remove_btn.setObjectName("serverRemoveButton"); remove_btn.setFixedSize(76, 36)
+        remove_btn.setProperty("muteLauncherSfx", True)
+        remove_btn.clicked.connect(lambda: self.removeRequested.emit(self.server.get("address", "")))
+        edit_l.addWidget(remove_btn)
         self.editActions.hide(); lay.addWidget(self.editActions)
+        _server_card_mark("edit_actions")
 
         self.normalActions = QtWidgets.QWidget(); self.normalActions.setObjectName("serverNormalActions")
         self.normalActions.setFixedHeight(40)
@@ -9038,7 +10002,100 @@ class ServerCard(QtWidgets.QFrame):
         copy_btn.clicked.connect(lambda: self.copyRequested.emit(self.server.get("address", ""))); actions.addWidget(copy_btn)
         self.connectButton = MaterialPushButton("CONNECT"); self.connectButton.setObjectName("serverConnectButton"); self.connectButton.setEnabled(q3elite_is_installed()); self.connectButton.clicked.connect(lambda: self.connectRequested.emit(self.server.get("address", ""))); actions.addWidget(self.connectButton, 1)
         lay.addWidget(self.normalActions)
+        _server_card_mark("normal_actions")
         self._set_levelshot(str(server.get("mapname", "") or ""))
+        _server_card_mark("levelshot_assignment")
+
+    def _ensure_player_table(self):
+        table = self.playerList
+        if table is not None:
+            return table
+
+        _table_started = time.perf_counter()
+        _table_phase_started = _table_started
+        callback = self._profile_callback
+
+        def _table_mark(phase):
+            nonlocal _table_phase_started
+            if callback is None:
+                return
+            now = time.perf_counter()
+            try:
+                callback(
+                    "server_player_table_phase", "servers",
+                    phase=phase,
+                    phase_ms=(now - _table_phase_started) * 1000.0,
+                )
+            except Exception:
+                pass
+            _table_phase_started = now
+
+        table = ServerPlayerTable(self)
+        table.setObjectName("serverPlayerList")
+        _table_mark("tree_widget_create")
+        header = MaterialHeaderView(QtCore.Qt.Orientation.Horizontal, table)
+        table.setHeader(header)
+        table.setItemDelegate(Q3NameDelegate(table))
+        _table_mark("material_header_and_delegate")
+        table.setColumnCount(3)
+        table.setHeaderLabels(["PLAYER", "SCORE", "PING"])
+        table.setRootIsDecorated(False)
+        table.setIndentation(0)
+        table.setSelectionMode(QtWidgets.QAbstractItemView.SelectionMode.NoSelection)
+        table.setFocusPolicy(QtCore.Qt.FocusPolicy.NoFocus)
+        table.setUniformRowHeights(True)
+        table.setAlternatingRowColors(False)
+        table.setVerticalScrollMode(QtWidgets.QAbstractItemView.ScrollMode.ScrollPerPixel)
+        table.header().setSectionResizeMode(0, QtWidgets.QHeaderView.ResizeMode.Stretch)
+        table.header().setSectionResizeMode(1, QtWidgets.QHeaderView.ResizeMode.Fixed)
+        table.header().setSectionResizeMode(2, QtWidgets.QHeaderView.ResizeMode.Fixed)
+        table.setColumnWidth(1, 58)
+        table.setColumnWidth(2, 72)
+        table.headerItem().setTextAlignment(
+            1, int(QtCore.Qt.AlignmentFlag.AlignRight | QtCore.Qt.AlignmentFlag.AlignVCenter)
+        )
+        table.headerItem().setTextAlignment(
+            2, int(QtCore.Qt.AlignmentFlag.AlignRight | QtCore.Qt.AlignmentFlag.AlignVCenter)
+        )
+        table.setMinimumHeight(180)
+        table.wheelRequested.connect(self.wheelRequested.emit)
+        _table_mark("columns_and_behavior")
+
+        placeholder = self._player_table_placeholder
+        layout = self._card_layout
+        index = layout.indexOf(placeholder) if layout is not None and placeholder is not None else -1
+        if index >= 0:
+            layout.insertWidget(index, table, 1)
+            layout.removeWidget(placeholder)
+        else:
+            layout.addWidget(table, 1)
+        self.playerList = table
+        self._player_table_placeholder = None
+        _table_mark("layout_swap")
+        if placeholder is not None:
+            placeholder.deleteLater()
+
+        # _add_server_card installs the window's event filter on existing
+        # descendants. The table is created later, so attach it here as well.
+        try:
+            window = self.window()
+            if window is not None:
+                table.installEventFilter(window)
+                for child in table.findChildren(QtWidgets.QWidget):
+                    child.installEventFilter(window)
+        except RuntimeError:
+            pass
+
+        _table_mark("event_filter_setup")
+        if callback is not None:
+            try:
+                callback(
+                    "server_player_table_lazy_build", "servers",
+                    build_ms=(time.perf_counter() - _table_started) * 1000.0,
+                )
+            except Exception:
+                pass
+        return table
 
     def _advance_background(self):
         self._bg_phase = (self._bg_phase + 0.0032) % 1.0
@@ -9126,48 +10183,148 @@ class ServerCard(QtWidgets.QFrame):
         self.levelshotLabel.setPixmap(_rounded_pixmap(cropped, theme_float("servers.preview_radius", 12.0)))
 
     def _set_levelshot(self, mapname):
+        _levelshot_started = time.perf_counter()
+        _resolve_started = _levelshot_started
         path = _resolve_levelshot_path(str(mapname or "").strip(), self.levelshots_dir)
+        _resolve_ms = (time.perf_counter() - _resolve_started) * 1000.0
         if not path:
-            self._bg_source = QtGui.QPixmap(); self._bg_blurred = QtGui.QPixmap(); self._update_levelshot_label(); self.update(); return
-        pix = _load_pixmap_file(path)
-        if pix.isNull(): return
-        self._bg_source = pix.scaled(900,506,QtCore.Qt.AspectRatioMode.KeepAspectRatioByExpanding,QtCore.Qt.TransformationMode.SmoothTransformation)
+            self._bg_source = QtGui.QPixmap()
+            self._bg_blurred = QtGui.QPixmap()
+            self._update_levelshot_label()
+            self.update()
+            return
+        try:
+            stat = path.stat()
+            source_key = (str(path.resolve()), stat.st_mtime_ns, stat.st_size, 900, 506)
+        except OSError:
+            return
+        scaled_source = _SERVER_LEVELSHOT_SOURCE_CACHE.get(source_key)
+        _source_cache_hit = scaled_source is not None and not scaled_source.isNull()
+        _source_started = time.perf_counter()
+        if not _source_cache_hit:
+            pix = _load_pixmap_file(path)
+            if pix.isNull():
+                return
+            scaled_source = pix.scaled(
+                900, 506,
+                QtCore.Qt.AspectRatioMode.KeepAspectRatioByExpanding,
+                QtCore.Qt.TransformationMode.SmoothTransformation,
+            )
+            _SERVER_LEVELSHOT_SOURCE_CACHE[source_key] = scaled_source
+        _source_ms = (time.perf_counter() - _source_started) * 1000.0
+        self._bg_source = scaled_source
         if self.presentation == "thumbnail":
             self._bg_blurred = QtGui.QPixmap()
             self._update_levelshot_label()
         else:
-            self._bg_blurred = _blur_pixmap(self._bg_source,radius=theme_float("servers.blur_radius",8.0),sample=QtCore.QSize(900,506))
+            radius = theme_float("servers.blur_radius", 8.0)
+            blur_key = (source_key, round(float(radius), 2))
+            blurred = _SERVER_LEVELSHOT_BLUR_CACHE.get(blur_key)
+            _blur_cache_hit = blurred is not None and not blurred.isNull()
+            _blur_started = time.perf_counter()
+            if not _blur_cache_hit:
+                blurred = _blur_pixmap(
+                    self._bg_source,
+                    radius=radius,
+                    sample=QtCore.QSize(900, 506),
+                )
+                if not blurred.isNull():
+                    _SERVER_LEVELSHOT_BLUR_CACHE[blur_key] = blurred
+            _blur_ms = (time.perf_counter() - _blur_started) * 1000.0
+            self._bg_blurred = blurred
+        if self._profile_callback is not None:
+            try:
+                self._profile_callback(
+                    "server_levelshot", "servers",
+                    map=str(mapname or ""), resolve_ms=_resolve_ms,
+                    source_ms=_source_ms, blur_ms=locals().get("_blur_ms", 0.0),
+                    source_hit=_source_cache_hit,
+                    blur_hit=locals().get("_blur_cache_hit", False),
+                    total_ms=(time.perf_counter() - _levelshot_started) * 1000.0,
+                )
+            except Exception:
+                pass
         self.update()
 
-    def apply_result(self, result):
-        self.server.update(result); online = bool(result.get("online")); self.stateLabel.setText(""); self.stateLabel.setToolTip("Online" if online else "Offline"); self.stateLabel.setProperty("online",online); self.stateLabel.style().unpolish(self.stateLabel); self.stateLabel.style().polish(self.stateLabel)
+    def apply_result(self, result, defer_ms=0):
+        """Apply lightweight status immediately and spread table/image work over event-loop turns."""
+        result = dict(result or {})
+        self.server.update(result)
+        self._pending_server_result = result
+        online = bool(result.get("online"))
+
+        self.stateLabel.setText("")
+        self.stateLabel.setToolTip("Online" if online else "Offline")
+        self.stateLabel.setProperty("online", online)
+        self.stateLabel.style().unpolish(self.stateLabel)
+        self.stateLabel.style().polish(self.stateLabel)
+
         if not online:
-            self.pingLabel.setText("PING  —"); self.mapLabel.setText("MAP  —"); self.playersLabel.setText("PLAYERS  0 / —"); self.playerList.clear(); self.playerList.addTopLevelItem(QtWidgets.QTreeWidgetItem(["Server did not respond.","",""])); self._set_levelshot(""); return
-        hostname = _q3_plain_ascii(result.get("hostname","")); alias = _q3_plain_ascii(self.server.get("name","")); self.nameLabel.setText(alias or hostname or self.nameLabel.text())
-        mapname = str(result.get("mapname","")).strip(); self.mapLabel.setText(f"MAP  {mapname or '—'}"); self.pingLabel.setText(f"PING  {result.get('ping','—')} ms"); self.playersLabel.setText(f"PLAYERS  {result.get('clients',0)} / {result.get('maxclients',0) or '—'}")
-        self.playerList.clear(); players = result.get("players",[])
-        if players:
-            for p in players:
-                raw_name = str(p.get("name", ""))
-                display_name = _q3_plain_ascii(raw_name)
-                try:
-                    player_ping = int(p.get("ping", 0) or 0)
-                except (TypeError, ValueError):
-                    player_ping = 0
-                if player_ping == 0 and "(BOT)" not in display_name.upper():
-                    display_name = f"{display_name}  (BOT)"
-                item = QtWidgets.QTreeWidgetItem([
-                    display_name,
-                    str(p.get("score", 0)),
-                    f"{player_ping} ms",
-                ])
-                item.setData(0, QtCore.Qt.ItemDataRole.UserRole, raw_name)
-                item.setTextAlignment(1, int(QtCore.Qt.AlignmentFlag.AlignRight | QtCore.Qt.AlignmentFlag.AlignVCenter))
-                item.setTextAlignment(2, int(QtCore.Qt.AlignmentFlag.AlignRight | QtCore.Qt.AlignmentFlag.AlignVCenter))
-                self.playerList.addTopLevelItem(item)
+            self.pingLabel.setText("PING  —")
+            self.mapLabel.setText("MAP  —")
+            self.playersLabel.setText("PLAYERS  0 / —")
         else:
-            self.playerList.addTopLevelItem(QtWidgets.QTreeWidgetItem(["Server is empty.", "", ""]))
-        self._set_levelshot(mapname)
+            hostname = _q3_plain_ascii(result.get("hostname", ""))
+            alias = _q3_plain_ascii(self.server.get("name", ""))
+            self.nameLabel.setText(alias or hostname or self.nameLabel.text())
+            mapname = str(result.get("mapname", "")).strip()
+            self.mapLabel.setText(f"MAP  {mapname or '—'}")
+            self.pingLabel.setText(f"PING  {result.get('ping', '—')} ms")
+            self.playersLabel.setText(
+                f"PLAYERS  {result.get('clients', 0)} / {result.get('maxclients', 0) or '—'}"
+            )
+
+        if defer_ms is not None and not self._pending_server_details_scheduled:
+            self._pending_server_details_scheduled = True
+            QtCore.QTimer.singleShot(max(0, int(defer_ms)), self._apply_pending_server_details)
+
+    def _apply_pending_server_details(self):
+        self._pending_server_details_scheduled = False
+        result = self._pending_server_result
+        if not isinstance(result, dict):
+            return
+
+        online = bool(result.get("online"))
+        table = self._ensure_player_table()
+        table.setUpdatesEnabled(False)
+        try:
+            table.clear()
+            if not online:
+                table.addTopLevelItem(QtWidgets.QTreeWidgetItem(["Server did not respond.", "", ""]))
+                self._set_levelshot("")
+                return
+
+            players = result.get("players", []) or []
+            rows = []
+            if players:
+                for player in players:
+                    raw_name = str(player.get("name", ""))
+                    display_name = _q3_plain_ascii(raw_name)
+                    try:
+                        player_ping = int(player.get("ping", 0) or 0)
+                    except (TypeError, ValueError):
+                        player_ping = 0
+                    if player_ping == 0 and "(BOT)" not in display_name.upper():
+                        display_name = f"{display_name}  (BOT)"
+                    item = QtWidgets.QTreeWidgetItem([
+                        display_name, str(player.get("score", 0)), f"{player_ping} ms"
+                    ])
+                    item.setData(0, QtCore.Qt.ItemDataRole.UserRole, raw_name)
+                    item.setTextAlignment(
+                        1, int(QtCore.Qt.AlignmentFlag.AlignRight | QtCore.Qt.AlignmentFlag.AlignVCenter)
+                    )
+                    item.setTextAlignment(
+                        2, int(QtCore.Qt.AlignmentFlag.AlignRight | QtCore.Qt.AlignmentFlag.AlignVCenter)
+                    )
+                    rows.append(item)
+            else:
+                rows.append(QtWidgets.QTreeWidgetItem(["Server is empty.", "", ""]))
+
+            table.addTopLevelItems(rows)
+            self._set_levelshot(str(result.get("mapname", "")).strip())
+        finally:
+            table.setUpdatesEnabled(True)
+            table.viewport().update()
 
 
 class DemoRenameFilter(QtCore.QObject):
@@ -9297,27 +10454,71 @@ class FullscreenScreenshotWheelFilter(QtCore.QObject):
 # LOCAL MAP CATALOG
 # ============================================================================
 
+_MAP_PROFILE_LOCK = threading.Lock()
+_MAP_PROFILE_FILE = LAUNCHER_DATA_DIR / "logs" / "map_catalog_profile.log"
+
+
+def _map_profile_log(stage, **values):
+    """Append map-catalog timings only when launched by the Debug BAT."""
+    if not _Q3_PROFILE_ENABLED:
+        return
+    try:
+        _MAP_PROFILE_FILE.parent.mkdir(parents=True, exist_ok=True)
+        fields = " ".join(
+            f"{key}={value:.1f}ms" if isinstance(value, float)
+            else f"{key}={value}"
+            for key, value in values.items()
+        )
+        line = f"{datetime.datetime.now().isoformat(timespec='milliseconds')} stage={stage}"
+        if fields:
+            line += " " + fields
+        with _MAP_PROFILE_LOCK:
+            with _MAP_PROFILE_FILE.open("a", encoding="utf-8") as handle:
+                handle.write(line + "\\n")
+    except Exception as error:
+        # Profiling must never interfere with map loading.
+        print(f"[maps profiler] Could not write log: {error}")
+
+
 def _map_pk3_candidates():
-    """Return map PK3s from supported Q3Elite/preinstalled/downloaded locations."""
+    """Return map PK3s using scandir while preserving supported layouts."""
     baseq3 = GAME_ROOT / "baseq3"
     found = set()
-    patterns = (
-        "maps/*/*.pk3",                 # legacy/preinstalled layout
-        "maps/*/*/*.pk3",               # legacy/preinstalled layout, 2 levels
-        "mods/maps/*/*.pk3",            # preinstalled maps
-        "mods/maps/*/*/*.pk3",          # preinstalled maps, 2 levels
-        "mods/osp/baseq3/*.pk3",         # maps downloaded by OSP
-        "mods/osp/baseq3/*/*.pk3",       # tolerate one grouping folder
-        "*.pk3",                         # external PK3s in baseq3 root
-        "mods/baseq3/*.pk3",             # external baseq3 mod path
-    )
-    for pattern in patterns:
-        for path in baseq3.glob(pattern):
-            if path.is_file():
-                try:
-                    found.add(path.resolve())
-                except OSError:
-                    found.add(path)
+
+    def directories(parent):
+        try:
+            with os.scandir(parent) as entries:
+                return [Path(entry.path) for entry in entries if entry.is_dir(follow_symlinks=True)]
+        except OSError:
+            return []
+
+    def files(parent):
+        try:
+            with os.scandir(parent) as entries:
+                for entry in entries:
+                    if not entry.name.casefold().endswith(".pk3"):
+                        continue
+                    try:
+                        if entry.is_file(follow_symlinks=True):
+                            found.add(Path(entry.path).resolve())
+                    except OSError:
+                        continue
+        except OSError:
+            pass
+
+    files(baseq3)
+    for root_name in ("maps", "mods/maps"):
+        for first in directories(baseq3 / root_name):
+            files(first)
+            for second in directories(first):
+                files(second)
+
+    osp_root = baseq3 / "mods" / "osp" / "baseq3"
+    files(osp_root)
+    for child in directories(osp_root):
+        files(child)
+    files(baseq3 / "mods" / "baseq3")
+
     return sorted(found, key=lambda p: str(p).casefold())
 
 
@@ -9377,21 +10578,39 @@ def _safe_levelshot_name(map_name, suffix):
 
 
 def _map_manifest_key(path_value):
-    """Portable POSIX key rooted at GAME_ROOT (legacy absolute keys migrate)."""
+    """Return a stable GAME_ROOT-relative POSIX key.
+
+    Relative manifest keys are already portable and must never be resolved
+    against the process working directory. Doing so can accidentally prefix
+    the current directory (for example baseq3/baseq3/...) and invalidate the
+    entire cache when Launcher is started from inside baseq3.
+    """
     raw = str(path_value or "").strip()
     if not raw:
         return ""
+
+    normalized = raw.replace("\\\\", "/")
     p = Path(raw)
+
+    # Manifest v5 stores relative paths such as baseq3/maps/QLmaps/map.pk3.
+    # Preserve those verbatim (apart from harmless separators/dot segments).
+    if not p.is_absolute():
+        parts = [part for part in normalized.split("/") if part not in ("", ".")]
+        if parts and parts[0].casefold() == "baseq3":
+            return "/".join(parts)
+        # Other relative paths are also interpreted from GAME_ROOT, not CWD.
+        return "/".join(parts)
+
     try:
         return p.resolve().relative_to(GAME_ROOT.resolve()).as_posix()
     except Exception:
         # A manifest may have been copied together with the game from another
         # drive. Preserve everything from baseq3 onward when possible.
-        parts = list(p.parts)
+        parts = [part for part in normalized.split("/") if part not in ("", ".")]
         for index, part in enumerate(parts):
-            if str(part).casefold() == "baseq3":
-                return Path(*parts[index:]).as_posix()
-        return raw.replace("\\", "/")
+            if part.casefold() == "baseq3":
+                return "/".join(parts[index:])
+        return normalized
 
 
 def _map_manifest_game_path(value):
@@ -9461,11 +10680,17 @@ def _map_record_for_manifest(item):
 
 def _scan_map_pk3(pk3_path, extract_levelshots=True):
     """Read BSP/arena metadata from one PK3 and extract matching levelshots."""
+    _scan_t0 = time.perf_counter()
+    _zip_t0 = _scan_t0
+    _arena_ms = 0.0
+    _bsp_ms = 0.0
     result = []
     MAP_DISCOVERED_LEVELSHOTS_DIR.mkdir(parents=True, exist_ok=True)
     with zipfile.ZipFile(pk3_path, "r") as zf:
         names = zf.namelist()
         lower_to_real = {n.casefold(): n for n in names}
+        _zip_ms = (time.perf_counter() - _zip_t0) * 1000.0
+        _arena_t0 = time.perf_counter()
         arenas = {}
         for name in names:
             low = name.casefold()
@@ -9477,6 +10702,8 @@ def _scan_map_pk3(pk3_path, extract_levelshots=True):
                 except Exception:
                     pass
 
+        _arena_ms = (time.perf_counter() - _arena_t0) * 1000.0
+        _bsp_t0 = time.perf_counter()
         for name in names:
             low = name.casefold()
             if not (low.startswith("maps/") and low.endswith(".bsp")):
@@ -9510,6 +10737,17 @@ def _scan_map_pk3(pk3_path, extract_levelshots=True):
                 "gametype": gametype,
                 "levelshot": levelshot_file,
             })
+        _bsp_ms = (time.perf_counter() - _bsp_t0) * 1000.0
+    _map_profile_log(
+        "pk3_scan",
+        pak=pk3_path.name,
+        entries=len(names),
+        maps=len(result),
+        zip_index=_zip_ms,
+        arena_parse=_arena_ms,
+        bsp_levelshots=_bsp_ms,
+        total=(time.perf_counter() - _scan_t0) * 1000.0,
+    )
     return result
 
 
@@ -9529,7 +10767,9 @@ def build_local_map_catalog():
     Manifest v5 stores GAME_ROOT-relative PK3 paths and LAUNCHER_DATA_DIR-relative
     levelshots. v3/v4 absolute manifests are migrated transparently.
     """
+    _catalog_t0 = time.perf_counter()
     MAPS_MANIFEST_FILE.parent.mkdir(parents=True, exist_ok=True)
+    _manifest_read_t0 = time.perf_counter()
     cached = {}
     try:
         manifest = json.loads(MAPS_MANIFEST_FILE.read_text(encoding="utf-8"))
@@ -9542,29 +10782,54 @@ def build_local_map_catalog():
                     key = _map_manifest_key(raw_key)
                     if not key:
                         continue
-                    cached[key] = {
+                    # Windows paths are case-insensitive, but the portable
+                    # manifest keys are POSIX strings. A folder/file casing
+                    # change must not invalidate every otherwise identical PK3.
+                    cached[key.casefold()] = {
                         "signature": dict(entry.get("signature", {}) or {}),
                         "maps": [dict(x) for x in (entry.get("maps", []) or []) if isinstance(x, dict)],
                     }
     except Exception:
         cached = {}
+    _manifest_read_ms = (time.perf_counter() - _manifest_read_t0) * 1000.0
 
+    _candidate_t0 = time.perf_counter()
+    candidates = _map_pk3_candidates()
+    _candidate_ms = (time.perf_counter() - _candidate_t0) * 1000.0
     runtime_updated = {}
     manifest_updated = {}
     changed_paks = 0
-    for path in _map_pk3_candidates():
+    cached_paks = 0
+    cache_miss_key = 0
+    cache_miss_signature = 0
+    _stat_ms = 0.0
+    _cache_reuse_ms = 0.0
+    _pk3_scan_ms = 0.0
+    for path in candidates:
+        _stat_t0 = time.perf_counter()
         try:
             st = path.stat()
         except OSError:
             continue
         key = _map_manifest_key(path)
+        cache_key = key.casefold()
         signature = {"size": int(st.st_size), "mtime_ns": int(st.st_mtime_ns)}
-        old = cached.get(key, {})
+        _stat_ms += (time.perf_counter() - _stat_t0) * 1000.0
+        old = cached.get(cache_key, {})
         if old.get("signature") == signature and isinstance(old.get("maps"), list):
+            _cache_t0 = time.perf_counter()
             maps = [_map_record_from_manifest(item, current_pak=path) for item in old["maps"]]
+            _cache_reuse_ms += (time.perf_counter() - _cache_t0) * 1000.0
+            cached_paks += 1
         else:
+            if not old:
+                cache_miss_key += 1
+            else:
+                cache_miss_signature += 1
             try:
+                _scan_t0 = time.perf_counter()
                 maps = _scan_map_pk3(path, extract_levelshots=True)
+                _pk3_scan_ms += (time.perf_counter() - _scan_t0) * 1000.0
                 changed_paks += 1
             except (OSError, zipfile.BadZipFile) as error:
                 print(f"[maps] Could not scan {path.name}: {error}")
@@ -9576,6 +10841,7 @@ def build_local_map_catalog():
             "maps": [_map_record_for_manifest(item) for item in maps],
         }
 
+    _manifest_build_t0 = time.perf_counter()
     payload = {"version": 5, "paks": manifest_updated}
     encoded = json.dumps(payload, ensure_ascii=False, indent=2)
     try:
@@ -9586,7 +10852,9 @@ def build_local_map_catalog():
         tmp = MAPS_MANIFEST_FILE.with_suffix(".tmp")
         tmp.write_text(encoded, encoding="utf-8")
         tmp.replace(MAPS_MANIFEST_FILE)
+    _manifest_write_ms = (time.perf_counter() - _manifest_build_t0) * 1000.0
 
+    _aggregate_t0 = time.perf_counter()
     all_maps = []
     for entry in runtime_updated.values():
         all_maps.extend(entry.get("maps", []))
@@ -9594,6 +10862,28 @@ def build_local_map_catalog():
         str(m.get("name", "")).casefold(),
         str(m.get("pak", "")).casefold(),
     ))
+    _aggregate_ms = (time.perf_counter() - _aggregate_t0) * 1000.0
+    _map_profile_log(
+        "catalog",
+        candidates=len(candidates),
+        cached_paks=cached_paks,
+        changed_paks=changed_paks,
+        cache_miss_key=cache_miss_key,
+        cache_miss_signature=cache_miss_signature,
+        maps=len(all_maps),
+        manifest_read=_manifest_read_ms,
+        candidate_scan=_candidate_ms,
+        stat=_stat_ms,
+        cache_reuse=_cache_reuse_ms,
+        pk3_scan=_pk3_scan_ms,
+        manifest_write=_manifest_write_ms,
+        aggregate_sort=_aggregate_ms,
+        levelshot_cache_hits=_MAP_LEVELSHOT_CACHE_STATS["hits"],
+        levelshot_cache_misses=_MAP_LEVELSHOT_CACHE_STATS["misses"],
+        levelshot_cache_decode_ms=_MAP_LEVELSHOT_CACHE_STATS["decode_ms"],
+        levelshot_cache_mb=round(_MAP_LEVELSHOT_DECODE_CACHE.bytes_used / (1024.0 * 1024.0), 2),
+        total=(time.perf_counter() - _catalog_t0) * 1000.0,
+    )
     return all_maps, changed_paks
 
 
@@ -10472,6 +11762,52 @@ class MapCatalogWorker(QtCore.QThread):
             self.failed.emit(str(error))
 
 
+def _map_thumbnail_pixmap(source, target_size, radius=None):
+    """Return a cached cover-cropped + rounded Maps thumbnail.
+
+    The source cacheKey changes when its pixmap data is modified. Target size,
+    DPR and radius are included so Paper/Steel switches and DPI/resize changes
+    cannot accidentally reuse a surface rendered for different dimensions.
+    """
+    global _MAP_THUMBNAIL_CACHE_HITS, _MAP_THUMBNAIL_CACHE_MISSES
+    global _MAP_THUMBNAIL_SCALE_MS, _MAP_THUMBNAIL_ROUND_MS
+    if source is None or source.isNull():
+        return QtGui.QPixmap()
+    width = max(1, int(target_size.width()))
+    height = max(1, int(target_size.height()))
+    if radius is None:
+        radius = theme_float("maps.levelshot_radius", 9.0)
+    radius = round(max(0.0, float(radius)), 3)
+    try:
+        dpr = round(float(source.devicePixelRatio()), 3)
+    except Exception:
+        dpr = 1.0
+    key = (int(source.cacheKey()), width, height, radius, dpr)
+    cached = _MAP_THUMBNAIL_CACHE.get(key)
+    if cached is not None and not cached.isNull():
+        _MAP_THUMBNAIL_CACHE_HITS += 1
+        return cached
+
+    _MAP_THUMBNAIL_CACHE_MISSES += 1
+    target = QtCore.QSize(width, height)
+    _scale_t0 = time.perf_counter()
+    scaled = source.scaled(
+        target,
+        QtCore.Qt.AspectRatioMode.KeepAspectRatioByExpanding,
+        QtCore.Qt.TransformationMode.SmoothTransformation,
+    )
+    x = max(0, (scaled.width() - width) // 2)
+    y = max(0, (scaled.height() - height) // 2)
+    cropped = scaled.copy(x, y, width, height)
+    _MAP_THUMBNAIL_SCALE_MS += (time.perf_counter() - _scale_t0) * 1000.0
+    _round_t0 = time.perf_counter()
+    rendered = _rounded_pixmap(cropped, radius)
+    _MAP_THUMBNAIL_ROUND_MS += (time.perf_counter() - _round_t0) * 1000.0
+    if not rendered.isNull():
+        _MAP_THUMBNAIL_CACHE[key] = rendered
+    return rendered
+
+
 class AspectFillLabel(QtWidgets.QLabel):
     """Fixed-aspect thumbnail that cover-crops source art instead of letterboxing."""
     def __init__(self, aspect_w=16, aspect_h=9, parent=None):
@@ -10490,16 +11826,7 @@ class AspectFillLabel(QtWidgets.QLabel):
         if self._source.isNull() or self.width() < 2 or self.height() < 2:
             self.clear()
             return
-        target = self.size()
-        scaled = self._source.scaled(
-            target,
-            QtCore.Qt.AspectRatioMode.KeepAspectRatioByExpanding,
-            QtCore.Qt.TransformationMode.SmoothTransformation,
-        )
-        x = max(0, (scaled.width() - target.width()) // 2)
-        y = max(0, (scaled.height() - target.height()) // 2)
-        cropped = scaled.copy(x, y, target.width(), target.height())
-        self.setPixmap(_rounded_pixmap(cropped, theme_float("maps.levelshot_radius", 9.0)))
+        self.setPixmap(_map_thumbnail_pixmap(self._source, self.size()))
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
@@ -10527,8 +11854,502 @@ def _circular_icon_from_pixmap(pixmap, size=18):
 
 
 class MapRowHoverDelegate(FullRowHoverDelegate):
-    """Compatibility name used by Maps; now paints one continuous row."""
-    pass
+    """Paint Maps selection/hover as one continuous row, never as per-cell blocks."""
+    def __init__(self, view):
+        super().__init__(view)
+        self._selected_rows = set()
+        try:
+            self._selected_rows = {
+                model_index.row()
+                for model_index in view.selectionModel().selectedRows()
+            }
+            view.selectionModel().selectionChanged.connect(self._sync_selected_rows)
+            view.selectionModel().currentChanged.connect(self._sync_current_row)
+        except (AttributeError, RuntimeError):
+            pass
+
+    def _sync_selected_rows(self, *_args):
+        try:
+            self._selected_rows = {
+                model_index.row()
+                for model_index in self.view.selectionModel().selectedRows()
+            }
+            current = self.view.currentIndex()
+            if current.isValid() and self.view.selectionModel().hasSelection():
+                self._selected_rows.add(current.row())
+            self.view.viewport().update()
+        except RuntimeError:
+            pass
+
+    def _sync_current_row(self, current, _previous):
+        # A mouse click can change the current cell without a matching row
+        # selection notification. Track exactly one current row; never retain
+        # stale rows from previous currentChanged events.
+        try:
+            selection = self.view.selectionModel()
+            selected = {
+                model_index.row()
+                for model_index in selection.selectedRows()
+            }
+            if current.isValid() and selection.hasSelection():
+                selected = {current.row()}
+            self._selected_rows = selected
+            self.view.viewport().update()
+        except RuntimeError:
+            pass
+
+    def set_selected_row(self, row):
+        try:
+            self._selected_rows = {int(row)} if int(row) >= 0 else set()
+            self.view.viewport().update()
+        except (RuntimeError, TypeError, ValueError):
+            pass
+
+    def paint(self, painter, option, index):
+        # Paint the same full-row material through each cell's painter clip.
+        # This avoids gaps/different overlays between standard, thumbnail and
+        # action columns; each pixel of the row is painted exactly once.
+        self._paint_row_surface(painter, option, index)
+        clean = QtWidgets.QStyleOptionViewItem(option)
+        clean.state &= ~QtWidgets.QStyle.StateFlag.State_HasFocus
+        clean.state &= ~QtWidgets.QStyle.StateFlag.State_Selected
+        clean.state &= ~QtWidgets.QStyle.StateFlag.State_MouseOver
+        clean.state &= ~QtWidgets.QStyle.StateFlag.State_KeyboardFocusChange
+        clean.state &= ~QtWidgets.QStyle.StateFlag.State_Active
+        clean.showDecorationSelected = False
+        clean.backgroundBrush = QtGui.QBrush(QtCore.Qt.BrushStyle.NoBrush)
+        clean.palette.setBrush(
+            QtGui.QPalette.ColorRole.Highlight,
+            QtGui.QBrush(QtCore.Qt.BrushStyle.NoBrush),
+        )
+        # Bypass FullRowHoverDelegate.paint: it has its own column-0 painting
+        # path for other tables, which would otherwise double-paint Maps column 0.
+        QtWidgets.QStyledItemDelegate.paint(self, painter, clean, index)
+
+
+class LocalMapsTableModel(QtCore.QAbstractTableModel):
+    """Lightweight data model for the local Maps view (no per-cell QTableWidgetItems)."""
+    HEADERS = ["LEVELSHOT", "MAP", "PAK", "SIZE", "GAMETYPE", ""]
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._rows = []
+
+    def rowCount(self, parent=QtCore.QModelIndex()):
+        return 0 if parent.isValid() else len(self._rows)
+
+    def columnCount(self, parent=QtCore.QModelIndex()):
+        return 0 if parent.isValid() else 6
+
+    def headerData(self, section, orientation, role=QtCore.Qt.ItemDataRole.DisplayRole):
+        if role == QtCore.Qt.ItemDataRole.DisplayRole and orientation == QtCore.Qt.Orientation.Horizontal:
+            return self.HEADERS[section] if 0 <= section < len(self.HEADERS) else None
+        return None
+
+    def data(self, index, role=QtCore.Qt.ItemDataRole.DisplayRole):
+        if not index.isValid() or not (0 <= index.row() < len(self._rows)):
+            return None
+        item = self._rows[index.row()]
+        col = index.column()
+        if role == QtCore.Qt.ItemDataRole.DisplayRole:
+            if col == 1: return str(item.get("name") or item.get("map") or "Unknown")
+            if col == 2: return str(item.get("pak", ""))
+            if col == 3: return _human_file_size(item.get("pak_size"))
+            if col == 4: return str(item.get("gametype", "Unknown"))
+            return ""
+        if role == QtCore.Qt.ItemDataRole.ToolTipRole:
+            if col == 0: return f"BSP: {item.get('map', '')}\nLocation: {item.get('location', 'External')}"
+            if col == 1: return f"BSP: {item.get('map', '')}\nLocation: {item.get('location', 'External')}"
+            if col == 2: return str(item.get("pak_path", ""))
+            if col == 5:
+                pak_path = Path(str(item.get("pak_path", "") or ""))
+                return ("Protected Q3/Q3Elite content cannot be deleted."
+                        if pak_path.name.casefold() in PROTECTED_MAP_PAKS
+                        else "PLAY launches this map; trash removes its PK3 from disk. Extracted levelshots are kept.")
+        if role == QtCore.Qt.ItemDataRole.UserRole:
+            return item
+        if role == QtCore.Qt.ItemDataRole.TextAlignmentRole and col == 3:
+            return int(QtCore.Qt.AlignmentFlag.AlignCenter)
+        if role == QtCore.Qt.ItemDataRole.DecorationRole and col == 0:
+            return item.get("_thumbnail")
+        if role == QtCore.Qt.ItemDataRole.SizeHintRole:
+            return QtCore.QSize(1, 92)
+        if role == QtCore.Qt.ItemDataRole.UserRole + 1:
+            if col == 1: return (str(item.get("name") or item.get("map") or "Unknown").casefold(), str(item.get("pak", "")).casefold())
+            if col == 4: return (str(item.get("gametype", "Unknown")).casefold(), str(item.get("map", "")).casefold())
+        return None
+
+    def item(self, row):
+        return self._rows[row] if 0 <= row < len(self._rows) else None
+
+    def clear(self):
+        self.beginResetModel(); self._rows = []; self.endResetModel()
+
+    def append_rows(self, rows):
+        if not rows: return
+        first = len(self._rows); last = first + len(rows) - 1
+        self.beginInsertRows(QtCore.QModelIndex(), first, last)
+        self._rows.extend(rows)
+        self.endInsertRows()
+
+    def replace_sorted(self, rows):
+        self.beginResetModel(); self._rows = list(rows); self.endResetModel()
+
+    def sort_rows_preserving_indexes(self, rows):
+        """Reorder rows without resetting the model or invalidating action widgets."""
+        new_rows = list(rows)
+        if len(new_rows) != len(self._rows):
+            self.replace_sorted(new_rows)
+            return
+        old_rows = self._rows
+        if all(a is b for a, b in zip(old_rows, new_rows)):
+            return
+
+        # Real MaterialPushButton action cells are index widgets owned by the
+        # view and associated with persistent model indexes. Remap those
+        # indexes during a layout change so the controls travel with their map.
+        new_position = {id(item): row for row, item in enumerate(new_rows)}
+        persistent_before = self.persistentIndexList()
+        persistent_after = []
+        for old_index in persistent_before:
+            if not old_index.isValid():
+                persistent_after.append(QtCore.QModelIndex())
+                continue
+            item = old_rows[old_index.row()]
+            target_row = new_position.get(id(item))
+            if target_row is None:
+                persistent_after.append(QtCore.QModelIndex())
+            else:
+                persistent_after.append(self.index(target_row, old_index.column()))
+
+        self.layoutAboutToBeChanged.emit(
+            [], QtCore.QAbstractItemModel.LayoutChangeHint.VerticalSortHint
+        )
+        self._rows = new_rows
+        self.changePersistentIndexList(persistent_before, persistent_after)
+        self.layoutChanged.emit(
+            [], QtCore.QAbstractItemModel.LayoutChangeHint.VerticalSortHint
+        )
+
+
+class LocalMapsThumbnailDelegate(MapRowHoverDelegate):  # V18: QTableWidget thumbnail paint delegate
+    """Paint Local levelshots in the existing QTableWidget without per-row QLabel hosts.
+
+    The source pixmap is stored on the column-0 item. The final cover-cropped,
+    rounded surface is produced by the existing thumbnail cache at paint time.
+    All other columns continue to use the original row-hover delegate and the
+    PLAY/DELETE widgets remain untouched.
+    """
+    THUMBNAIL_ROLE = QtCore.Qt.ItemDataRole.UserRole + 2
+    ATTEMPTED_ROLE = QtCore.Qt.ItemDataRole.UserRole + 3
+
+    def paint(self, painter, option, index):
+        super().paint(painter, option, index)
+        if index.column() != 0:
+            return
+        source = index.data(self.THUMBNAIL_ROLE)
+        if source is None or not isinstance(source, QtGui.QPixmap) or source.isNull():
+            return
+        rect = option.rect.adjusted(10, 5, -10, -5)
+        if rect.width() < 2 or rect.height() < 2:
+            return
+        rendered = _map_thumbnail_pixmap(source, rect.size())
+        if rendered.isNull():
+            return
+        painter.save()
+        painter.setRenderHint(QtGui.QPainter.RenderHint.SmoothPixmapTransform, True)
+        painter.drawPixmap(rect.topLeft(), rendered)
+        painter.restore()
+
+
+class LocalMapsActionsDelegate(LocalMapsThumbnailDelegate):
+    """Paint local PLAY/DELETE controls without one QWidget per map row.
+
+    Two hidden MaterialPushButton prototypes preserve the launcher's existing
+    Paper/QSS and Obsidian material rendering. Their rasterized states are
+    cached and painted by the delegate; mouse interaction is handled here.
+    """
+    def __init__(self, parent, launcher):
+        super().__init__(parent)
+        self._launcher = launcher
+        self._table = parent
+        self._hovered = None
+        self._pressed = None
+        self._button_cache = {}
+        self._paint_count = 0
+        self._render_count = 0
+        self._play_button = MaterialPushButton("PLAY", parent)
+        self._play_button.setObjectName("mapPlayButton")
+        self._delete_button = MaterialPushButton("", parent)
+        self._delete_button.setObjectName("mapDeleteIconButton")
+        # These are render-only prototypes, not interactive child controls.
+        # Prevent Qt/QSS focus frames from leaking into the rasterized surface.
+        for prototype in (self._play_button, self._delete_button):
+            prototype.setFocusPolicy(QtCore.Qt.FocusPolicy.NoFocus)
+            prototype.setAttribute(QtCore.Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+            prototype.setAutoFillBackground(False)
+            prototype.clearFocus()
+        delete_icon = _map_delete_icon() if qta is not None else QtGui.QIcon()
+        if not delete_icon.isNull():
+            self._delete_button.setIcon(delete_icon)
+        else:
+            self._delete_button.setText("×")
+        self._play_button.hide()
+        self._delete_button.hide()
+        self._table.viewport().installEventFilter(self)
+
+    def _metrics(self):
+        gap = theme_int("maps.action_gap", 8)
+        play_w = theme_int("maps.primary_action_width", 116)
+        delete_w = theme_int("maps.delete_action_width", 40)
+        return gap, play_w, delete_w
+
+    def _action_rects(self, cell_rect):
+        gap, play_w, delete_w = self._metrics()
+        total = play_w + gap + delete_w
+        left = cell_rect.center().x() - total // 2
+        height = 38
+        top = cell_rect.center().y() - height // 2
+        return {
+            "play": QtCore.QRect(left, top, play_w, height),
+            "delete": QtCore.QRect(left + play_w + gap, top, delete_w, height),
+        }
+
+    def _map_action_at(self, index, point):
+        if not index.isValid() or index.column() != 5:
+            return None
+        rects = self._action_rects(self._table.visualRect(index))
+        for action, rect in rects.items():
+            if rect.contains(point):
+                return action
+        return None
+
+    def _button_pixmap(self, action, enabled, hovered, pressed, size):
+        button = self._play_button if action == "play" else self._delete_button
+        key = (
+            action, bool(enabled), bool(hovered), bool(pressed),
+            size.width(), size.height(),
+            str(getattr(ui_theme, "theme_name", "")),
+            str(getattr(ui_theme, "theme_dir", "")),
+        )
+        cached = self._button_cache.get(key)
+        if cached is not None:
+            return cached
+
+        button.setEnabled(bool(enabled))
+        button.setDown(bool(pressed))
+        if action == "delete":
+            if enabled:
+                delete_icon = _map_delete_icon()
+            else:
+                # Protected pak0/base content must read as unavailable at a glance.
+                disabled_icon_color = "#A0A0A0" if _q3_is_paper_theme() else "#4B5360"
+                delete_icon = _map_delete_icon(disabled_icon_color)
+            if not delete_icon.isNull():
+                button.setIcon(delete_icon)
+        # QWidget.render() does not reliably reproduce the real pointer-enter
+        # state for hidden prototypes. Supply an explicit state to the Obsidian
+        # painter and also synthesize Enter/Leave for Paper's QSS :hover rules.
+        button.setProperty("_q3_delegate_hover", bool(hovered))
+        button.setAttribute(QtCore.Qt.WidgetAttribute.WA_UnderMouse, bool(hovered))
+        button.resize(size)
+        button.ensurePolished()
+        try:
+            enter_type = QtCore.QEvent.Type.Enter if hovered else QtCore.QEvent.Type.Leave
+            QtWidgets.QApplication.sendEvent(button, QtCore.QEvent(enter_type))
+        except Exception:
+            pass
+        button.updateGeometry()
+        pixmap = QtGui.QPixmap(size)
+        pixmap.fill(QtCore.Qt.GlobalColor.transparent)
+        painter = QtGui.QPainter(pixmap)
+        painter.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing, True)
+        # QWidget.render() also captures the stylesheet's rectangular widget
+        # background. Clip the rasterized control to the same rounded shape
+        # used by the real MaterialPushButton so no square corners can appear
+        # against either the Steel row material or Paper selection background.
+        radius = float(theme_value("radius.md", 10))
+        radius = max(0.0, min(radius, size.height() * 0.5, size.width() * 0.5))
+        clip = QtGui.QPainterPath()
+        clip.addRoundedRect(QtCore.QRectF(0.5, 0.5, max(0.0, size.width()-1.0), max(0.0, size.height()-1.0)), radius, radius)
+        painter.setClipPath(clip)
+        button.render(painter, QtCore.QPoint(0, 0))
+        if _q3_is_paper_theme():
+            # Paint one crisp black outline over the rasterized QSS edge.
+            # Match the widget's outer geometry instead of drawing an inset
+            # second contour (which creates a soft/doubled border).
+            pen = QtGui.QPen(QtGui.QColor("#000000"))
+            pen.setWidthF(1.0)
+            painter.setPen(pen)
+            painter.setBrush(QtCore.Qt.BrushStyle.NoBrush)
+            border_rect = QtCore.QRectF(
+                0.5, 0.5, max(0.0, size.width() - 1.0),
+                max(0.0, size.height() - 1.0)
+            )
+            painter.drawRoundedRect(border_rect, radius, radius)
+        painter.end()
+        self._render_count += 1
+        self._button_cache[key] = pixmap
+        # Only a small set of UI states is useful; cap defensively across theme
+        # switches and unusual runtime size changes.
+        if len(self._button_cache) > 32:
+            self._button_cache.clear()
+            self._button_cache[key] = pixmap
+        return pixmap
+
+    def paint(self, painter, option, index):
+        super().paint(painter, option, index)
+        if index.column() != 5:
+            return
+        # super().paint() already reaches MapRowHoverDelegate through
+        # LocalMapsThumbnailDelegate and paints this cell's clipped row surface.
+        # Do not paint it again here: that double-composites the gradient and
+        # makes the action column visibly brighter than the rest of the row.
+        item = index.data(QtCore.Qt.ItemDataRole.UserRole) or {}
+        pak_path = str(item.get("pak_path", "") or "")
+        protected = self._launcher._map_pak_is_protected(Path(pak_path))
+        rects = self._action_rects(option.rect)
+        row = index.row()
+        for action, rect in rects.items():
+            hovered = self._hovered == (row, action)
+            pressed = self._pressed == (row, action)
+            enabled = not protected if action == "delete" else True
+            size = rect.size()
+            pixmap = self._button_pixmap(action, enabled, hovered, pressed, size)
+            painter.drawPixmap(rect.topLeft(), pixmap)
+        self._paint_count += 1
+
+    def editorEvent(self, event, model, option, index):
+        event_type = event.type()
+        if event_type == QtCore.QEvent.Type.MouseButtonPress:
+            if event.button() != QtCore.Qt.MouseButton.LeftButton:
+                return False
+            action = self._map_action_at(index, event.position().toPoint())
+            if action:
+                item = index.data(QtCore.Qt.ItemDataRole.UserRole) or {}
+                if action == "delete" and self._launcher._map_pak_is_protected(Path(str(item.get("pak_path", "") or ""))):
+                    return True
+                if action == "delete":
+                    self._launcher._play_launcher_sound("click")
+                self._pressed = (index.row(), action)
+                self._table.viewport().update(self._table.visualRect(index))
+                return False
+        elif event_type == QtCore.QEvent.Type.MouseButtonRelease:
+            if event.button() != QtCore.Qt.MouseButton.LeftButton:
+                return False
+            pressed = self._pressed
+            self._pressed = None
+            action = self._map_action_at(index, event.position().toPoint())
+            if pressed and action and pressed == (index.row(), action):
+                item = index.data(QtCore.Qt.ItemDataRole.UserRole) or {}
+                if action == "play":
+                    self._launcher.play_local_map(str(item.get("map", "")))
+                else:
+                    pak_path = str(item.get("pak_path", "") or "")
+                    if pak_path and not self._launcher._map_pak_is_protected(Path(pak_path)):
+                        self._launcher.delete_map_pak(Path(pak_path))
+                self._table.viewport().update(self._table.visualRect(index))
+                return True
+            self._table.viewport().update(self._table.visualRect(index))
+            return False
+        return False
+
+    def eventFilter(self, watched, event):
+        # LocalMapsActionsDelegate overrides the inherited eventFilter and is
+        # installed after FullRowHoverDelegate on the same viewport. Therefore
+        # Qt dispatches mouse events here instead of to the base implementation.
+        # Forward them explicitly so the shared row delegate updates hover_row
+        # for every column, including PLAY/DELETE.
+        FullRowHoverDelegate.eventFilter(self, watched, event)
+        if watched is self._table.viewport():
+            if event.type() == QtCore.QEvent.Type.MouseMove:
+                point = event.position().toPoint()
+                index = self._table.indexAt(point)
+                action = self._map_action_at(index, point)
+                current = (index.row(), action) if action else None
+                if current != self._hovered:
+                    old = self._hovered
+                    self._hovered = current
+                    if old:
+                        self._table.viewport().update(self._table.visualRect(self._table.model().index(old[0], 5)))
+                    if current:
+                        self._table.viewport().update(self._table.visualRect(index))
+                    self._table.viewport().setCursor(
+                        QtCore.Qt.CursorShape.PointingHandCursor if current
+                        else QtCore.Qt.CursorShape.ArrowCursor
+                    )
+            elif event.type() == QtCore.QEvent.Type.Leave:
+                old = self._hovered
+                self._hovered = None
+                self._pressed = None
+                self._table.viewport().setCursor(QtCore.Qt.CursorShape.ArrowCursor)
+                if old and 0 <= old[0] < self._table.model().rowCount():
+                    self._table.viewport().update(self._table.visualRect(self._table.model().index(old[0], 5)))
+        return False
+
+
+def _q3_is_paper_theme():
+    """Robust Paper detection for cold launch and live theme switches."""
+    try:
+        theme_dir = getattr(ui_theme, "theme_dir", None)
+        dir_text = str(theme_dir or "").replace("\\\\", "/").rstrip("/").casefold()
+        dir_name = dir_text.rsplit("/", 1)[-1]
+        theme_name = str(getattr(ui_theme, "theme_name", "")).casefold()
+        return (
+            dir_name == "paper"
+            or "paper" in dir_text
+            or "paper" in theme_name
+            or "white" in theme_name
+            or "light" in theme_name
+        )
+    except Exception:
+        return False
+
+
+class Q3DonationButton(GlowButton):
+    """Donation button: Steel keeps its original material; Paper shows a clean hover-only heart."""
+    def __init__(self, text="", parent=None):
+        super().__init__(text, parent)
+        self.setMouseTracking(True)
+        self.setAttribute(QtCore.Qt.WidgetAttribute.WA_Hover, True)
+        self.setObjectName("donationButton")
+        self.setToolTip("Support Q3Elite / Donations")
+        self.setAccessibleName("SUPPORT Q3ELITE")
+        self.setCheckable(False)
+
+    def paintEvent(self, event):
+        if not _q3_is_paper_theme():
+            return super().paintEvent(event)
+
+        # Paper: no button fill or outline. Keep the heart visible on the
+        # black rail: white by default, turning red on hover/press.
+        if not self.isEnabled():
+            return
+
+        painter = QtGui.QPainter(self)
+        painter.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing, True)
+        painter.setRenderHint(QtGui.QPainter.RenderHint.SmoothPixmapTransform, True)
+        size = 21.0
+        rect = QtCore.QRectF(
+            (self.width() - size) / 2.0,
+            (self.height() - size) / 2.0,
+            size, size,
+        )
+        heart_color = "#E84B5B" if (self.underMouse() or self.isDown()) else "#FFFFFF"
+        _paint_smooth_qta_icon(
+            painter,
+            (getattr(self, "_q3_icon_preferred", "fa5s.heart"),
+             getattr(self, "_q3_icon_fallback", "fa.heart")),
+            rect, heart_color,
+        )
+        painter.end()
+
+    def enterEvent(self, event):
+        self.update()
+        super().enterEvent(event)
+
+    def leaveEvent(self, event):
+        self.update()
+        super().leaveEvent(event)
 
 
 class ModernLauncherWindow(QtWidgets.QMainWindow):
@@ -10536,6 +12357,74 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
 
     def __init__(self):
         QtWidgets.QMainWindow.__init__(self)
+        self._startup_component_timings = []
+
+        # Diagnostic-only Qt event counter. It records event volume during
+        # synchronous construction; it does not consume, delay or modify events.
+        # The probe is installed before child widgets are created so early
+        # Polish/LayoutRequest events are included in the measurements.
+        self._startup_qt_event_counts = {}
+        self._startup_qt_event_deltas = []
+        _q3_event_types = {
+            int(QtCore.QEvent.Type.Polish): "Polish",
+            int(QtCore.QEvent.Type.PolishRequest): "PolishRequest",
+            int(QtCore.QEvent.Type.LayoutRequest): "LayoutRequest",
+            int(QtCore.QEvent.Type.ChildAdded): "ChildAdded",
+            int(QtCore.QEvent.Type.StyleChange): "StyleChange",
+            int(QtCore.QEvent.Type.FontChange): "FontChange",
+            int(QtCore.QEvent.Type.Resize): "Resize",
+            int(QtCore.QEvent.Type.Show): "Show",
+        }
+        class _Q3StartupEventCounter(QtCore.QObject):
+            def eventFilter(_probe_self, watched, event):
+                try:
+                    if isinstance(watched, QtWidgets.QWidget):
+                        _event_id = int(event.type())
+                        if _event_id in _q3_event_types:
+                            self._startup_qt_event_counts[_event_id] = (
+                                self._startup_qt_event_counts.get(_event_id, 0) + 1
+                            )
+                except Exception:
+                    pass
+                return False
+        self._startup_qt_event_names = _q3_event_types
+        def _q3_event_snapshot():
+            return dict(self._startup_qt_event_counts)
+
+        def _q3_record_event_delta(name, before):
+            after = self._startup_qt_event_counts
+            delta = []
+            for event_id, event_name in _q3_event_types.items():
+                amount = after.get(event_id, 0) - before.get(event_id, 0)
+                if amount:
+                    delta.append(f"{event_name}:{amount}")
+            self._startup_qt_event_deltas.append((str(name), ",".join(delta) if delta else "-"))
+
+        self._startup_qt_event_probe = _Q3StartupEventCounter(self)
+        _q3_app_for_probe = QtWidgets.QApplication.instance()
+        if _Q3_PROFILE_ENABLED and _q3_app_for_probe is not None:
+            _q3_app_for_probe.installEventFilter(self._startup_qt_event_probe)
+
+        def _q3_profile_component(name, callback):
+            if not _Q3_PROFILE_ENABLED:
+                return callback()
+            _event_before = _q3_event_snapshot()
+            _started = time.perf_counter()
+            result = callback()
+            self._startup_component_timings.append((str(name), (time.perf_counter() - _started) * 1000.0))
+            _q3_record_event_delta(name, _event_before)
+            return result
+        _q3_profile_last = time.perf_counter() if _Q3_PROFILE_ENABLED else 0.0
+        _q3_profile_last_events = _q3_event_snapshot() if _Q3_PROFILE_ENABLED else {}
+        def _q3_profile_mark(name):
+            nonlocal _q3_profile_last, _q3_profile_last_events
+            if not _Q3_PROFILE_ENABLED:
+                return
+            _now = time.perf_counter()
+            self._startup_component_timings.append((str(name), (_now - _q3_profile_last) * 1000.0))
+            _q3_record_event_delta(name, _q3_profile_last_events)
+            _q3_profile_last = _now
+            _q3_profile_last_events = _q3_event_snapshot()
         self._mapNetwork = QtNetwork.QNetworkAccessManager(self)
         self._worldspawnShotWorkers = []
         self._onlineThumbGeneration = 0
@@ -10608,8 +12497,12 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
         # Q3Elite Cloud is optional. Local launcher/game functionality never
         # depends on Supabase availability. Refresh tokens are protected by
         # Windows DPAPI inside AccountManager.
-        self.accountManager = AccountManager(LAUNCHER_DIR, LAUNCHER_DATA_DIR, PLAYTIME_DB)
-        self.supportManager = SupportManager(LAUNCHER_DIR, LAUNCHER_DATA_DIR)
+        self.accountManager = _q3_profile_component(
+            "account_manager", lambda: AccountManager(LAUNCHER_DIR, LAUNCHER_DATA_DIR, PLAYTIME_DB)
+        )
+        self.supportManager = _q3_profile_component(
+            "support_manager", lambda: SupportManager(LAUNCHER_DIR, LAUNCHER_DATA_DIR)
+        )
         self.supportDialog = None
         self.accountWorker = None
         self._account_sync_after_worker = False
@@ -10622,10 +12515,13 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
             _launcher_version = str(read_launcher_metadata().get("version", "unknown") or "unknown")
         except Exception:
             _launcher_version = "unknown"
-        self.diagnosticsManager = DiagnosticsManager(
-            LAUNCHER_DATA_DIR,
-            self.accountManager,
-            launcher_version=_launcher_version,
+        self.diagnosticsManager = _q3_profile_component(
+            "diagnostics_manager",
+            lambda: DiagnosticsManager(
+                LAUNCHER_DATA_DIR,
+                self.accountManager,
+                launcher_version=_launcher_version,
+            ),
         )
         self.diagnosticsManager.set_preferences(
             enabled=launcher_settings.get("send_diagnostics", False),
@@ -10655,8 +12551,10 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
         self.diagnosticsUiTimer.start()
 
         self._drag_pos = None
+        self._nav_icon_cache = {}
         self.pending_component_actions = []
         self._component_baseline = {}
+        _q3_profile_mark("window_pre_shell")
 
         self.shell = GothicShell(self)
         self.shell.setObjectName("shell")
@@ -10698,6 +12596,12 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
         side.addSpacing(4)
 
         self.homeNav = self._nav_button("HOME", "home", "fa5s.home")
+        self.homeAlertDot = QtWidgets.QLabel(self.homeNav)
+        self.homeAlertDot.setFixedSize(8, 8)
+        self.homeAlertDot.setAttribute(QtCore.Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+        self.homeAlertDot.setStyleSheet("background-color: #3b82f6; border: none; border-radius: 4px;")
+        self.homeAlertDot.setToolTip("Q3Elite / Launcher update available")
+        self.homeAlertDot.hide()
         self.addonsNav = self._nav_button("INSTALL ADDONS", "addons", "fa5s.puzzle-piece")
         self.statisticsNav = self._nav_button("STATISTICS", "statistics", "fa5s.chart-bar")
         self.serversNav = self._nav_button("SERVERS", "servers", "fa5s.server")
@@ -10706,9 +12610,8 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
         self.matchmakingAlertDots = []
         for index in range(3):
             dot = QtWidgets.QLabel(self.matchmakingNav)
-            dot.setFixedSize(11, 11)
+            dot.setFixedSize(8, 8)
             dot.setAttribute(QtCore.Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
-            dot.move(self.matchmakingNav.width() - 12 - (index * 12), 2)
             dot.hide()
             self.matchmakingAlertDots.append(dot)
         self.screenshotsNav = self._nav_button("SCREENSHOTS", "screenshots", "fa5s.image")
@@ -10716,18 +12619,25 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
         self.settingsNav = self._nav_button("SETTINGS", "settings", "fa5s.cog")
         self.accountNav = self._nav_button("PROFILE", "account", "fa5s.user-circle")
         self.changelogNav = self._nav_button("CHANGELOG", "changelog", "fa5s.scroll")
-        self.supportButton = GlowButton("")
-        self.supportButton.setObjectName("iconButton")
+        self.changelogAlertDot = QtWidgets.QLabel(self.changelogNav)
+        self.changelogAlertDot.setFixedSize(8, 8)
+        self.changelogAlertDot.setAttribute(QtCore.Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+        self.changelogAlertDot.setStyleSheet("background-color: #3b82f6; border: none; border-radius: 4px;")
+        self.changelogAlertDot.hide()
+        self.supportButton = Q3DonationButton("")
+        self.supportButton.setObjectName("donationButton")
         self.supportButton.setToolTip("Support Q3Elite / Donations")
         self.supportButton.setAccessibleName("SUPPORT Q3ELITE")
         self.supportButton.setCheckable(False)
-        self.supportButton.setFixedSize(34, 34)
-        self.supportButton._q3_icon_preferred = "ph.heart"
-        self.supportButton._q3_icon_fallback = "fa5s.heart"
+        _support_size = 34 if _q3_is_paper_theme() else 40
+        self.supportButton.setFixedSize(_support_size, _support_size)
+        self.supportButton._q3_icon_preferred = "fa5s.heart"
+        self.supportButton._q3_icon_fallback = "fa.heart"
         if qta is not None:
             for _candidate in ("ph.heart", "fa5s.heart"):
                 try:
-                    self.supportButton.setIcon(qta.icon(_candidate, color=theme_value("icons.nav_idle_color", "#F0F1F2")))
+                    _support_icon_color = "#D94B5B" if _q3_is_paper_theme() else "#FFFFFF"
+                    self.supportButton.setIcon(qta.icon(_candidate, color=_support_icon_color))
                     self.supportButton.setIconSize(QtCore.QSize(theme_int("icons.size_navigation", 21), theme_int("icons.size_navigation", 21)))
                     break
                 except Exception:
@@ -10865,6 +12775,7 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
         self.railStatus.hide()
         side.addWidget(self.supportButton, 0, QtCore.Qt.AlignmentFlag.AlignHCenter)
         root.addWidget(self.sidebar)
+        _q3_profile_mark("window_sidebar")
 
         # MAIN AREA ---------------------------------------------------------
         body = QtWidgets.QFrame()
@@ -10907,7 +12818,7 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
         else: self.closeButton.setText("×")
         self.closeButton.clicked.connect(self.close); wc.addWidget(self.closeButton)
         self.windowControls.adjustSize(); self.windowControls.move(max(0, self.shell.width() - self.windowControls.width()), 0); self.windowControls.raise_()
-        body_layout.addLayout(top)
+        _q3_profile_component("window_body_add_top_layout", lambda: body_layout.addLayout(top))
 
         self.pages = QtWidgets.QStackedWidget()
         self.pages.setObjectName("pages")
@@ -10937,40 +12848,82 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
             "matchmaking": self._build_matchmaking,
             "screenshots": self._build_screenshots,
             "demos": self._build_demos,
+            "settings": self._build_settings,
             "changelog": self._build_changelog,
+            "account": self._build_account,
         }
-        self._built_pages = {"home", "addons", "settings", "account", "changelog"}
+        self._built_pages = {"home", "addons"}
         self._building_pages = set()
+        _q3_profile_mark("window_page_registry")
 
-        self.homePage = self._build_home()
-        self.addonsPage = self._build_addons()
-        self.settingsPage = self._build_settings()
-        self.accountPage = self._build_account()
-        # Changelog is cheap now: it contains only Qt widgets/snapshot placeholders.
-        # Build it before the first navigation so clicking CHANGELOG never swaps a
-        # lazy placeholder for a real page. Chromium remains detached/off-screen.
-        self.changelogPage = self._build_changelog()
+        self.homePage = _q3_profile_component("build_home", self._build_home)
+        self.addonsPage = _q3_profile_component("build_addons", self._build_addons)
+        self.settingsPage = _q3_profile_component(
+            "lazy_create_settings", lambda: self._make_lazy_page("settings", "SETTINGS")
+        )
+        self.accountPage = _q3_profile_component(
+            "lazy_create_account", lambda: self._make_lazy_page("account", "PROFILE")
+        )
+        self.changelogPage = _q3_profile_component(
+            "lazy_create_changelog", lambda: self._make_lazy_page("changelog", "CHANGELOG")
+        )
+        _q3_profile_mark("window_primary_pages")
 
         lazy_enabled = theme_bool("performance.lazy_pages", True)
         if lazy_enabled:
-            self.statisticsPage = self._make_lazy_page("statistics", "STATISTICS")
-            self.serversPage = self._make_lazy_page("servers", "SERVERS")
-            self.mapsPage = self._make_lazy_page("maps", "MAPS")
-            self.matchmakingPage = self._make_lazy_page("matchmaking", "MATCHMAKING")
-            self.screenshotsPage = self._make_lazy_page("screenshots", "SCREENSHOTS")
-            self.demosPage = self._make_lazy_page("demos", "DEMOS")
+            self.statisticsPage = _q3_profile_component(
+                "lazy_create_statistics", lambda: self._make_lazy_page("statistics", "STATISTICS")
+            )
+            self.serversPage = _q3_profile_component(
+                "lazy_create_servers", lambda: self._make_lazy_page("servers", "SERVERS")
+            )
+            self.mapsPage = _q3_profile_component(
+                "lazy_create_maps", lambda: self._make_lazy_page("maps", "MAPS")
+            )
+            self.matchmakingPage = _q3_profile_component(
+                "lazy_create_matchmaking", lambda: self._make_lazy_page("matchmaking", "MATCHMAKING")
+            )
+            self.screenshotsPage = _q3_profile_component(
+                "lazy_create_screenshots", lambda: self._make_lazy_page("screenshots", "SCREENSHOTS")
+            )
+            self.demosPage = _q3_profile_component(
+                "lazy_create_demos", lambda: self._make_lazy_page("demos", "DEMOS")
+            )
         else:
             for page_name, builder in self._page_builders.items():
-                if page_name in self._built_pages:
+                if page_name == "account" or page_name in self._built_pages:
                     continue
                 page_widget = builder()
                 setattr(self, self._page_attr_names[page_name], page_widget)
                 self._built_pages.add(page_name)
 
-        for page in (self.homePage, self.addonsPage, self.statisticsPage, self.serversPage, self.mapsPage, self.matchmakingPage, self.screenshotsPage, self.demosPage, self.changelogPage, self.accountPage, self.settingsPage):
-            self.pages.addWidget(page)
-        body_layout.addWidget(self.pages, 1)
-        root.addWidget(body, 1)
+        _q3_profile_mark("window_lazy_page_creation")
+        _page_mount_entries = [
+            ("home", self.homePage),
+            ("addons", self.addonsPage),
+        ]
+        if not lazy_enabled:
+            _page_mount_entries.extend((
+                ("statistics", self.statisticsPage),
+                ("servers", self.serversPage),
+                ("maps", self.mapsPage),
+                ("matchmaking", self.matchmakingPage),
+                ("screenshots", self.screenshotsPage),
+                ("demos", self.demosPage),
+                ("changelog", self.changelogPage),
+                ("settings", self.settingsPage),
+            ))
+        for _page_name, _page_widget in _page_mount_entries:
+            _q3_profile_component(
+                f"op_pages_addWidget_{_page_name}",
+                lambda _widget=_page_widget: self.pages.addWidget(_widget),
+            )
+
+        _q3_profile_mark("window_page_mount")
+        _q3_profile_component("op_body_layout_addWidget_pages", lambda: body_layout.addWidget(self.pages, 1))
+        _q3_profile_component("op_root_layout_addWidget_body", lambda: root.addWidget(body, 1))
+
+        _q3_profile_mark("window_page_layout_mount")
 
         self.sizeGrip = QtWidgets.QSizeGrip(self)
         self.sizeGrip.setFixedSize(18, 18)
@@ -10981,6 +12934,9 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
         self.fullscreenShortcut.setContext(QtCore.Qt.ShortcutContext.ApplicationShortcut)
         self.fullscreenShortcut.activated.connect(self.toggle_fullscreen)
         self.fullscreenShortcut.activated.connect(lambda: self._play_launcher_sound("click"))
+        self.refreshShortcut = QtGui.QShortcut(QtGui.QKeySequence("F5"), self)
+        self.refreshShortcut.setContext(QtCore.Qt.ShortcutContext.WindowShortcut)
+        self.refreshShortcut.activated.connect(self.refresh_current_section)
 
         self.screenshotWheelFilter = ScreenshotWheelFilter(self)
         app = QtWidgets.QApplication.instance()
@@ -10992,18 +12948,20 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
         self.mediaFindShortcut.setContext(QtCore.Qt.ShortcutContext.WidgetWithChildrenShortcut)
         self.mediaFindShortcut.activated.connect(self._focus_current_media_search)
         self.mediaFindShortcut.activated.connect(lambda: self._play_launcher_sound("click"))
+        _q3_profile_mark("window_shortcuts_filters")
 
         requested_start = str(launcher_settings.get("starting_section", "home") or "home").lower()
         if requested_start == "last":
             requested_start = str(launcher_settings.get("last_section", "home") or "home").lower()
         if requested_start not in NAV_PAGE_ORDER:
             requested_start = "home"
-        self.show_page(requested_start)
-        self._load_component_state_initial()
-        self.load_settings_ui()
-        self._refresh_account_ui()
+        _q3_profile_component("show_start_page", lambda: self.show_page(requested_start))
+        QtCore.QTimer.singleShot(0, self._refresh_changelog_notification)
+        _q3_profile_component("load_component_state", self._load_component_state_initial)
+        _q3_profile_component("refresh_account_ui", self._refresh_account_ui)
         if self.accountManager.configured and self.accountManager.has_saved_session:
             QtCore.QTimer.singleShot(900, self.restore_account_session)
+        _q3_profile_mark("window_initial_state")
 
         # Screenshots are remote; only the launcher background is stored locally.
         self._hero_local = []
@@ -11038,6 +12996,8 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
         self.heroAutoTimer.timeout.connect(lambda: self.change_hero_image(1, automatic=True))
         self.load_hero_image()
         self._sync_home_hero_timer()
+        QtCore.QTimer.singleShot(0, self._refresh_initial_hero_geometry)
+        QtCore.QTimer.singleShot(180, self._refresh_initial_hero_geometry)
         QtCore.QTimer.singleShot(500, self._sync_home_hero_timer)
         QtCore.QTimer.singleShot(1800, self._prefetch_home_hero_images)
         QtCore.QTimer.singleShot(120, self._apply_native_backdrop)
@@ -11049,12 +13009,14 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
         self._preload_futures = []
         self._telegram_fetch_lock = threading.Lock()
         self._telegram_fetch_inflight = set()
-        QtCore.QTimer.singleShot(300, self.prepare_launcher_sounds)
-        QtCore.QTimer.singleShot(40, self._start_background_preload)
+        QtCore.QTimer.singleShot(1200, self.prepare_launcher_sounds)
+        # Low-priority metadata warm-up is deferred until the launcher has been
+        # interactive for several seconds. It must not compete with first paint.
+        QtCore.QTimer.singleShot(6000, self._start_background_preload)
         if (theme_bool("performance.lazy_pages", True)
                 and theme_bool("performance.warmup_pages", False)):
             QtCore.QTimer.singleShot(
-                max(0, theme_int("performance.warmup_delay_ms", 1200)),
+                max(4500, theme_int("performance.warmup_delay_ms", 5000)),
                 self._start_page_warmup,
             )
         # Matchmaking owns a background polling timer and notification audio.
@@ -11062,7 +13024,7 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
         # HOME, so alerts do not depend on opening the section first.
         if "matchmaking" not in self._built_pages:
             QtCore.QTimer.singleShot(
-                1400,
+                4500,
                 lambda: self._ensure_page_built("matchmaking")
                 if "matchmaking" not in self._built_pages else None,
             )
@@ -11081,6 +13043,82 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
         layout.addStretch(1)
         return page
 
+    def _q3_write_section_profile(self, event, page, **metrics):
+        """Append section profiling data only in explicit Debug mode."""
+        if not _Q3_PROFILE_ENABLED:
+            return
+        try:
+            profile_dir = LAUNCHER_DATA_DIR / "logs"
+            profile_dir.mkdir(parents=True, exist_ok=True)
+            profile_file = profile_dir / "section_profile.log"
+            stamp = datetime.datetime.now().isoformat(timespec="milliseconds")
+            theme_name = str(getattr(ui_theme, "theme_name", "unknown") or "unknown")
+            fields = " ".join(
+                [f"theme={theme_name}"] + [
+                    f"{key}={value:.2f}" if isinstance(value, float) else f"{key}={value}"
+                    for key, value in metrics.items()
+                ]
+            )
+            with profile_file.open("a", encoding="utf-8") as log:
+                log.write(f"{stamp} event={event} section={page} {fields}\n")
+        except Exception:
+            # Profiling must never affect navigation or page construction.
+            pass
+
+    def _q3_profile_navigation(self, page, started, changed):
+        """Measure navigation only in explicit Debug mode."""
+        if not _Q3_PROFILE_ENABLED or not changed:
+            return
+        sync_ms = (time.perf_counter() - started) * 1000.0
+        self._q3_write_section_profile("navigation", page, sync_ms=sync_ms)
+        sample = {"sync_ms": sync_ms, "tick_ms": None, "paint_ms": None}
+        target_widget = self.pages.currentWidget()
+        app = QtWidgets.QApplication.instance()
+
+        class _SectionPaintProbe(QtCore.QObject):
+            def eventFilter(_probe, watched, event):
+                if event.type() != QtCore.QEvent.Type.Paint:
+                    return False
+                try:
+                    belongs_to_page = (
+                        watched is target_widget
+                        or (isinstance(watched, QtWidgets.QWidget)
+                            and target_widget is not None
+                            and target_widget.isAncestorOf(watched))
+                    )
+                    if belongs_to_page and sample["paint_ms"] is None:
+                        sample["paint_ms"] = (time.perf_counter() - started) * 1000.0
+                        if app is not None:
+                            app.removeEventFilter(self._q3_active_section_paint_probe)
+                        self._q3_active_section_paint_probe = None
+                except RuntimeError:
+                    pass
+                return False
+
+        probe = _SectionPaintProbe(self)
+        self._q3_active_section_paint_probe = probe
+        if app is not None and target_widget is not None:
+            app.installEventFilter(probe)
+
+        def _after_tick():
+            sample["tick_ms"] = (time.perf_counter() - started) * 1000.0
+
+        def _after_settle():
+            if getattr(self, "_q3_active_section_paint_probe", None) is probe:
+                if app is not None:
+                    app.removeEventFilter(probe)
+                self._q3_active_section_paint_probe = None
+            self._q3_write_section_profile(
+                "navigation", page,
+                sync_ms=sample["sync_ms"],
+                next_tick_ms=sample["tick_ms"] if sample["tick_ms"] is not None else -1.0,
+                first_paint_ms=sample["paint_ms"] if sample["paint_ms"] is not None else -1.0,
+                after_150ms=(time.perf_counter() - started) * 1000.0,
+            )
+
+        QtCore.QTimer.singleShot(0, _after_tick)
+        QtCore.QTimer.singleShot(150, _after_settle)
+
     def _ensure_page_built(self, page_name):
         if page_name in self._built_pages:
             return getattr(self, self._page_attr_names[page_name])
@@ -11093,8 +13131,20 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
         self._building_pages.add(page_name)
         attr = self._page_attr_names[page_name]
         placeholder = getattr(self, attr)
+        # Keep inactive pages out of QStackedWidget until first use. This avoids
+        # startup StyleChange/Polish propagation across every placeholder.
+        if self.pages.indexOf(placeholder) < 0:
+            self.pages.addWidget(placeholder)
+        _q3_build_started = time.perf_counter()
+        _q3_build_success = False
         try:
             widget = builder()
+            if page_name == "settings" and not getattr(self, "_settings_build_async", False):
+                _settings_started = time.perf_counter()
+                self.load_settings_ui()
+                self._startup_component_timings.append(
+                    ("load_settings_ui", (time.perf_counter() - _settings_started) * 1000.0)
+                )
 
             # V4: keep the same QStackedWidget page object and mount the real
             # section inside the lazy host. Replacing the current stack widget
@@ -11123,11 +13173,10 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
                 if hasattr(widget, "_changelog_cards"):
                     placeholder._changelog_cards = widget._changelog_cards
                 self._built_pages.add(page_name)
-                if ui_theme is not None and theme_bool("performance.polish_lazy_pages", False):
-                    ui_theme.polish_widget_tree(widget)
                 _install_obsidian_scrollbars(widget)
                 placeholder.updateGeometry()
                 placeholder.update()
+                _q3_build_success = True
                 return placeholder
 
             old_index = self.pages.indexOf(placeholder)
@@ -11137,13 +13186,24 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
             placeholder.deleteLater()
             setattr(self, attr, widget)
             self._built_pages.add(page_name)
-            if ui_theme is not None and theme_bool("performance.polish_lazy_pages", False):
-                ui_theme.polish_widget_tree(widget)
             _install_obsidian_scrollbars(widget)
             if was_current:
                 self.pages.setCurrentWidget(widget)
+            _q3_build_success = True
             return widget
+        except Exception as error:
+            self._q3_write_section_profile(
+                "page_build_error", page_name,
+                error=repr(error),
+            )
+            raise
         finally:
+            _q3_build_elapsed = (time.perf_counter() - _q3_build_started) * 1000.0
+            self._q3_write_section_profile(
+                "page_build", page_name,
+                build_ms=_q3_build_elapsed,
+                built=int(_q3_build_success),
+            )
             self._building_pages.discard(page_name)
 
     def _start_page_warmup(self):
@@ -11152,7 +13212,7 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
         # in parallel and can then build from cache without blocking Chromium/UI.
         self._page_warmup_queue = [
             "servers", "maps", "screenshots", "demos",
-            "statistics", "matchmaking", "changelog",
+            "statistics", "matchmaking", "settings", "changelog",
         ]
         self._warm_next_page()
 
@@ -11169,11 +13229,11 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
             break
         if getattr(self, "_page_warmup_queue", None):
             QtCore.QTimer.singleShot(
-                max(25, theme_int("performance.warmup_step_ms", 90)),
+                max(250, theme_int("performance.warmup_step_ms", 350)),
                 self._warm_next_page,
             )
 
-    def _queue_telegram_fetch(self, url):
+    def _queue_telegram_fetch(self, url, force=False):
         """Queue one Telegram parse on the existing background pool.
 
         Duplicate URLs are coalesced and no Qt widget is ever touched from the
@@ -11182,7 +13242,9 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
         url = str(url or "").strip()
         if not url or not getattr(self, "_preload_executor", None):
             return
-        if _telegram_cached_post(url) is not None:
+        if force:
+            _telegram_forget_cached_post(url)
+        elif _telegram_cached_post(url) is not None:
             return
         lock = getattr(self, "_telegram_fetch_lock", None)
         inflight = getattr(self, "_telegram_fetch_inflight", None)
@@ -11250,7 +13312,7 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
         # QPixmap objects are touched here; those must stay on the GUI thread.
         folders = (
             GAME_ROOT / "baseq3" / "mods" / "osp" / "screenshots",
-            GAME_ROOT / "Q3Elite" / "Screenshots",
+            GAME_ROOT / "Q3Elite" / "screenshots",
             GAME_ROOT / "baseq3" / "mods" / "osp" / "demos",
         )
         try:
@@ -11281,19 +13343,22 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
         if executor is None:
             return
         try:
-            self._map_catalog_future = executor.submit(build_local_map_catalog)
+            # Do not enumerate/stat every PK3 during launcher startup. The map
+            # catalog is now created lazily when the Maps section is first opened;
+            # build_local_map_catalog() still uses maps_manifest and only opens
+            # archives whose size/mtime signature changed.
+            self._map_catalog_future = None
             self._preload_futures = [
                 executor.submit(self._preload_media_metadata),
-                self._map_catalog_future,
             ]
             # Telegram is deliberately low priority. Give the launcher its first
-            # interactive frames and the map/media warm-up slots first.
+            # interactive frames and media warm-up slots first.
             if not (TELEGRAM_WEBENGINE_AVAILABLE
                     and theme_bool("performance.changelog_auto_webengine", True)):
                 # Native HTML parsing is fallback-only. Never fetch the same
                 # newest posts once natively and again through WebEngine.
                 QtCore.QTimer.singleShot(
-                    max(250, theme_int("performance.changelog_preload_delay_ms", 1800)),
+                    max(1000, theme_int("performance.changelog_preload_delay_ms", 3500)),
                     self._submit_changelog_preload,
                 )
         except RuntimeError:
@@ -11310,8 +13375,22 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
         self.supportDialog.finished.connect(lambda *_: setattr(self, "supportDialog", None))
         self.supportDialog.open()
 
+    def _cached_nav_icon(self, icon_name, color):
+        if qta is None or not icon_name:
+            return None
+        key = (str(icon_name), str(color))
+        cached = self._nav_icon_cache.get(key)
+        if cached is not None:
+            return cached
+        try:
+            icon = qta.icon(str(icon_name), color=str(color))
+        except Exception:
+            return None
+        self._nav_icon_cache[key] = icon
+        return icon
+
     def _nav_button(self, text, page, icon_name=None):
-        b = GlowButton("")
+        b = MaterialPushButton("")
         preferred = None
         if qta is not None and icon_name:
             preferred = {
@@ -11330,11 +13409,10 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
             }.get(icon_name, icon_name)
             normal = theme_value("icons.nav_idle_color", "#F0F1F2")
             for candidate in (preferred, icon_name):
-                try:
-                    b.setIcon(qta.icon(candidate, color=normal))
+                icon = self._cached_nav_icon(candidate, normal)
+                if icon is not None:
+                    b.setIcon(icon)
                     break
-                except Exception:
-                    continue
             b.setIconSize(QtCore.QSize(
                 min(theme_int("icons.size_navigation", 21), 19),
                 min(theme_int("icons.size_navigation", 21), 19),
@@ -11348,8 +13426,27 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
         b.setProperty("page", page)
         nav_size = min(theme_int("layout.nav_button", 54), 48)
         b.setFixedSize(nav_size, nav_size)
-        b.clicked.connect(lambda checked=False, p=page: self.show_page(p))
+        if page == "changelog":
+            b.clicked.connect(lambda checked=False: self._handle_changelog_nav_click())
+        else:
+            b.clicked.connect(lambda checked=False, p=page: self.show_page(p))
         return b
+
+    def _handle_changelog_nav_click(self):
+        """Open Q3News on entry; repeated sidebar clicks toggle the two feeds."""
+        already_open = self.pages.currentWidget() is getattr(self, "changelogPage", None)
+        if not already_open:
+            self.show_page("changelog")
+            # Q3News is the first/default view when entering the section.
+            return
+
+        page = getattr(self, "changelogPage", None)
+        if page is not None and not callable(getattr(page, "_changelog_set_tab", None)):
+            page = getattr(page, "_q3_real_page", page)
+        callback = getattr(page, "_changelog_set_tab", None) if page is not None else None
+        stack = getattr(page, "_changelog_stack", None) if page is not None else None
+        if callable(callback) and stack is not None:
+            callback(1 if stack.currentIndex() == 0 else 0, mark_read=True)
 
     def _nav_indicator_rect(self, button):
         inset = max(0, theme_int("layout.nav_indicator_inset", 5))
@@ -11398,12 +13495,11 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
                 for candidate in (getattr(button, "_q3_icon_preferred", None), getattr(button, "_q3_icon_fallback", None)):
                     if not candidate:
                         continue
-                    try:
-                        button.setIcon(qta.icon(candidate, color=active if button.isChecked() else normal))
+                    icon = self._cached_nav_icon(candidate, active if button.isChecked() else normal)
+                    if icon is not None:
+                        button.setIcon(icon)
                         button.setIconSize(QtCore.QSize(size, size))
                         break
-                    except Exception:
-                        continue
             if hasattr(button, "refresh_active_glow"):
                 button.refresh_active_glow()
 
@@ -11434,6 +13530,10 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
             pass
 
     def apply_runtime_theme(self):
+        self._nav_icon_cache.clear()
+        if hasattr(self, "sidebar"):
+            self.sidebar._q3_sidebar_backdrop_key = None
+            self.sidebar.update()
         _clear_obsidian_render_cache()
         try:
             OBSIDIAN_MATERIAL.reset_caches()
@@ -11461,18 +13561,84 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
         for button in (
             self.homeNav, self.addonsNav, self.statisticsNav, self.serversNav,
             self.mapsNav, self.matchmakingNav, self.screenshotsNav, self.demosNav,
-            self.accountNav, self.settingsNav, self.changelogNav,
+            self.accountNav, self.settingsNav, self.changelogNav, self.supportButton,
         ):
             button.setFixedSize(nav_size, nav_size)
         self.railStatus.setStyleSheet(
             f"color:{theme_value('colors.semantic.success', '#89C541')}; background:transparent;"
         )
         self._refresh_nav_icons()
+        # Support is a plain QPushButton, deliberately outside the navigation
+        # icon/glow system. Reapply its monochrome icon and fixed circle after
+        # every runtime theme switch.
+        support = getattr(self, "supportButton", None)
+        if support is not None:
+            _support_size = 34 if _q3_is_paper_theme() else 40
+            support.setFixedSize(_support_size, _support_size)
+            support.setCheckable(False)
+            support.setChecked(False)
+            support.setDown(False)
+            if qta is not None:
+                try:
+                    icon_color = "#D94B5B" if _q3_is_paper_theme() else "#FFFFFF"
+                    preferred = getattr(support, "_q3_icon_preferred", "ph.heart")
+                    fallback = getattr(support, "_q3_icon_fallback", "fa5s.heart")
+                    try:
+                        support.setIcon(qta.icon(preferred, color=icon_color))
+                    except Exception:
+                        support.setIcon(qta.icon(fallback, color=icon_color))
+                    support.setIconSize(QtCore.QSize(21, 21))
+                except Exception:
+                    pass
+            style = support.style()
+            style.unpolish(support)
+            style.polish(support)
+            support.update()
+        # Force Qt to recalculate QSS subcontrols after live theme changes.
+        # This prevents stale square hover/checked primitives surviving a
+        # Steel -> Paper switch on already-created widgets.
+        for widget in [self, *self.findChildren(QtWidgets.QWidget)]:
+            try:
+                style = widget.style()
+                style.unpolish(widget)
+                style.polish(widget)
+                widget.updateGeometry()
+                widget.update()
+            except (RuntimeError, AttributeError):
+                pass
         for glow_button in self.findChildren(GlowButton):
             try:
                 glow_button.refresh_theme_effect()
             except RuntimeError:
                 pass
+
+        def _refresh_support_after_theme():
+            support_button = getattr(self, "supportButton", None)
+            if support_button is None or qta is None:
+                return
+            try:
+                idle_color = "#D94B5B" if _q3_is_paper_theme() else "#FFFFFF"
+                for candidate in (
+                    getattr(support_button, "_q3_icon_preferred", "ph.heart"),
+                    getattr(support_button, "_q3_icon_fallback", "fa5s.heart"),
+                ):
+                    if not candidate:
+                        continue
+                    try:
+                        support_button.setIcon(qta.icon(candidate, color=idle_color))
+                        break
+                    except Exception:
+                        continue
+                support_button.setIconSize(QtCore.QSize(
+                    min(theme_int("icons.size_navigation", 21), 19),
+                    min(theme_int("icons.size_navigation", 21), 19),
+                ))
+                support_button.update()
+            except RuntimeError:
+                pass
+
+        QtCore.QTimer.singleShot(0, _refresh_support_after_theme)
+        QtCore.QTimer.singleShot(80, _refresh_support_after_theme)
         for themed_button in self.findChildren(ThemedIconButton):
             try:
                 themed_button._refresh_theme_icon()
@@ -11537,8 +13703,6 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
         if cards and any(getattr(card, "presentation", "cinematic") != expected_server_presentation for card in cards):
             self._reload_server_cards()
             QtCore.QTimer.singleShot(0, self.refresh_servers)
-        if ui_theme is not None:
-            ui_theme.polish_widget_tree(self)
         # Existing material cards may survive a theme hot reload; repaint them
         # so live texture opacity/path edits become visible immediately.
         for material_card in self.findChildren(SurfaceCard):
@@ -11573,8 +13737,166 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
         f.setObjectName(name)
         return f
 
+    def _open_modder_files_share(self):
+        """Open the pCloud share configured for the Q3Elite full file tree."""
+        config_file = DOWNLOAD_CONFS_DIR / "Quake 3 Elite pcloud.dconf"
+        try:
+            if not config_file.is_file():
+                raise FileNotFoundError(f"Missing pCloud configuration: {config_file}")
+            raw = config_file.read_text(encoding="utf-8-sig").strip()
+            match = re.search(r"https?://[^\s\"']+", raw)
+            if match:
+                share_url = match.group(0).rstrip(",;")
+            else:
+                code_match = re.search(r"(?:[?&]|\b)code=([A-Za-z0-9_-]+)", raw, re.IGNORECASE)
+                if not code_match:
+                    raise ValueError("The Q3Elite pCloud configuration does not contain a public link.")
+                share_url = "https://e.pcloud.link/publink/show?code=" + code_match.group(1)
+            QtGui.QDesktopServices.openUrl(QtCore.QUrl(share_url))
+        except Exception as error:
+            self.set_addon_message(f"Could not open pCloud share: {error}", error=True)
+
+    @staticmethod
+    def _home_changelog_preview_text():
+        try:
+            entries = read_changelog_entries()
+            if not entries:
+                return "Release notes are not available offline."
+            launcher_entries = [item for item in entries if str(item.get("type", "") or "").strip().casefold() in {"launcher", "changelog"}]
+            ordered = sorted(launcher_entries or entries, key=lambda item: _changelog_version_key(item.get("version", "")) or (), reverse=True)
+            release = ordered[0]
+            version = str(release.get("version", "") or "").strip()
+            changes = release.get("changes", release.get("changelog", release.get("items", release.get("notes", []))))
+            if isinstance(changes, str):
+                changes = [changes]
+            summary = " • ".join(str(item).strip() for item in (changes or [])[:2] if str(item).strip())
+            prefix = f"v{version}  •  " if version else ""
+            return prefix + (summary or "Open Changelog to read the release notes.")
+        except Exception:
+            return "Open Changelog to read the latest release notes."
+
+    def _open_home_changelog(self):
+        self.show_page("changelog")
+
+        def select_release_notes():
+            page = getattr(self, "changelogPage", None)
+            if page is not None and not callable(getattr(page, "_changelog_set_tab", None)):
+                page = getattr(page, "_q3_real_page", page)
+            callback = getattr(page, "_changelog_set_tab", None) if page is not None else None
+            if callable(callback):
+                callback(1)
+
+        # Lazy page creation may complete after show_page() returns.
+        QtCore.QTimer.singleShot(0, select_release_notes)
+
+    def _run_home_update_target(self, target):
+        """Start only the selected updater; ALL runs OSP, Q3Elite, then Launcher."""
+        if target == "all":
+            steps = []
+            for key in ("osp2be", "q3elite", "launcher"):
+                state = home_update_checks.get(key)
+                actionable = (
+                    _home_state_has_version_update(state)
+                    or _home_state_needs_repair(state)
+                    or (key == "osp2be" and isinstance(state, dict) and state.get("update_available"))
+                )
+                if actionable:
+                    steps.append(key)
+            self._home_update_sequence = steps
+            self._run_home_update_sequence_step()
+            return
+
+        launcher_state = home_update_checks.get("launcher")
+        q3elite_state = home_update_checks.get("q3elite")
+        launcher_actionable = _home_state_has_version_update(launcher_state) or _home_state_needs_repair(launcher_state)
+        q3elite_actionable = _home_state_has_version_update(q3elite_state) or _home_state_needs_repair(q3elite_state)
+
+        if target == "launcher" and launcher_actionable:
+            if "launcher_self_update" in globals() and not launcher_self_update.isRunning():
+                launcher_self_update.start()
+                self.homeUpdateButton.setEnabled(False)
+                self.homeUpdateButton.setText("CHECKING…")
+            return
+        if target == "q3elite" and q3elite_actionable:
+            refresh_updates()
+            self.homeUpdateButton.setEnabled(False)
+            self.homeUpdateButton.setText("UPDATING…")
+            return
+        if target == "osp2be":
+            if "post_update" in globals() and not post_update.isRunning():
+                post_update.set_force_update(True)
+                post_update.start()
+                self.homeUpdateButton.setEnabled(False)
+                self.homeUpdateButton.setText("UPDATING…")
+
+    def _run_home_update_sequence_step(self):
+        """Continue UPDATE ALL after each component worker has completed."""
+        steps = getattr(self, "_home_update_sequence", None)
+        if not steps:
+            self._home_update_sequence = []
+            return
+        target = steps.pop(0)
+        self.homeUpdateButton.setEnabled(False)
+        self.homeUpdateButton.setText("UPDATING…")
+        if target == "launcher":
+            if "launcher_self_update" in globals() and not launcher_self_update.isRunning():
+                launcher_self_update.start()
+            else:
+                QtCore.QTimer.singleShot(0, self._run_home_update_sequence_step)
+            return
+        self._home_update_sequence_waiting = True
+        if target == "osp2be":
+            if "post_update" in globals() and not post_update.isRunning():
+                post_update.set_force_update(True)
+                post_update.start()
+            else:
+                self._home_update_sequence_waiting = False
+                QtCore.QTimer.singleShot(0, self._run_home_update_sequence_step)
+        elif target == "q3elite":
+            refresh_updates()
+
+    def _start_home_update(self):
+        """Offer per-component update choices when both components have updates."""
+        actionable = []
+        for key in ("launcher", "q3elite", "osp2be"):
+            state = home_update_checks.get(key)
+            if _home_state_has_version_update(state) or _home_state_needs_repair(state) or (key == "osp2be" and isinstance(state, dict) and state.get("update_available")):
+                actionable.append(key)
+
+        if len(actionable) <= 1:
+            self._run_home_update_target(actionable[0] if actionable else "all")
+            return
+
+        menu = QtWidgets.QMenu(self)
+        menu.setObjectName("homeUpdateMenu")
+        launcher_action = menu.addAction("UPDATE LAUNCHER") if "launcher" in actionable else None
+        q3elite_action = menu.addAction("UPDATE Q3ELITE") if "q3elite" in actionable else None
+        osp_action = menu.addAction("UPDATE OSP2-BE") if "osp2be" in actionable else None
+        menu.addSeparator()
+        all_action = menu.addAction("UPDATE ALL")
+        if launcher_action is not None:
+            launcher_action.triggered.connect(lambda checked=False: self._run_home_update_target("launcher"))
+        if q3elite_action is not None:
+            q3elite_action.triggered.connect(lambda checked=False: self._run_home_update_target("q3elite"))
+        if osp_action is not None:
+            osp_action.triggered.connect(lambda checked=False: self._run_home_update_target("osp2be"))
+        all_action.triggered.connect(lambda checked=False: self._run_home_update_target("all"))
+        menu.exec(self.homeUpdateButton.mapToGlobal(QtCore.QPoint(0, self.homeUpdateButton.height())))
+
     def _build_home(self):
         """Layer 2 home: one strong launch composition, not a dashboard of boxes."""
+        _profile_last = time.perf_counter()
+        def _profile_mark(name):
+            nonlocal _profile_last
+            _now = time.perf_counter()
+            try:
+                self._startup_component_timings.append(
+                    (f"home_{name}", (_now - _profile_last) * 1000.0)
+                )
+            except Exception:
+                pass
+            _profile_last = _now
+
         page = QtWidgets.QWidget()
         page.setObjectName("homePage")
         layout = QtWidgets.QVBoxLayout(page)
@@ -11601,6 +13923,7 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
         # Home composition while a higher-resolution image finishes loading.
         self.heroImage.setSizePolicy(QtWidgets.QSizePolicy.Policy.Ignored, QtWidgets.QSizePolicy.Policy.Expanding)
         self.heroImage.setScaledContents(False)
+        self.heroImage.installEventFilter(self)
         hero_l.addWidget(self.heroImage, 1)
 
         hero_controls = QtWidgets.QFrame()
@@ -11641,6 +13964,7 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
         hc.addWidget(self.heroNext)
         hero_l.addWidget(hero_controls)
         stage.addWidget(hero, 5)
+        _profile_mark("hero")
 
         # ------------------------------------------------------------------
         # LAUNCH / DOWNLOAD CONTROL CENTER
@@ -11648,6 +13972,7 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
         self.statusCard = self._card("homeLaunchPanel")
         self.statusCard.setMinimumWidth(theme_int("home.launch_panel_width", 380))
         panel = QtWidgets.QVBoxLayout(self.statusCard)
+        self.homePanelLayout = panel
         panel.setContentsMargins(22, 20, 22, 20)
         panel.setSpacing(10)
 
@@ -11659,6 +13984,12 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
         self.homeStatusDot = QtWidgets.QLabel("●")
         self.homeStatusDot.setObjectName("homeStatusDot")
         eyebrow_row.addWidget(self.homeStatusDot)
+        self.homeNotificationDot = QtWidgets.QLabel("●")
+        self.homeNotificationDot.setObjectName("homeNotificationDot")
+        self.homeNotificationDot.setToolTip("Updates or unread release notes are available")
+        self.homeNotificationDot.setStyleSheet("color: #3b82f6; font-size: 11px;")
+        self.homeNotificationDot.hide()
+        eyebrow_row.addWidget(self.homeNotificationDot)
         panel.addLayout(eyebrow_row)
 
         self.statusTitle = MetallicLabel("Checking Q3Elite…")
@@ -11666,7 +13997,7 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
         self.statusTitle.setWordWrap(True)
         panel.addWidget(self.statusTitle)
 
-        self.statusDetail = QtWidgets.QLabel("Connecting to update services.")
+        self.statusDetail = QtWidgets.QLabel("Launcher status and updates.")
         self.statusDetail.setObjectName("homeStatusDetail")
         self.statusDetail.setWordWrap(True)
         panel.addWidget(self.statusDetail)
@@ -11690,15 +14021,47 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
         meta.addWidget(install_chip, 1)
         panel.addLayout(meta)
 
-        updates_row = QtWidgets.QHBoxLayout()
+        self.homeUpdatesCard = SurfaceCard()
+        self.homeUpdatesCard.setObjectName("homeUpdatesCard")
+        self.homeUpdatesCard.setProperty("materialRadius", theme_int("radius.md", 10))
+        updates_card_layout = QtWidgets.QVBoxLayout(self.homeUpdatesCard)
+        updates_card_layout.setContentsMargins(9, 6, 9, 6)
+        updates_card_layout.setSpacing(3)
+
+        updates_header = QtWidgets.QHBoxLayout()
+        updates_header.setSpacing(8)
         updates_caption = QtWidgets.QLabel("AVAILABLE UPDATES")
         updates_caption.setObjectName("homeMetaCaption")
-        updates_row.addWidget(updates_caption)
+        updates_header.addWidget(updates_caption)
+        updates_header.addStretch(1)
+        updates_card_layout.addLayout(updates_header)
+
         self.homeUpdatesValue = QtWidgets.QLabel("Checking for updates…")
         self.homeUpdatesValue.setObjectName("homeStatusDetail")
-        self.homeUpdatesValue.setWordWrap(True)
-        updates_row.addWidget(self.homeUpdatesValue, 1)
-        panel.addLayout(updates_row)
+        self.homeUpdatesValue.setWordWrap(False)
+        self.homeUpdatesValue.setMinimumHeight(0)
+        self.homeUpdatesValue.setMaximumHeight(48)
+        self.homeUpdatesValue.setCursor(QtCore.Qt.CursorShape.ArrowCursor)
+        updates_card_layout.addWidget(self.homeUpdatesValue)
+
+        update_actions = QtWidgets.QHBoxLayout()
+        update_actions.setContentsMargins(0, 8, 0, 6)
+        update_actions.setSpacing(10)
+        self.homeUpdateButton = MaterialPushButton("UPDATE")
+        self.homeUpdateButton.setObjectName("secondaryButton")
+        self.homeUpdateButton.setFixedHeight(36)
+        self.homeUpdateButton.setSizePolicy(QtWidgets.QSizePolicy.Policy.Expanding, QtWidgets.QSizePolicy.Policy.Fixed)
+        self.homeUpdateButton.setVisible(False)
+        self.homeUpdateButton.clicked.connect(self._start_home_update)
+        self.homeChangelogButton = MaterialPushButton("VIEW CHANGELOG")
+        self.homeChangelogButton.setObjectName("secondaryButton")
+        self.homeChangelogButton.setFixedHeight(36)
+        self.homeChangelogButton.setSizePolicy(QtWidgets.QSizePolicy.Policy.Expanding, QtWidgets.QSizePolicy.Policy.Fixed)
+        self.homeChangelogButton.clicked.connect(self._open_home_changelog)
+        update_actions.addWidget(self.homeUpdateButton, 1)
+        update_actions.addWidget(self.homeChangelogButton, 1)
+        updates_card_layout.addLayout(update_actions)
+        panel.addWidget(self.homeUpdatesCard)
 
         # Fresh-install choices remain functional but become part of the launch panel.
         self.firstInstallCard = SurfaceCard()
@@ -11737,25 +14100,27 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
         self.installActivityText.setAlignment(QtCore.Qt.AlignmentFlag.AlignTop | QtCore.Qt.AlignmentFlag.AlignLeft)
         self.installActivityText.setTextInteractionFlags(QtCore.Qt.TextInteractionFlag.TextSelectableByMouse)
 
-        # Reserve enough vertical space for every retained activity row.  The old
-        # fixed 88 px minimum was a few pixels shorter than six themed text lines,
-        # which clipped the final row at the bottom of the card.
-        activity_line_height = max(1, self.installActivityText.fontMetrics().lineSpacing())
-        activity_text_height = activity_line_height * _INSTALL_ACTIVITY_LIMIT + 8
-        self.installActivityText.setMinimumHeight(activity_text_height)
+        self.installActivityText.setMinimumHeight(0)
         self.installActivityText.setSizePolicy(
             QtWidgets.QSizePolicy.Policy.Expanding,
-            QtWidgets.QSizePolicy.Policy.MinimumExpanding,
+            QtWidgets.QSizePolicy.Policy.Minimum,
         )
-        activity_card_height = (
-            9 + 12
-            + activity_title.sizeHint().height()
-            + activity_layout.spacing()
-            + activity_text_height
+        self.installActivityScroll = QtWidgets.QScrollArea()
+        self.installActivityScroll.setObjectName("homeActivityScroll")
+        self.installActivityScroll.setWidgetResizable(True)
+        self.installActivityScroll.setFrameShape(QtWidgets.QFrame.Shape.NoFrame)
+        self.installActivityScroll.setHorizontalScrollBarPolicy(
+            QtCore.Qt.ScrollBarPolicy.ScrollBarAlwaysOff
         )
-        self.installActivityCard.setMinimumHeight(activity_card_height)
-
-        activity_layout.addWidget(self.installActivityText, 1)
+        self.installActivityScroll.setVerticalScrollBarPolicy(
+            QtCore.Qt.ScrollBarPolicy.ScrollBarAsNeeded
+        )
+        self.installActivityScroll.setWidget(self.installActivityText)
+        self.installActivityScroll.setMaximumHeight(88)
+        self.installActivityScroll.setMinimumHeight(58)
+        activity_layout.addWidget(self.installActivityScroll, 1)
+        self.installActivityCard.setMinimumHeight(0)
+        self.installActivityCard.setMaximumHeight(132)
         panel.addWidget(self.installActivityCard)
 
         # Give the activity feed a little more breathing room before the primary
@@ -11797,6 +14162,7 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
 
         stage.addWidget(self.statusCard, 3)
         layout.addLayout(stage, 1)
+        _profile_mark("launch_panel")
 
         # ------------------------------------------------------------------
         # QUICK ACCESS — connects Home to actual launcher functionality.
@@ -11816,6 +14182,7 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
             self.homeQuickCards.append(card)
             quick.addWidget(card, 1)
         layout.addLayout(quick)
+        _profile_mark("quick_access_and_finalize")
         return page
 
     def _addon_row(self, title, description, checkbox, icon_name=None):
@@ -11839,6 +14206,18 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
         return card
 
     def _build_addons(self):
+        _profile_last = time.perf_counter()
+        def _profile_mark(name):
+            nonlocal _profile_last
+            _now = time.perf_counter()
+            try:
+                self._startup_component_timings.append(
+                    (f"addons_{name}", (_now - _profile_last) * 1000.0)
+                )
+            except Exception:
+                pass
+            _profile_last = _now
+
         page = QtWidgets.QWidget()
         page.setObjectName("addonsPage")
         lay = QtWidgets.QVBoxLayout(page)
@@ -11852,6 +14231,7 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
         header.addLayout(htext, 1)
         self.addonMessage = QtWidgets.QLabel(""); self.addonMessage.setObjectName("message"); header.addWidget(self.addonMessage)
         lay.addLayout(header)
+        _profile_mark("header")
 
         basic = self._card("addonCoreCard")
         bl = QtWidgets.QHBoxLayout(basic); bl.setContentsMargins(18, 15, 18, 15); bl.setSpacing(14)
@@ -11863,6 +14243,7 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
         bl.addLayout(bt,1)
         installed = QtWidgets.QLabel("REQUIRED"); installed.setObjectName("installedBadge"); bl.addWidget(installed)
         lay.addWidget(basic)
+        _profile_mark("core_card")
 
         grid = QtWidgets.QGridLayout(); grid.setHorizontalSpacing(12); grid.setVerticalSpacing(12)
         self.mapsBox = ToggleSwitch()
@@ -11918,6 +14299,7 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
         self.configEditorButton = GlowButton("OPEN CONFIG EDITOR"); self.configEditorButton.setObjectName("applyButton")
         self.configEditorButton.clicked.connect(self.open_config_editor); self.configEditorButton.setEnabled(config_editor_available()); usercfg_l.addWidget(self.configEditorButton)
         grid.addWidget(usercfg_card,3,0,1,2)
+        _profile_mark("addon_cards")
         grid.setColumnStretch(0,1); grid.setColumnStretch(1,1)
         lay.addLayout(grid)
         lay.addStretch(1)
@@ -11929,9 +14311,10 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
         self.applyAddonsButton = GlowButton("APPLY CHANGES"); self.applyAddonsButton.setObjectName("applyButton")
         self.applyAddonsButton.clicked.connect(apply_component_changes); self.applyAddonsButton.setEnabled(q3elite_is_installed()); fl.addWidget(self.applyAddonsButton)
         lay.addWidget(footer)
+        _profile_mark("footer_and_finalize")
         return page
 
-    def _build_theme_hub(self):
+    def _build_theme_hub_generator(self):
         hub = self._card("settingsCard")
         hub.setObjectName("settingsCard")
         layout = QtWidgets.QVBoxLayout(hub)
@@ -11956,16 +14339,14 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
         desc.setObjectName("settingsHint")
         desc.setWordWrap(True)
         layout.addWidget(desc)
+        yield "theme_hub_shell"
 
         grid = QtWidgets.QGridLayout()
         grid.setHorizontalSpacing(10)
         grid.setVerticalSpacing(10)
         self.themeHubCards = {}
         themes = ui_theme.available_themes() if ui_theme is not None else []
-        preferred_order = {
-            "Steel": 0,
-            "Paper": 1,
-        }
+        preferred_order = {"Steel": 0, "Paper": 1}
         themes.sort(key=lambda item: preferred_order.get(item.get("id"), 99))
         for index, preset in enumerate(themes[:2]):
             theme_id = str(preset.get("id") or "")
@@ -12004,11 +14385,22 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
             cl.addWidget(apply_btn)
             grid.addWidget(card, index // 2, index % 2)
             self.themeHubCards[theme_id] = (card, apply_btn)
+            yield "theme_hub_preset"
         grid.setColumnStretch(0, 1)
         grid.setColumnStretch(1, 1)
         layout.addLayout(grid)
         self._refresh_theme_hub()
         return hub
+
+    def _build_theme_hub(self):
+        # Compatibility wrapper for any synchronous callers. Settings uses the
+        # generator directly so Steel can yield between the preset cards.
+        builder = self._build_theme_hub_generator()
+        while True:
+            try:
+                next(builder)
+            except StopIteration as finished:
+                return finished.value
 
     def _apply_theme_from_hub(self, theme_id):
         if ui_theme is None:
@@ -12062,7 +14454,7 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
         scroll.horizontalScrollBar().valueChanged.connect(mark_scroll)
         scroll._q3_scroll_perf_timer = timer
 
-    def _set_opaque_scroll_surface(self, widget, enabled):
+    def _set_opaque_scroll_surface(self, widget, enabled, polish=True):
         """Guarantee a real painted background for heavy Steel scroll regions.
 
         WA_OpaquePaintEvent alone only *promises* that a widget paints every
@@ -12120,9 +14512,101 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
             self._optimize_heavy_scroll_area(self.matchmakingScroll)
 
     def _build_settings(self):
+        # Keep Paper Theme on the original synchronous build path. Steel/Dark
+        # receives incremental card construction to reduce GUI-thread stalls.
+        if not OBSIDIAN_MATERIAL.enabled(ui_theme):
+            self._settings_build_async = False
+            builder = self._build_settings_generator()
+            while True:
+                try:
+                    next(builder)
+                except StopIteration as finished:
+                    return finished.value
+
+        # Return a usable Settings shell immediately, then populate its cards in
+        # bounded event-loop stages. This prevents one large widget-construction
+        # burst from blocking navigation and the first paint.
+        self._settings_build_generation = int(getattr(self, "_settings_build_generation", 0)) + 1
+        generation = self._settings_build_generation
+        self._settings_build_async = True
+        self._settings_build_started = time.perf_counter()
+        builder = self._build_settings_generator()
+        self._settings_build_iterator = builder
+        started = time.perf_counter()
+        try:
+            step = next(builder)
+        except StopIteration as finished:
+            return finished.value
+        except Exception as error:
+            self._q3_write_section_profile("settings_build_error", "settings", error=repr(error))
+            raise
+        page = getattr(self, "_settings_build_page", None)
+        self._q3_write_section_profile(
+            "settings_build_chunk", "settings", step=step,
+            chunk_ms=(time.perf_counter() - started) * 1000.0,
+        )
+        QtCore.QTimer.singleShot(0, lambda _g=generation, _b=builder: self._continue_settings_build(_g, _b))
+        return page
+
+    def _continue_settings_build(self, generation, builder):
+        if generation != getattr(self, "_settings_build_generation", -1):
+            return
+        started = time.perf_counter()
+        try:
+            step = next(builder)
+        except StopIteration:
+            self._settings_build_iterator = None
+            try:
+                _load_started = time.perf_counter()
+                self.load_settings_ui()
+                _load_ms = (time.perf_counter() - _load_started) * 1000.0
+                self._startup_component_timings.append(("load_settings_ui", _load_ms))
+            except Exception as error:
+                self._q3_write_section_profile(
+                    "settings_load_error", "settings", error=repr(error),
+                )
+                print(f"[settings] applying saved values failed: {error!r}")
+            self._settings_build_async = False
+            self._q3_write_section_profile(
+                "settings_build_complete", "settings",
+                total_ms=(time.perf_counter() - getattr(self, "_settings_build_started", started)) * 1000.0,
+                load_settings_ms=locals().get("_load_ms", -1.0),
+            )
+            return
+        except Exception as error:
+            self._settings_build_iterator = None
+            self._settings_build_async = False
+            self._q3_write_section_profile("settings_build_error", "settings", error=repr(error))
+            print(f"[settings] deferred build failed: {error!r}")
+            return
+        elapsed = (time.perf_counter() - started) * 1000.0
+        self._q3_write_section_profile(
+            "settings_build_chunk", "settings", step=step, chunk_ms=elapsed,
+        )
+        QtCore.QTimer.singleShot(0, lambda _g=generation, _b=builder: self._continue_settings_build(_g, _b))
+
+    def _build_settings_generator(self):
+        _settings_phase_started = time.perf_counter()
+        _settings_phase_name = "page_shell_and_theme_hub"
+
+        def _settings_profile_mark(next_phase, **metrics):
+            nonlocal _settings_phase_started, _settings_phase_name
+            if not OBSIDIAN_MATERIAL.enabled(ui_theme):
+                return
+            now = time.perf_counter()
+            self._q3_write_section_profile(
+                "settings_build_phase", "settings",
+                phase=_settings_phase_name,
+                phase_ms=(now - _settings_phase_started) * 1000.0,
+                **metrics,
+            )
+            _settings_phase_started = now
+            _settings_phase_name = str(next_phase)
+
         page = QtWidgets.QWidget()
         page.setObjectName("settingsPage")
         self.settingsRealPage = page
+        self._settings_build_page = page
         outer = QtWidgets.QVBoxLayout(page)
         outer.setContentsMargins(0, 0, 0, 0)
 
@@ -12138,9 +14622,14 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
         body = QtWidgets.QWidget()
         body.setObjectName("settingsScrollBody")
         self.settingsScrollBody = body
+        body.setUpdatesEnabled(False)
         settings_opaque = OBSIDIAN_MATERIAL.enabled(ui_theme) and theme_bool("performance.opaque_settings_viewport", True)
+        # These surfaces have not been shown yet. Setting their attributes and
+        # palette is sufficient; avoid three synchronous style unpolish/polish
+        # cycles during Settings construction. Runtime theme refresh still uses
+        # the normal polished path.
         for surface in (page, settings_viewport, body):
-            self._set_opaque_scroll_surface(surface, settings_opaque)
+            self._set_opaque_scroll_surface(surface, settings_opaque, polish=False)
         lay = QtWidgets.QVBoxLayout(body)
         lay.setContentsMargins(4, 4, 20, 8)
         lay.setSpacing(12)
@@ -12152,7 +14641,24 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
         header.addLayout(htext, 1)
         self.settingsMessage = QtWidgets.QLabel(""); self.settingsMessage.setObjectName("message"); header.addWidget(self.settingsMessage)
         lay.addLayout(header)
-        lay.addWidget(self._build_theme_hub())
+        if OBSIDIAN_MATERIAL.enabled(ui_theme):
+            # Mount the lightweight page shell before building the theme presets.
+            # The Settings page can paint immediately while the hub is assembled
+            # incrementally by the Steel generator.
+            scroll.setWidget(body)
+            outer.addWidget(scroll, 1)
+            body.setUpdatesEnabled(True)
+            theme_hub_builder = self._build_theme_hub_generator()
+            theme_hub = yield from theme_hub_builder
+            lay.addWidget(theme_hub)
+        else:
+            # Keep Paper's original synchronous construction order unchanged.
+            lay.addWidget(self._build_theme_hub())
+            scroll.setWidget(body)
+            outer.addWidget(scroll, 1)
+            body.setUpdatesEnabled(True)
+        _settings_profile_mark("updates_startup_visual_server")
+        yield "theme_hub_visible"
 
         def make_card(title_text, desc_text=""):
             card = self._card("settingsCard")
@@ -12167,6 +14673,9 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
         grid = QtWidgets.QGridLayout()
         grid.setHorizontalSpacing(12)
         grid.setVerticalSpacing(12)
+        # Mount the empty grid once, before populating it. Adding a fully-built
+        # tree of cards to the live body caused a large synchronous layout pass.
+        lay.addLayout(grid)
 
         # Updates -----------------------------------------------------------
         updates, ul = make_card("UPDATES", "Choose which managed Q3Elite components update automatically.")
@@ -12176,8 +14685,14 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
         for box in (self.autoQ3Box, self.autoLauncherBox, self.autoOspBox):
             box.setObjectName("settingsToggle")
             ul.addWidget(box)
+        self.modderFilesButton = MaterialPushButton("DOWNLOAD Q3ELITE FILES FOR MODDERS")
+        self.modderFilesButton.setObjectName("secondaryButton")
+        self.modderFilesButton.setToolTip("Open the configured Q3Elite pCloud public share.")
+        self.modderFilesButton.clicked.connect(self._open_modder_files_share)
+        ul.addWidget(self.modderFilesButton)
         ul.addStretch(1)
         grid.addWidget(updates, 0, 0)
+        yield "updates_card"
 
         # Startup -----------------------------------------------------------
         startup, sl = make_card("STARTUP & TRAY", "Keep Windows startup behavior independent from game launch settings.")
@@ -12186,7 +14701,12 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
         self.startMinimizedBox.setToolTip("When started automatically with Windows, launch directly to the system tray.")
         self.startWindowsBox.toggled.connect(self.startMinimizedBox.setEnabled)
         self.trayBox = ToggleSwitch("Minimize to Windows system tray")
-        for box in (self.startWindowsBox, self.startMinimizedBox, self.trayBox):
+        self.keepWindowPositionBox = ToggleSwitch("Keep window position and size")
+        self.fullscreenModeBox = ToggleSwitch("Fullscreen mode on startup")
+        self.keepWindowPositionBox.setToolTip("Restore the last window position and size. If its monitor is disconnected, use the primary display.")
+        self.fullscreenModeBox.setToolTip("Open the Launcher in fullscreen mode on the next start. F11 still toggles fullscreen immediately.")
+        for box in (self.startWindowsBox, self.startMinimizedBox, self.trayBox,
+                    self.keepWindowPositionBox, self.fullscreenModeBox):
             box.setObjectName("settingsToggle")
             sl.addWidget(box)
 
@@ -12200,6 +14720,9 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
         self.startSectionCombo.setFixedWidth(option_width)
         start_row.addWidget(start_label); start_row.addStretch(1); start_row.addWidget(self.startSectionCombo)
         sl.addLayout(start_row)
+        # Build the small startup toggles and section selector in one bounded
+        # chunk. This removes an unnecessary event-loop handoff between them.
+        yield "startup_controls_and_section"
 
         game_row = QtWidgets.QHBoxLayout(); game_row.setSpacing(10)
         game_label = QtWidgets.QLabel("When Quake starts"); game_label.setObjectName("settingsHint")
@@ -12213,20 +14736,31 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
         )
         game_row.addWidget(game_label); game_row.addStretch(1); game_row.addWidget(self.gameLaunchBehaviorCombo)
         sl.addLayout(game_row)
+        yield "startup_game_behavior"
 
-        self.playtimeLabel = QtWidgets.QLabel(f"LOCAL PLAYTIME  •  {format_playtime(total_playtime_seconds())}")
-        self.playtimeLabel.setObjectName("settingsHint")
-        sl.addWidget(self.playtimeLabel)
         sl.addStretch(1)
         grid.addWidget(startup, 0, 1)
+        # Finish the remaining startup row and mount the card together; no
+        # intermediate paint is useful while the card is still incomplete.
+        yield "startup_game_behavior_and_card"
 
         # Visual / content --------------------------------------------------
-        visual, vl = make_card("VISUAL & CONTENT", "Optional launcher presentation integrations.")
-        self.changelogMediaBox = ToggleSwitch("Show screenshots in changelog")
+        visual, vl = make_card("VISUAL & CONTENT", "Control changelog media and release notifications.")
+        self.changelogMediaBox = ToggleSwitch("Show screenshots in posts")
         self.changelogMediaBox.setObjectName("settingsToggle")
-        vl.addWidget(self.changelogMediaBox)
+        self.disableChangelogNotificationsBox = ToggleSwitch("Hide Changelog notifications")
+        self.disableChangelogNotificationsBox.setObjectName("settingsToggle")
+        self.disableQ3NewsNotificationsBox = ToggleSwitch("Hide Q3News notifications")
+        self.disableQ3NewsNotificationsBox.setObjectName("settingsToggle")
+        for box in (
+            self.changelogMediaBox,
+            self.disableChangelogNotificationsBox,
+            self.disableQ3NewsNotificationsBox,
+        ):
+            vl.addWidget(box)
         vl.addStretch(1)
         grid.addWidget(visual, 1, 0)
+        yield "visual_card"
 
         # Server behavior ---------------------------------------------------
         servers, svl = make_card("SERVER MONITOR & MATCHMAKING", "Tune server refresh and matchmaking alerts.")
@@ -12266,7 +14800,8 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
         grid.addWidget(servers, 1, 1)
 
         grid.setColumnStretch(0, 1); grid.setColumnStretch(1, 1)
-        lay.addLayout(grid)
+        _settings_profile_mark("launcher_audio")
+        yield "server_and_core_settings"
 
         launcher_audio, audio_l = make_card(
             "LAUNCHER SOUNDS",
@@ -12309,6 +14844,8 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
         audio_l.addLayout(launcher_sound_row)
         audio_l.addStretch(1)
         lay.addWidget(launcher_audio)
+        _settings_profile_mark("privacy_diagnostics")
+        yield "launcher_audio_card"
 
         # Privacy / diagnostics ---------------------------------------------
         diagnostics, dgl = make_card(
@@ -12360,15 +14897,20 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
         self.diagnosticsBox.toggled.connect(_sync_diagnostics_controls)
         _sync_diagnostics_controls()
         lay.addWidget(diagnostics)
+        _settings_profile_mark("cleanup")
+        yield "diagnostics_card"
 
         # Cleanup -----------------------------------------------------------
         cleanup, cl = make_card("TEMPORARY FILE CLEANUP", "Optional scheduled cleanup for captured media. Disabled means keep files indefinitely.")
 
         def make_cleanup_row(label_text, combo_name, spin_name):
+            # These two compact rows are cheap to construct. Keep each row in
+            # one event-loop slice instead of scheduling a timer for every
+            # child widget; the timer gaps dominated the previous profile.
             row = QtWidgets.QHBoxLayout(); row.setSpacing(10)
             checkbox = ToggleSwitch(label_text); checkbox.setObjectName("settingsToggle"); checkbox.setMinimumWidth(230)
             combo = QtWidgets.QComboBox(); combo.setObjectName(combo_name)
-            combo.addItem("older than 1 day", 1); combo.addItem("older than 3 days", 3); combo.addItem("older than 7 days", 7); combo.addItem("older than 30 days", 30); combo.addItem("Custom", -1)
+            combo.addItem("older than 1 day", 1); combo.addItem("older than 3 days", 3); combo.addItem("older than 7 days", 7); combo.addItem("older than 14 days", 14); combo.addItem("older than 30 days", 30); combo.addItem("Custom", -1)
             combo.setFixedWidth(theme_int("settings.cleanup_combo_width", 190)); combo.setEnabled(False)
             custom = QtWidgets.QSpinBox(); custom.setObjectName(spin_name); custom.setRange(1,3650); custom.setSuffix(" days"); custom.setValue(14); custom.setFixedWidth(110); custom.setVisible(False); custom.setEnabled(False)
             def refresh():
@@ -12378,10 +14920,17 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
             cl.addLayout(row)
             return checkbox, combo, custom
 
-        self.cleanupScreenshotsBox, self.cleanupScreenshotsCombo, self.cleanupScreenshotsCustom = make_cleanup_row("Clean screenshots", "cleanupScreenshotsCombo", "cleanupScreenshotsCustom")
-        self.cleanupDemosBox, self.cleanupDemosCombo, self.cleanupDemosCustom = make_cleanup_row("Clean demos", "cleanupDemosCombo", "cleanupDemosCustom")
+        self.cleanupScreenshotsBox, self.cleanupScreenshotsCombo, self.cleanupScreenshotsCustom = make_cleanup_row(
+            "Clean screenshots", "cleanupScreenshotsCombo", "cleanupScreenshotsCustom",
+        )
+        self.cleanupDemosBox, self.cleanupDemosCombo, self.cleanupDemosCustom = make_cleanup_row(
+            "Clean demos", "cleanupDemosCombo", "cleanupDemosCustom",
+        )
         cleanup_hint = QtWidgets.QLabel("Screenshots include OSP + Q3Elite captures. Demos target OSP demos."); cleanup_hint.setObjectName("settingsHint"); cl.addWidget(cleanup_hint)
+        yield "cleanup_rows_built"
         lay.addWidget(cleanup)
+        _settings_profile_mark("storage_cache_card")
+        yield "cleanup_card_mount"
 
         # Storage / maintenance --------------------------------------------
         tools_grid = QtWidgets.QGridLayout(); tools_grid.setHorizontalSpacing(12); tools_grid.setVerticalSpacing(12)
@@ -12399,6 +14948,8 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
         clear_download_cache = MaterialPushButton("CLEAR DOWNLOADS"); clear_download_cache.setObjectName("secondaryButton"); clear_download_cache.clicked.connect(self.clear_download_cache); cache_actions.addWidget(clear_download_cache)
         cache_actions.addStretch(1); cc.addLayout(cache_actions)
         tools_grid.addWidget(cache, 0, 0)
+        _settings_profile_mark("storage_maintenance_card")
+        yield "download_cache_card"
 
         maintenance, ml = make_card("MAINTENANCE", "Repair launcher files if the installation becomes damaged.")
         maintenance_actions = QtWidgets.QHBoxLayout()
@@ -12406,14 +14957,22 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
         maintenance_actions.addStretch(1)
         ml.addLayout(maintenance_actions); ml.addStretch(1)
         tools_grid.addWidget(maintenance, 0, 1)
+        _settings_profile_mark("storage_layout_assembly")
+        yield "maintenance_card"
         tools_grid.setColumnStretch(0,1); tools_grid.setColumnStretch(1,1)
         lay.addLayout(tools_grid)
+        _settings_profile_mark("settings_pre_scroll_assembly")
+        yield "storage_layout_mounted"
 
         # Keep the primary save action visible while the settings body scrolls.
         lay.addStretch(1)
-        scroll.setWidget(body)
-        self._optimize_heavy_scroll_area(scroll)
-        outer.addWidget(scroll, 1)
+        _settings_profile_mark("settings_scroll_set_widget")
+        # Install the passive scroll observer after the first paint; it does
+        # not need to delay initial Settings presentation.
+        QtCore.QTimer.singleShot(0, lambda _scroll=scroll: self._optimize_heavy_scroll_area(_scroll))
+        _settings_profile_mark("settings_scroll_optimize_deferred")
+        _settings_profile_mark("settings_scroll_outer_add")
+        _settings_profile_mark("settings_footer_construct_start")
 
         footer = QtWidgets.QFrame(); footer.setObjectName("sectionActionBar")
         fl = QtWidgets.QHBoxLayout(footer); fl.setContentsMargins(14,10,14,10)
@@ -12424,15 +14983,49 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
         self.settingsFooterWrapLayout = QtWidgets.QHBoxLayout(self.settingsFooterWrap)
         self.settingsFooterWrapLayout.setContentsMargins(4, 0, 20, 4)
         self.settingsFooterWrapLayout.addWidget(footer)
+        _settings_profile_mark("settings_footer_add")
         outer.addWidget(self.settingsFooterWrap)
+        _settings_profile_mark("settings_combo_bind_start")
+        _settings_combo_count = 0
         for combo in page.findChildren(QtWidgets.QComboBox):
+            _settings_combo_count += 1
             combo.activated.connect(
                 lambda _index: self._play_launcher_sound("list_select")
             )
+        if OBSIDIAN_MATERIAL.enabled(ui_theme):
+            self._q3_write_section_profile("settings_combo_binding", "settings", combos=_settings_combo_count)
+        _settings_profile_mark("settings_combo_bind_complete", combos=_settings_combo_count)
         QtCore.QTimer.singleShot(0, self._sync_scroll_clearance)
+        _settings_profile_mark("complete")
         return page
 
     def _build_account(self):
+        # Fine-grained startup profiling: measures only synchronous widget
+        # construction, without changing the page's layout or behavior.
+        _account_profile_started = time.perf_counter()
+        _account_profile_last = _account_profile_started
+        def _account_profile_mark(name):
+            nonlocal _account_profile_last
+            _now = time.perf_counter()
+            self._startup_component_timings.append(
+                (f"account_{name}", (_now - _account_profile_last) * 1000.0)
+            )
+            _account_profile_last = _now
+
+        def _account_profile_operation(name, callback):
+            _event_before = dict(self._startup_qt_event_counts)
+            _started = time.perf_counter()
+            result = callback()
+            _operation_name = f"op_account_{name}"
+            self._startup_component_timings.append((_operation_name, (time.perf_counter() - _started) * 1000.0))
+            _event_delta = []
+            for _event_id, _event_name in self._startup_qt_event_names.items():
+                _amount = self._startup_qt_event_counts.get(_event_id, 0) - _event_before.get(_event_id, 0)
+                if _amount:
+                    _event_delta.append(f"{_event_name}:{_amount}")
+            self._startup_qt_event_deltas.append((_operation_name, ",".join(_event_delta) if _event_delta else "-"))
+            return result
+
         page = QtWidgets.QWidget()
         page.setObjectName("accountPage")
         outer = QtWidgets.QVBoxLayout(page)
@@ -12453,6 +15046,7 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
         self.accountPageMessage.setAlignment(QtCore.Qt.AlignmentFlag.AlignRight | QtCore.Qt.AlignmentFlag.AlignVCenter)
         header.addWidget(self.accountPageMessage)
         outer.addLayout(header)
+        _account_profile_mark("header")
 
         scroll = QtWidgets.QScrollArea()
         self.accountScroll = scroll
@@ -12511,7 +15105,7 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
         identity_actions = QtWidgets.QVBoxLayout(); identity_actions.setSpacing(8)
         self.accountPageSignIn = GlowButton("SIGN IN / REGISTER")
         self.accountPageSignIn.setObjectName("applyButton")
-        self.accountPageSignIn.clicked.connect(self.open_account_dialog)
+        self.accountPageSignIn.clicked.connect(lambda checked=False: self._on_account_sign_in_clicked())
         identity_actions.addWidget(self.accountPageSignIn)
         self.accountEditProfileButton = MaterialPushButton("EDIT PROFILE")
         self.accountEditProfileButton.setObjectName("secondaryButton")
@@ -12529,6 +15123,7 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
         identity_actions.addStretch(1)
         il.addLayout(identity_actions)
         layout.addWidget(identity)
+        _account_profile_mark("identity_card")
 
         self.accountConnectedAccountsCard = self._card("settingsCard")
         connected_layout = QtWidgets.QVBoxLayout(self.accountConnectedAccountsCard)
@@ -12564,6 +15159,7 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
             self.accountIdentityRows[provider] = (status, button)
             connected_layout.addLayout(row)
         layout.addWidget(self.accountConnectedAccountsCard)
+        _account_profile_mark("connected_accounts")
 
         # Pending standard-email verification -----------------------------
         self.accountVerificationCard = self._card("settingsCard")
@@ -12589,6 +15185,7 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
         vl.addWidget(self.accountVerificationSignInButton)
         self.accountVerificationCard.hide()
         layout.addWidget(self.accountVerificationCard)
+        _account_profile_mark("verification_card")
 
         # Cloud statistics -------------------------------------------------
         stats = QtWidgets.QGridLayout(); stats.setHorizontalSpacing(12); stats.setVerticalSpacing(12)
@@ -12607,6 +15204,7 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
             stats.addWidget(card, 0, idx)
             stats.setColumnStretch(idx, 1)
         layout.addLayout(stats)
+        _account_profile_mark("cloud_statistics")
 
         # Cloud portability ------------------------------------------------
         cloud = self._card("settingsCard")
@@ -12640,6 +15238,7 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
         cloud_actions.addStretch(1)
         cl.addLayout(cloud_actions)
         layout.addWidget(cloud)
+        _account_profile_mark("cloud_portability")
 
         # Devices -----------------------------------------------------------
         devices = self._card("settingsCard")
@@ -12672,10 +15271,15 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
         dl.addWidget(self.accountDevices)
         layout.addWidget(devices)
         layout.addStretch(1)
+        _account_profile_mark("devices")
 
-        scroll.setWidget(body)
-        outer.addWidget(scroll, 1)
+        _account_profile_operation("scroll_setWidget", lambda: scroll.setWidget(body))
+        _account_profile_mark("finalize_set_scroll_widget")
+        _account_profile_operation("outer_addWidget_scroll", lambda: outer.addWidget(scroll, 1))
+        _account_profile_mark("finalize_add_scroll_layout")
         self._optimize_heavy_scroll_area(scroll)
+        _account_profile_mark("finalize_scroll_optimization")
+        _account_profile_mark("finalize")
         return page
 
     # ------------------------------------------------------------------
@@ -12727,6 +15331,18 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
         search_l.addWidget(self.statisticsMessage)
         root.addWidget(search_card)
 
+        self.statisticsKeys = QtWidgets.QLabel(
+            "KEY BINDS\n"
+            "Enter : Search profile\n"
+            "F4 : Cycle Week / Month\n"
+            "F5 : Refresh statistics\n"
+            "F1 : Show/Hide binds"
+        )
+        self.statisticsKeys.setObjectName("keyBindsLegend")
+        self.statisticsKeys.setWordWrap(False)
+        self.statisticsKeys.hide()
+        root.addWidget(self.statisticsKeys)
+
         self.statisticsResults = QtWidgets.QScrollArea()
         self.statisticsResults.setObjectName("statisticsScroll")
         self.statisticsResults.setWidgetResizable(True)
@@ -12751,8 +15367,17 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
         self.statisticsFilterShortcut.activated.connect(self._statistics_cycle_period)
         self.statisticsFilterShortcut.activated.connect(lambda: self._play_launcher_sound("click"))
         self.statisticsFilterShortcut.setEnabled(False)
+        self.statisticsKeysShortcut = QtGui.QShortcut(QtGui.QKeySequence("F1"), self)
+        self.statisticsKeysShortcut.setContext(QtCore.Qt.ShortcutContext.WindowShortcut)
+        self.statisticsKeysShortcut.activated.connect(self._toggle_statistics_keys)
+        self.statisticsKeysShortcut.activated.connect(lambda: self._play_launcher_sound("click"))
+        self.statisticsKeysShortcut.setEnabled(False)
         self._show_statistics_empty()
         return page
+
+    def _toggle_statistics_keys(self):
+        if hasattr(self, "statisticsKeys"):
+            self.statisticsKeys.setVisible(not self.statisticsKeys.isVisible())
 
     @staticmethod
     def _statistics_player_id(value):
@@ -13156,6 +15781,8 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
     # SCREENSHOTS / DEMOS — local OSP media
     # ------------------------------------------------------------------
     def _osp_screenshots_dir(self):
+        # OSP is installed as a mod under baseq3/mods/osp. Keep this path
+        # aligned with the config editor, cleanup routine and media preloader.
         return GAME_ROOT / "baseq3" / "mods" / "osp" / "screenshots"
 
     def _reshade_screenshots_dir(self):
@@ -13189,6 +15816,8 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
         return category == "All" or self._media_category(path.name) == category
 
     def _media_sort_files(self, files, mode):
+        # Shared by Screenshots and Demos. Keep this helper independent of
+        # refresh_demos()' local profiling variables.
         reverse = mode.endswith("↓")
         if mode.startswith("Name"):
             return sorted(files, key=lambda p: p.name.lower(), reverse=reverse)
@@ -13213,9 +15842,20 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
 
         filt = QtWidgets.QComboBox()
         filt.setObjectName("mediaCombo")
-        filt.addItems(["All", "FFA", "TDM", "CTF", "Singleplayer", "Others"])
+        if filter_attr == "demoFilter":
+            filt.addItems(["All", "Singleplayer", "Others"])
+        else:
+            filt.addItems(["All", "FFA", "TDM", "CTF", "Singleplayer", "Others"])
         setattr(self, filter_attr, filt)
         bar.addWidget(filt)
+
+        preference_prefix = "screenshots" if filter_attr == "screenshotFilter" else "demos"
+        saved_sort = str(launcher_settings.get(f"{preference_prefix}_sort_mode", "Date ↓") or "Date ↓")
+        saved_filter = str(launcher_settings.get(f"{preference_prefix}_gametype", "All") or "All")
+        if sort.findText(saved_sort) >= 0:
+            sort.setCurrentText(saved_sort)
+        if filt.findText(saved_filter) >= 0:
+            filt.setCurrentText(saved_filter)
 
         # Typing used to rebuild the entire screenshot/demo model on every
         # keystroke. Debounce text filtering while keeping sort/filter clicks
@@ -13226,6 +15866,10 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
         search_timer.setInterval(120)
         search_timer.timeout.connect(refresh_callback)
         search.textChanged.connect(lambda _text, t=search_timer: t.start())
+        sort_key = f"{preference_prefix}_sort_mode"
+        filter_key = f"{preference_prefix}_gametype"
+        sort.currentTextChanged.connect(lambda value, key=sort_key: self._save_launcher_preference(key, value))
+        filt.currentTextChanged.connect(lambda value, key=filter_key: self._save_launcher_preference(key, value))
         sort.currentTextChanged.connect(refresh_callback)
         filt.currentTextChanged.connect(refresh_callback)
         return bar
@@ -13366,6 +16010,7 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
             "F2 : Rename screenshot\n"
             "F3 : Cycle sorting\n"
             "F4 : Cycle gametype filter\n"
+            "F5 : Refresh\n"
             "Ctrl+F : Search\n"
             "F1 : Show/Hide binds"
         )
@@ -13449,6 +16094,7 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
         if count <= 0:
             self._currentScreenshotPath = None
             self._currentScreenshotPixmap = None
+            self._currentScreenshotSignature = None
             return None
         row = int(row) % count
         item = self.screenshotList.item(row)
@@ -13487,17 +16133,40 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
         if not path or not Path(path).is_file():
             self._currentScreenshotPath = None
             self._currentScreenshotPixmap = None
+            self._currentScreenshotSignature = None
             self.screenshotPreview.clear()
             self.screenshotPreview.setText("No screenshot selected.")
             return
         path = Path(path)
+        try:
+            stat = path.stat()
+            signature = (stat.st_mtime_ns, stat.st_size)
+        except OSError:
+            signature = None
+        cached_path = getattr(self, "_currentScreenshotPath", None)
+        cached_pixmap = getattr(self, "_currentScreenshotPixmap", None)
+        if (cached_path is not None and Path(cached_path) == path
+                and signature is not None
+                and getattr(self, "_currentScreenshotSignature", None) == signature
+                and cached_pixmap is not None and not cached_pixmap.isNull()):
+            self._rescale_screenshot_preview()
+            return
         pix = _load_pixmap_file(path)
         if pix.isNull():
+            self._q3_write_section_profile(
+                "screenshot_preview", "screenshots",
+                path=str(path), loaded=False,
+            )
             self.screenshotPreview.clear()
             self.screenshotPreview.setText("Could not load screenshot.")
             return
+        self._q3_write_section_profile(
+            "screenshot_preview", "screenshots",
+            path=str(path), loaded=True, width=pix.width(), height=pix.height(),
+        )
         self._currentScreenshotPath = path
         self._currentScreenshotPixmap = pix
+        self._currentScreenshotSignature = signature
         self._rescale_screenshot_preview()
 
     def set_screenshot_source(self, source):
@@ -13733,9 +16402,34 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
         source = self._sync_screenshot_source_buttons()
         folders = [reshade_folder] if source == "reshade" else [osp_folder] if source == "osp" else [reshade_folder, osp_folder]
         files = []
+        folder_scan = []
+        # Keep the original glob-based discovery used by the working launcher,
+        # while checking upper-case extensions as well. Do not scan TGA files.
+        extensions = ("jpg", "jpeg", "png", "bmp", "webp")
         for folder in folders:
-            for ext in ("*.jpg", "*.jpeg", "*.png", "*.bmp", "*.webp"):
-                files.extend(folder.glob(ext))
+            found_here = []
+            try:
+                if folder.is_dir():
+                    seen = set()
+                    for ext in extensions:
+                        for pattern in (f"*.{ext}", f"*.{ext.upper()}"):
+                            for path in folder.glob(pattern):
+                                if path.is_file():
+                                    key = str(path).casefold()
+                                    if key not in seen:
+                                        seen.add(key)
+                                        found_here.append(path)
+            except OSError:
+                found_here = []
+            files.extend(found_here)
+            folder_scan.append(f"{folder}={len(found_here)}")
+        self.screenshotCountLabel.setToolTip(
+            "Searched locations:\n" + "\n".join(str(folder) for folder in folders)
+        )
+        self._q3_write_section_profile(
+            "screenshots_scan", "screenshots",
+            source=source, found=len(files), folders=" | ".join(folder_scan),
+        )
         query = self.screenshotSearch.text().strip() if hasattr(self, "screenshotSearch") else ""
         category = self.screenshotFilter.currentText() if hasattr(self, "screenshotFilter") else "All"
         mode = self.screenshotSort.currentText() if hasattr(self, "screenshotSort") else "Date ↓"
@@ -13765,8 +16459,11 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
             self.screenshotList.setCurrentItem(None)
             self._currentScreenshotPath = None
             self._currentScreenshotPixmap = None
+            self._currentScreenshotSignature = None
             self.screenshotPreview.clear()
-            self.screenshotPreview.setText("No screenshots found.")
+            self.screenshotPreview.setText(
+                "No screenshots found.\nCheck the searched locations in the counter tooltip."
+            )
 
     def _selected_screenshot_path(self):
         item = self.screenshotList.currentItem()
@@ -13944,11 +16641,6 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
         root.addLayout(self._make_media_toolbar(
             "demoSearch", "demoSort", "demoFilter", self.refresh_demos
         ))
-        self.demoFilter.blockSignals(True)
-        self.demoFilter.clear()
-        self.demoFilter.addItems(["All", "Singleplayer", "Others"])
-        self.demoFilter.blockSignals(False)
-
         self.demoSearchKeyFilter = ScreenshotSearchFilter(self)
         self.demoSearch.installEventFilter(self.demoSearchKeyFilter)
 
@@ -14058,6 +16750,7 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
             "F2 : Rename demo\n"
             "F3 : Sort Date ↓ / Date ↑ / Name ↓ / Name ↑\n"
             "F4 : Filter All / Singleplayer / Others\n"
+            "F5 : Refresh\n"
             "Ctrl+F : Search\n"
             "F1 : Show/Hide binds"
         )
@@ -14363,43 +17056,105 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
             self.demoList.setFocus()
 
     def refresh_demos(self):
+        _demo_refresh_started = time.perf_counter()
+        _demo_scan_started = _demo_refresh_started
         import datetime
         folder = self._osp_demos_dir()
         folder.mkdir(parents=True, exist_ok=True)
-        previous = self.demoList.currentItem().data(0, QtCore.Qt.ItemDataRole.UserRole) if self.demoList.currentItem() else None
-        files = [p for p in folder.iterdir() if p.is_file() and p.suffix.lower().startswith(".dm_")]
-        query = self.demoSearch.text().strip() if hasattr(self, "demoSearch") else ""
+        current_item = self.demoList.currentItem()
+        previous = (
+            current_item.data(0, QtCore.Qt.ItemDataRole.UserRole)
+            if current_item is not None else None
+        )
+        query = self.demoSearch.text().strip().casefold() if hasattr(self, "demoSearch") else ""
         category = self.demoFilter.currentText() if hasattr(self, "demoFilter") else "All"
         mode = self.demoSort.currentText() if hasattr(self, "demoSort") else "Date ↓"
-        files = [p for p in files if self._demo_matches_filter(p, query, category)]
-        files = self._media_sort_files(files, mode)
+
+        # Use scandir's cached DirEntry metadata. The previous implementation
+        # called Path.stat() once for sorting and again for every displayed row.
+        # On large demo folders this doubled filesystem metadata traffic.
+        rows = []
+        try:
+            with os.scandir(folder) as entries:
+                for entry in entries:
+                    name = entry.name
+                    suffix = "." + name.rsplit(".", 1)[-1].lower() if "." in name else ""
+                    if not suffix.startswith(".dm_"):
+                        continue
+                    if query and query not in name.casefold():
+                        continue
+                    try:
+                        if not entry.is_file():
+                            continue
+                        stat = entry.stat()
+                    except OSError:
+                        continue
+                    demo_category = self._demo_category(name)
+                    if category != "All" and demo_category != category:
+                        continue
+                    rows.append((Path(entry.path), stat, demo_category))
+        except OSError as error:
+            print(f"[demos] Could not scan demo folder {folder}: {error}")
+
+        reverse = mode.endswith("↓")
+        if mode.startswith("Name"):
+            rows.sort(key=lambda row: row[0].name.casefold(), reverse=reverse)
+        else:
+            rows.sort(key=lambda row: row[1].st_mtime, reverse=reverse)
+
+        _demo_population_started = time.perf_counter()
         self.demoList.setUpdatesEnabled(False)
+        signals_were_blocked = self.demoList.blockSignals(True)
         try:
             self.demoList.clear()
+            items = []
             restore = None
-            for path in files:
-                st = path.stat()
-                modified = datetime.datetime.fromtimestamp(st.st_mtime).strftime("%Y-%m-%d  %H:%M")
-                size = st.st_size
+            for path, stat, demo_category in rows:
+                modified = datetime.datetime.fromtimestamp(stat.st_mtime).strftime("%Y-%m-%d  %H:%M")
+                size = stat.st_size
                 size_text = f"{size / (1024*1024):.1f} MB" if size >= 1024*1024 else f"{size / 1024:.0f} KB"
-                item = QtWidgets.QTreeWidgetItem([path.name, self._demo_category(path.name), modified, size_text])
+                item = QtWidgets.QTreeWidgetItem([path.name, demo_category, modified, size_text])
                 item.setData(0, QtCore.Qt.ItemDataRole.UserRole, str(path))
                 item.setSizeHint(0, QtCore.QSize(0, theme_int("demos.row_height", 38)))
                 item.setTextAlignment(3, int(QtCore.Qt.AlignmentFlag.AlignRight | QtCore.Qt.AlignmentFlag.AlignVCenter))
-                self.demoList.addTopLevelItem(item)
+                items.append(item)
                 if previous and str(path) == previous:
                     restore = item
+            if items:
+                self.demoList.addTopLevelItems(items)
+            if restore is not None:
+                self.demoList.setCurrentItem(restore)
+            elif items:
+                self.demoList.setCurrentItem(items[0])
         finally:
+            self.demoList.blockSignals(signals_were_blocked)
             self.demoList.setUpdatesEnabled(True)
+
         self._demos_loaded = True
         self._demos_dirty = False
-        self.demoCountLabel.setText(f"{len(files)} demo{'s' if len(files) != 1 else ''}")
-        if restore:
-            self.demoList.setCurrentItem(restore)
-        elif self.demoList.topLevelItemCount():
-            self.demoList.setCurrentItem(self.demoList.topLevelItem(0))
+        count = len(rows)
+        self.demoCountLabel.setText(f"{count} demo{'s' if count != 1 else ''}")
         self._update_demo_play_button()
+        # Signals are blocked during bulk replacement; refresh details exactly once.
         self._update_demo_details()
+        self._q3_write_section_profile(
+            "page_refresh", "demos",
+            scan_ms=_demo_scan_ms,
+            populate_ms=(time.perf_counter() - _demo_population_started) * 1000.0,
+            total_ms=(time.perf_counter() - _demo_refresh_started) * 1000.0,
+            rows=count,
+        )
+
+    def _track_launched_game_and_apply_behavior(self, source, ignored_pids=None):
+        """Start detached playtime tracking and apply the saved post-launch action."""
+        if ignored_pids is None:
+            ignored_pids = {pid for pid, _name in self._running_xq3e_processes()}
+        launched_at = datetime.datetime.now(datetime.timezone.utc).isoformat()
+        self._diag_event("game_started", {"source": str(source or "unknown")})
+        detached_started = self._start_detached_game_session_tracker(ignored_pids, launched_at)
+        if not detached_started:
+            self._start_game_session_watch(ignored_pids)
+        self._apply_game_launch_behavior(detached_started)
 
     def play_selected_demo(self):
         if not q3elite_is_installed():
@@ -14420,6 +17175,9 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
             return
         try:
             import subprocess
+            # Capture existing engine PIDs before launch so the tracker can
+            # distinguish the newly started engine from an already-running one.
+            ignored_pids = {pid for pid, _name in self._running_xq3e_processes()}
             # Quake resolves demos from osp/demos, so pass the demo filename.
             self._play_launcher_sound("start_button")
             subprocess.Popen(
@@ -14429,6 +17187,7 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
                 creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
             )
             self.demoStatusLabel.setText(f"Playing {path.name}")
+            self._track_launched_game_and_apply_behavior("play_demo", ignored_pids)
         except Exception as error:
             self.qerror(f"Could not play demo:\n{error}")
 
@@ -14456,6 +17215,14 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
     def _matchmaking_servers(self):
         path = getattr(self, "serverConfigPath", USER_SERVERS_FILE)
         return server_monitor.load_servers(path)
+
+    @staticmethod
+    def _server_catalog_signature(servers):
+        return tuple(
+            (str(item.get("address", "")).strip().casefold(),
+             str(item.get("name", "")).strip())
+            for item in (servers or []) if isinstance(item, dict)
+        )
 
     def _matchmaking_paused_for_game(self):
         if not launcher_settings.get("pause_matchmaking_when_game_launched", False):
@@ -14538,7 +17305,8 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
         self.matchmakingLayout.setContentsMargins(0, 8, 18, 4)
         self.matchmakingLayout.setSpacing(10)
         self.matchmakingScroll.setWidget(self.matchmakingBody)
-        self._optimize_heavy_scroll_area(self.matchmakingScroll)
+        # Install the passive scroll observer after the first paint.
+        QtCore.QTimer.singleShot(0, lambda _scroll=self.matchmakingScroll: self._optimize_heavy_scroll_area(_scroll))
         outer.addWidget(self.matchmakingScroll, 1)
         self.matchmakingRules = self._load_matchmaking_rules()
         self.matchmakingRuleStates = {}
@@ -14553,20 +17321,79 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
         self.matchmakingTimer.setInterval(30000)
         self.matchmakingTimer.timeout.connect(self.refresh_matchmaking)
         self.matchmakingTimer.start()
-        self._rebuild_matchmaking_rules()
+        # Let the shell and intro card reach the screen before constructing the
+        # heavier rule editor tree. This moves ~200 ms of widget work out of the
+        # synchronous page-build/navigation path without changing rule content.
+        self._matchmaking_initial_build_pending = True
+        def _build_initial_matchmaking_rules():
+            if getattr(self, "_matchmaking_initial_build_pending", False):
+                self._rebuild_matchmaking_rules()
+        QtCore.QTimer.singleShot(40, _build_initial_matchmaking_rules)
         QtCore.QTimer.singleShot(1500, self.refresh_matchmaking)
         return page
 
-    def _server_choices_widget(self, selected):
+    def _register_matchmaking_dirty_control(self, control):
+        """Bind one editor control to the staged-change flag at creation time."""
+        callback = getattr(self, "_matchmaking_dirty_callback", None)
+        if callback is None or control is None:
+            return
+        bound = getattr(self, "_matchmaking_dirty_bound_ids", None)
+        if bound is None:
+            bound = self._matchmaking_dirty_bound_ids = set()
+        key = id(control)
+        if key in bound:
+            return
+        bound.add(key)
+        try:
+            if isinstance(control, QtWidgets.QListWidget):
+                control.itemChanged.connect(callback)
+            elif isinstance(control, QtWidgets.QLineEdit):
+                control.textEdited.connect(callback)
+            elif isinstance(control, QtWidgets.QComboBox):
+                control.activated.connect(callback)
+            elif isinstance(control, QtWidgets.QAbstractSpinBox):
+                control.valueChanged.connect(callback)
+            if isinstance(control, QtWidgets.QAbstractButton):
+                if control.isCheckable():
+                    control.toggled.connect(callback)
+                label = control.text().strip().upper()
+                if label not in {"SAVE RULE", "DELETE RULE", "EXPAND", "COLLAPSE", "+ ADD RULE", "+  ADD RULE"}:
+                    control.clicked.connect(callback)
+        except (RuntimeError, TypeError):
+            pass
+
+    def _server_choices_widget_legacy(self, selected):
+        # Generator: construct server checkboxes in small batches so a large
+        # server catalogue cannot monopolize the GUI thread.
+        _choice_started = time.perf_counter()
+        _choice_phase_started = _choice_started
+        def _choice_mark(phase, **extra):
+            nonlocal _choice_phase_started
+            if not OBSIDIAN_MATERIAL.enabled(ui_theme):
+                return
+            _now = time.perf_counter()
+            self._q3_write_section_profile(
+                "matchmaking_server_choices_phase", "matchmaking",
+                phase=phase, phase_ms=(_now - _choice_phase_started) * 1000.0,
+                **extra,
+            )
+            _choice_phase_started = _now
         host = SurfaceCard()
         host.setObjectName("matchmakingServerChoices")
+        # The complete subtree is assembled before it is inserted into a rule
+        # card. Prevent intermediate SurfaceCard/scroll viewport paints while
+        # MaterialCheckBox rows and their layouts are being created.
+        host.setUpdatesEnabled(False)
         host.setProperty("materialRadius", theme_float("material.matchmaking.inset_radius", 7.0))
         host.setProperty("materialTextureKey", "material.matchmaking.inset_texture_path")
         lay = QtWidgets.QVBoxLayout(host)
         lay.setContentsMargins(10, 8, 10, 9)
         lay.setSpacing(6)
+        _choice_mark("host_and_layout")
 
-        servers = self._matchmaking_servers()
+        servers = getattr(self, "_matchmaking_editor_servers", None)
+        if servers is None:
+            servers = self._matchmaking_servers()
         head = QtWidgets.QHBoxLayout()
         head.setSpacing(8)
         count_label = QtWidgets.QLabel(f"{len(servers)} SERVERS")
@@ -14577,20 +17404,17 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
         toggle.setObjectName("smallButton")
         head.addWidget(toggle)
         lay.addLayout(head)
-
-        scroll = QtWidgets.QScrollArea()
-        scroll.setObjectName("matchmakingServerScroll")
-        scroll.setWidgetResizable(True)
-        scroll.setFrameShape(QtWidgets.QFrame.Shape.NoFrame)
-        scroll.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        scroll.setVerticalScrollBarPolicy(QtCore.Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        _choice_mark("header_controls")
 
         list_widget = QtWidgets.QWidget()
         list_widget.setObjectName("matchmakingServerList")
+        list_widget.setUpdatesEnabled(False)
         list_lay = QtWidgets.QVBoxLayout(list_widget)
         list_lay.setContentsMargins(2, 2, 4, 2)
         list_lay.setSpacing(4)
         checks = []
+        _choice_rows_started = time.perf_counter()
+        _choice_rows_elapsed_ms = 0.0
         for number, server in enumerate(servers, 1):
             address = str(server.get("address", ""))
             alias = _q3_plain_ascii(server.get("name", "")) or address
@@ -14599,11 +17423,47 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
             box.setChecked(number in selected)
             list_lay.addWidget(box)
             checks.append(box)
+            self._register_matchmaking_dirty_control(box)
+            if number % 5 == 0:
+                _choice_rows_elapsed_ms += (time.perf_counter() - _choice_rows_started) * 1000.0
+                _choice_mark("checkbox_rows_batch", count=len(checks))
+                yield "server_choice_rows"
+                _choice_rows_started = time.perf_counter()
+                _choice_phase_started = _choice_rows_started
+        if checks and len(checks) % 5:
+            _choice_rows_elapsed_ms += (time.perf_counter() - _choice_rows_started) * 1000.0
+            _choice_mark("checkbox_rows_batch", count=len(checks))
+            yield "server_choice_rows"
+            _choice_phase_started = time.perf_counter()
+        else:
+            _choice_rows_elapsed_ms += (time.perf_counter() - _choice_rows_started) * 1000.0
+        _choice_rows_ms = _choice_rows_elapsed_ms
+        _choice_mark("checkbox_rows", count=len(checks), rows_ms=_choice_rows_ms)
         if not checks:
             list_lay.addWidget(QtWidgets.QLabel("No servers in servers.json"))
         list_lay.addStretch(1)
-        scroll.setWidget(list_widget)
-        lay.addWidget(scroll)
+        list_widget.setUpdatesEnabled(True)
+
+        # A nested QScrollArea is unnecessary for the common case (five or
+        # fewer servers). Mount the list directly in that case; keep the exact
+        # scroll/expand interaction for larger catalogues.
+        scroll = None
+        if len(servers) > 5 or not OBSIDIAN_MATERIAL.enabled(ui_theme):
+            # Keep Paper's established nested-scroll layout unchanged; the
+            # direct-list fast path is limited to Steel/Obsidian.
+            scroll = QtWidgets.QScrollArea()
+            scroll.setObjectName("matchmakingServerScroll")
+            scroll.setWidgetResizable(True)
+            scroll.setFrameShape(QtWidgets.QFrame.Shape.NoFrame)
+            scroll.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+            scroll.setVerticalScrollBarPolicy(QtCore.Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+            scroll.setWidget(list_widget)
+            lay.addWidget(scroll)
+            _choice_mark("scroll_widget_mount")
+        else:
+            toggle.hide()
+            lay.addWidget(list_widget)
+            _choice_mark("direct_list_mount")
 
         # A rule with 15-30 routes should not dominate the whole page. Default
         # to a compact five-row viewport with its own scrollbar; EXPAND hands
@@ -14616,6 +17476,8 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
 
         def apply_expanded_state(value):
             nonlocal expanded
+            if scroll is None:
+                return
             expanded = bool(value)
             toggle.setText("COLLAPSE" if expanded else "EXPAND")
             if expanded:
@@ -14628,23 +17490,94 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
                 scroll.setFixedHeight(compact_h)
             host.updateGeometry()
 
-        toggle.clicked.connect(lambda _checked=False: apply_expanded_state(not expanded))
-        apply_expanded_state(False)
+        if scroll is not None:
+            toggle.clicked.connect(lambda _checked=False: apply_expanded_state(not expanded))
+            apply_expanded_state(False)
+        # Re-enable only after sizing and child insertion are complete; Qt will
+        # schedule the first real paint when the host is mounted in its rule.
+        host.setUpdatesEnabled(True)
+        _choice_mark("initial_compact_sizing")
+        if OBSIDIAN_MATERIAL.enabled(ui_theme):
+            self._q3_write_section_profile(
+                "matchmaking_server_choices", "matchmaking",
+                servers=len(servers), rows_ms=_choice_rows_ms,
+                total_ms=(time.perf_counter() - _choice_started) * 1000.0,
+            )
         return host, checks
 
+    def _server_choices_widget(self, selected):
+        # Use the established MaterialCheckBox implementation for all themes.
+        # The QListWidget/delegate replacement caused click handling regressions
+        # in Matchmaking, so correctness takes priority over its small build-time
+        # advantage. Paper's original path and Steel now share the same controls.
+        result = yield from self._server_choices_widget_legacy(selected)
+        return result
+
     def _rebuild_matchmaking_rules(self):
+        self._matchmaking_initial_build_pending = False
+        _matchmaking_rebuild_started = time.perf_counter()
+        _mm_profile_enabled = OBSIDIAN_MATERIAL.enabled(ui_theme)
+        _mm_phase_started = _matchmaking_rebuild_started
+        self._matchmaking_build_generation = int(getattr(self, "_matchmaking_build_generation", 0)) + 1
+        _build_generation = self._matchmaking_build_generation
+        self._matchmaking_edit_dirty = False
+        self._matchmaking_dirty_bound_ids = set()
+
+        def _mark_matchmaking_dirty(*_args):
+            self._matchmaking_edit_dirty = True
+
+        self._matchmaking_dirty_callback = _mark_matchmaking_dirty
+
+        def _mm_profile_mark(phase, **extra):
+            nonlocal _mm_phase_started
+            if not _mm_profile_enabled:
+                return
+            _now = time.perf_counter()
+            self._q3_write_section_profile(
+                "matchmaking_build_phase", "matchmaking",
+                phase=phase, phase_ms=(_now - _mm_phase_started) * 1000.0,
+                **extra,
+            )
+            _mm_phase_started = _now
+
+        try:
+            self._matchmaking_editor_servers = self._matchmaking_servers()
+        except Exception:
+            self._matchmaking_editor_servers = []
+        self._matchmaking_editor_server_signature = self._server_catalog_signature(
+            self._matchmaking_editor_servers
+        )
         while self.matchmakingLayout.count():
             item = self.matchmakingLayout.takeAt(0)
-            if item.widget(): item.widget().deleteLater()
+            if item.widget():
+                item.widget().deleteLater()
+        _mm_profile_mark("catalogue_and_old_widget_cleanup", servers=len(self._matchmaking_editor_servers))
+        self.matchmakingEditors = []
+
         if not self.matchmakingRules:
             empty = QtWidgets.QLabel("No matchmaking rules yet.\nPress + ADD RULE to create one.")
             empty.setObjectName("serverEmpty")
             empty.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
             self.matchmakingLayout.addWidget(empty)
-        self.matchmakingEditors = []
-        for idx, rule in enumerate(self.matchmakingRules):
+
+        def _build_rule_steps(idx, rule):
+            _mm_rule_started = time.perf_counter()
             card = self._card("matchmakingRuleCard")
+            card.setUpdatesEnabled(False)
             card.setProperty("materialTextureKey", "material.matchmaking.card_texture_path")
+            # Steel: parent the empty card before constructing its descendants.
+            # Reparenting a fully populated card triggers a costly recursive
+            # polish/style propagation across ~55 child widgets (20-40 ms).
+            # Early parenting lets subsequently-created controls inherit the
+            # correct widget ancestry without moving the completed hierarchy.
+            if _mm_profile_enabled:
+                _early_parent_started = time.perf_counter()
+                card.setParent(self.matchmakingBody)
+                _mm_profile_mark(
+                    "rule_card_early_parent", rule=idx + 1,
+                    parent_ms=(time.perf_counter() - _early_parent_started) * 1000.0,
+                )
+            _mm_profile_mark("rule_card_shell", rule=idx + 1)
             v = QtWidgets.QVBoxLayout(card)
             v.setContentsMargins(18, 16, 18, 16)
             v.setSpacing(10)
@@ -14652,11 +17585,13 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
             active = ToggleSwitch("ACTIVE")
             active.setObjectName("matchmakingActive")
             active.setChecked(bool(rule.get("active", False)))
+            self._register_matchmaking_dirty_control(active)
             top.addWidget(active)
             alias = QtWidgets.QLineEdit(str(rule.get("alias", f"Rule #{idx+1}")))
             alias.setPlaceholderText(f"Rule #{idx+1} alias")
             alias.setMinimumWidth(360)
             alias.setMaximumWidth(560)
+            self._register_matchmaking_dirty_control(alias)
             top.addWidget(alias)
             status = QtWidgets.QLabel("NOT MATCHED")
             status.setObjectName("matchmakingStatus")
@@ -14666,8 +17601,11 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
             delete = MaterialPushButton("DELETE RULE")
             delete.setObjectName("dangerButton")
             delete.clicked.connect(lambda checked=False, i=idx: self.delete_matchmaking_rule(i))
+            self._register_matchmaking_dirty_control(delete)
             top.addWidget(delete)
             v.addLayout(top)
+            _mm_profile_mark("rule_top_controls", rule=idx + 1)
+            yield "top_controls"
 
             watch_title = QtWidgets.QLabel("WATCH THESE SERVERS")
             watch_title.setObjectName("matchmakingSectionTitle")
@@ -14678,11 +17616,20 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
             server_mode.addItem("ANY selected server (OR)", "or")
             server_mode.addItem("ALL selected servers (AND)", "and")
             server_mode.setCurrentIndex(max(0, server_mode.findData(str(rule.get("server_mode", "or")).lower())))
+            self._register_matchmaking_dirty_control(server_mode)
             server_mode_row.addWidget(server_mode)
             server_mode_row.addStretch(1)
             v.addLayout(server_mode_row)
-            servers_host, checks = self._server_choices_widget(set(int(x) for x in rule.get("servers", []) if str(x).isdigit()))
+            _mm_profile_mark("rule_server_mode_controls", rule=idx + 1)
+            yield "server_mode_controls"
+            servers_host, checks = yield from self._server_choices_widget(
+                set(int(x) for x in rule.get("servers", []) if str(x).isdigit())
+            )
+            _mm_profile_mark("rule_server_choices_created", rule=idx + 1, server_count=len(checks))
+            yield "server_choices_created"
             v.addWidget(servers_host)
+            _mm_profile_mark("rule_server_choices_mount", rule=idx + 1, server_count=len(checks))
+            yield "server_choices_mount"
 
             # Conditions inside one server are combined with AND. Each one can be disabled.
             when_title = QtWidgets.QLabel("WHEN ALL ENABLED CONDITIONS ARE TRUE")
@@ -14699,12 +17646,16 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
             players_row.addWidget(QtWidgets.QLabel("PLAYERS"))
             min_on = MaterialCheckBox("More than")
             min_on.setChecked(bool(rule.get("min_enabled", True)))
+            self._register_matchmaking_dirty_control(min_on)
             players_row.addWidget(min_on)
-            minp = QtWidgets.QSpinBox(); minp.setRange(0, 128); minp.setValue(int(rule.get("min_players", 3))); minp.setButtonSymbols(QtWidgets.QAbstractSpinBox.ButtonSymbols.NoButtons); minp.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter); minp.setFixedWidth(74); players_row.addWidget(minp)
+            minp = QtWidgets.QSpinBox()
+            minp.setRange(0, 128); minp.setValue(int(rule.get("min_players", 3))); minp.setButtonSymbols(QtWidgets.QAbstractSpinBox.ButtonSymbols.NoButtons); minp.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter); minp.setFixedWidth(74); self._register_matchmaking_dirty_control(minp); players_row.addWidget(minp)
             max_on = MaterialCheckBox("Less than")
             max_on.setChecked(bool(rule.get("max_enabled", True)))
+            self._register_matchmaking_dirty_control(max_on)
             players_row.addWidget(max_on)
-            maxp = QtWidgets.QSpinBox(); maxp.setRange(0, 128); maxp.setValue(int(rule.get("max_players", 6))); maxp.setButtonSymbols(QtWidgets.QAbstractSpinBox.ButtonSymbols.NoButtons); maxp.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter); maxp.setFixedWidth(74); players_row.addWidget(maxp)
+            maxp = QtWidgets.QSpinBox()
+            maxp.setRange(0, 128); maxp.setValue(int(rule.get("max_players", 6))); maxp.setButtonSymbols(QtWidgets.QAbstractSpinBox.ButtonSymbols.NoButtons); maxp.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter); maxp.setFixedWidth(74); self._register_matchmaking_dirty_control(maxp); players_row.addWidget(maxp)
             players_row.addStretch(1)
             conditions_box.addLayout(players_row)
 
@@ -14719,11 +17670,11 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
                 row_widget = QtWidgets.QWidget()
                 r = QtWidgets.QHBoxLayout(row_widget); r.setContentsMargins(0, 0, 0, 0)
                 enabled = MaterialCheckBox(f"MAP NAME [{len(map_rows)+1}]")
-                enabled.setChecked(bool(value.get("enabled", True))); r.addWidget(enabled)
-                op = QtWidgets.QComboBox(); op.addItem("=", "eq"); op.addItem("!=", "neq")
+                enabled.setChecked(bool(value.get("enabled", True))); self._register_matchmaking_dirty_control(enabled); r.addWidget(enabled)
+                op = QtWidgets.QComboBox(); op.addItem("=", "eq"); op.addItem("!=", "neq"); self._register_matchmaking_dirty_control(op)
                 op.setCurrentIndex(max(0, op.findData(value.get("operator", "eq")))); r.addWidget(op)
-                edit = QtWidgets.QLineEdit(str(value.get("name", ""))); edit.setPlaceholderText("map name"); r.addWidget(edit, 1)
-                remove = MaterialPushButton("×"); remove.setObjectName("smallButton"); remove.setFixedSize(32, 32); r.addWidget(remove)
+                edit = QtWidgets.QLineEdit(str(value.get("name", ""))); edit.setPlaceholderText("map name"); self._register_matchmaking_dirty_control(edit); r.addWidget(edit, 1)
+                remove = MaterialPushButton("×"); remove.setObjectName("smallButton"); remove.setFixedSize(32, 32); self._register_matchmaking_dirty_control(remove); r.addWidget(remove)
                 entry = {"widget":row_widget,"enabled":enabled,"op":op,"text":edit}
                 map_rows.append(entry)
                 map_conditions_layout.addWidget(row_widget)
@@ -14745,6 +17696,7 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
             # Bind this rule's local function now; otherwise Python's loop closure
             # would make every button call the function from the last rule.
             add_map.clicked.connect(lambda checked=False, fn=add_map_condition: fn())
+            self._register_matchmaking_dirty_control(add_map)
             conditions_box.addWidget(map_conditions_host)
             conditions_box.addWidget(add_map, 0, QtCore.Qt.AlignmentFlag.AlignLeft)
 
@@ -14759,11 +17711,11 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
                 row_widget = QtWidgets.QWidget()
                 r = QtWidgets.QHBoxLayout(row_widget); r.setContentsMargins(0, 0, 0, 0)
                 enabled = MaterialCheckBox(f"PLAYER NAME [{len(player_rows)+1}]")
-                enabled.setChecked(bool(value.get("enabled", True))); r.addWidget(enabled)
-                op = QtWidgets.QComboBox(); op.addItem("=", "eq"); op.addItem("!=", "neq")
+                enabled.setChecked(bool(value.get("enabled", True))); self._register_matchmaking_dirty_control(enabled); r.addWidget(enabled)
+                op = QtWidgets.QComboBox(); op.addItem("=", "eq"); op.addItem("!=", "neq"); self._register_matchmaking_dirty_control(op)
                 op.setCurrentIndex(max(0, op.findData(value.get("operator", "eq")))); r.addWidget(op)
-                edit = QtWidgets.QLineEdit(str(value.get("name", ""))); edit.setPlaceholderText("player name"); r.addWidget(edit, 1)
-                remove = MaterialPushButton("×"); remove.setObjectName("smallButton"); remove.setFixedSize(32, 32); r.addWidget(remove)
+                edit = QtWidgets.QLineEdit(str(value.get("name", ""))); edit.setPlaceholderText("player name"); self._register_matchmaking_dirty_control(edit); r.addWidget(edit, 1)
+                remove = MaterialPushButton("×"); remove.setObjectName("smallButton"); remove.setFixedSize(32, 32); self._register_matchmaking_dirty_control(remove); r.addWidget(remove)
                 entry = {"widget":row_widget,"enabled":enabled,"op":op,"text":edit}
                 player_rows.append(entry)
                 player_conditions_layout.addWidget(row_widget)
@@ -14783,35 +17735,158 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
             add_player = MaterialPushButton("+ PLAYER CONDITION")
             add_player.setObjectName("secondaryButton")
             add_player.clicked.connect(lambda checked=False, fn=add_player_condition: fn())
+            self._register_matchmaking_dirty_control(add_player)
             conditions_box.addWidget(player_conditions_host)
             conditions_box.addWidget(add_player, 0, QtCore.Qt.AlignmentFlag.AlignLeft)
 
             v.addWidget(conditions_host)
+            _mm_profile_mark(
+                "rule_conditions", rule=idx + 1,
+                map_conditions=len(map_rows), player_conditions=len(player_rows),
+            )
+            yield "conditions"
             then_title = QtWidgets.QLabel("THEN NOTIFY")
             then_title.setObjectName("matchmakingSectionTitle")
             v.addWidget(then_title)
+            _mm_profile_mark("rule_notify_heading", rule=idx + 1)
+            yield "notify_heading"
             notify_row = QtWidgets.QHBoxLayout()
             notify_row.addWidget(QtWidgets.QLabel("ACCENT"))
             color = QtWidgets.QComboBox()
             for name, value in (("Blue", "#3b82f6"), ("White", "#ffffff"), ("Red", "#e53935"), ("Green", "#4caf50"), ("Orange", "#f0a51a")):
                 color.addItem(name, value)
             color.setCurrentIndex(max(0, color.findData(rule.get("color", "#3b82f6"))))
+            self._register_matchmaking_dirty_control(color)
             notify_row.addWidget(color)
-            sound = MaterialCheckBox("Play sound"); sound.setToolTip("Play the matchmaking alert sound when this rule first matches."); sound.setChecked(bool(rule.get("sound", True))); notify_row.addWidget(sound)
+            _mm_profile_mark("rule_notify_color_combo", rule=idx + 1)
+            yield "notify_color"
+            sound = MaterialCheckBox("Play sound")
+            sound.setToolTip("Play the matchmaking alert sound when this rule first matches.")
+            sound.setChecked(bool(rule.get("sound", True)))
+            self._register_matchmaking_dirty_control(sound)
+            notify_row.addWidget(sound)
             notify_row.addStretch(1)
             v.addLayout(notify_row)
+            _mm_profile_mark("rule_notify_sound_and_row", rule=idx + 1)
+            yield "notify_sound_row"
 
             save = MaterialPushButton("SAVE RULE")
             save.setObjectName("secondaryButton")
             v.addWidget(save, 0, QtCore.Qt.AlignmentFlag.AlignRight)
+            _mm_profile_mark("rule_save_button", rule=idx + 1)
+            yield "save_button"
             editor = {"active":active,"alias":alias,"server_mode":server_mode,"checks":checks,"min_on":min_on,"min":minp,"max_on":max_on,"max":maxp,"map_rows":map_rows,"player_rows":player_rows,"color":color,"sound":sound,"status":status}
             self.matchmakingEditors.append(editor)
             min_on.toggled.connect(minp.setEnabled); max_on.toggled.connect(maxp.setEnabled)
             minp.setEnabled(min_on.isChecked()); maxp.setEnabled(max_on.isChecked())
             save.clicked.connect(lambda checked=False, i=idx: self.save_matchmaking_rule(i))
+            _mm_profile_mark("rule_signal_setup", rule=idx + 1)
+            yield "signal_setup"
+
+            # In Steel Theme the card was already parented while empty, before
+            # any descendants were created. Avoid reparenting the completed
+            # hierarchy and avoid explicit ensurePolished() calls: profiling
+            # showed polish itself costs <0.1 ms across all 55 widgets.
+
+            _card_insert_started = time.perf_counter()
             self.matchmakingLayout.addWidget(card)
-        self.matchmakingLayout.addStretch(1)
-        self._update_matchmaking_status_ui()
+            _mm_profile_mark("rule_card_layout_insert", rule=idx + 1,
+                             insert_ms=(time.perf_counter() - _card_insert_started) * 1000.0)
+            yield "card_layout_insert"
+            _card_updates_started = time.perf_counter()
+            # Re-enabling updates already schedules a repaint; an explicit
+            # card.update() here only duplicated that work.
+            card.setUpdatesEnabled(True)
+            if not _mm_profile_enabled:
+                # Preserve the original Paper Theme repaint path.
+                card.update()
+            _mm_profile_mark("rule_card_updates_enable", rule=idx + 1,
+                             enable_ms=(time.perf_counter() - _card_updates_started) * 1000.0)
+            yield "card_updates_enable"
+            _mm_profile_mark("rule_card_mount", rule=idx + 1)
+            if _mm_profile_enabled:
+                self._q3_write_section_profile(
+                    "matchmaking_rule_total", "matchmaking", rule=idx + 1,
+                    rule_ms=(time.perf_counter() - _mm_rule_started) * 1000.0,
+                    map_conditions=len(map_rows), player_conditions=len(player_rows),
+                    server_count=len(checks),
+                )
+            _mm_profile_mark("rule_notify_save_and_mount", rule=idx + 1)
+            yield "rule_complete"
+
+        def _finish_matchmaking_build():
+            self.matchmakingLayout.addStretch(1)
+            # Rebuilding every rule card on every navigation used to cost about
+            # 100-130 ms even when the player had not changed a single setting.
+            # Track real editor changes and rebuild only when there are staged edits
+            # to discard, preserving the existing SAVE RULE behavior.
+            self._matchmaking_edit_dirty = False
+
+            # Controls are connected as they are created (including dynamic
+            # map/player rows and server MaterialCheckBoxes). No recursive
+            # QWidget.findChildren scan is needed after the build.
+            _mm_dirty_bound_count = len(getattr(self, "_matchmaking_dirty_bound_ids", ()))
+            _mm_profile_mark(
+                "dirty_signal_binding", widgets=_mm_dirty_bound_count,
+                scan_ms=0.0, registration="incremental",
+            )
+
+            self._update_matchmaking_status_ui()
+            if _mm_profile_enabled:
+                self._q3_write_section_profile(
+                    "matchmaking_rebuild", "matchmaking",
+                    rebuild_ms=(time.perf_counter() - _matchmaking_rebuild_started) * 1000.0,
+                    rules=len(self.matchmakingRules),
+                )
+
+        if not _mm_profile_enabled:
+            for _index, _rule in enumerate(self.matchmakingRules):
+                for _step in _build_rule_steps(_index, _rule):
+                    pass
+            _finish_matchmaking_build()
+            return
+
+        def _build_rule_at(index):
+            if _build_generation != getattr(self, "_matchmaking_build_generation", -1):
+                return
+            if index >= len(self.matchmakingRules):
+                _finish_matchmaking_build()
+                return
+            rule = self.matchmakingRules[index]
+            stepper = _build_rule_steps(index, rule)
+
+            def _advance_rule_step():
+                if _build_generation != getattr(self, "_matchmaking_build_generation", -1):
+                    return
+                # The old scheduler queued one Qt timer for every generator
+                # yield (roughly 12-14 turns per rule). That kept each turn
+                # short, but added substantial event-loop/scheduling overhead.
+                # Process several small steps per turn and yield near 8 ms.
+                # A single expensive step can still exceed the budget, exactly
+                # as it could before; no individual step is made more blocking.
+                _turn_started = time.perf_counter()
+                while True:
+                    if _build_generation != getattr(self, "_matchmaking_build_generation", -1):
+                        return
+                    _step_started = time.perf_counter()
+                    try:
+                        step_name = next(stepper)
+                    except StopIteration:
+                        QtCore.QTimer.singleShot(0, lambda _next=index + 1: _build_rule_at(_next))
+                        return
+                    _chunk_ms = (time.perf_counter() - _step_started) * 1000.0
+                    if _mm_profile_enabled:
+                        self._q3_write_section_profile(
+                            "matchmaking_build_chunk", "matchmaking",
+                            rule=index + 1, step=step_name, chunk_ms=_chunk_ms,
+                        )
+                    if (time.perf_counter() - _turn_started) * 1000.0 >= 8.0:
+                        QtCore.QTimer.singleShot(0, _advance_rule_step)
+                        return
+
+            _advance_rule_step()
+
+        QtCore.QTimer.singleShot(0, lambda: _build_rule_at(0))
 
     def add_matchmaking_rule(self):
         number = len(self.matchmakingRules) + 1
@@ -14823,11 +17898,53 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
             self.matchmakingRules.pop(index); self._save_matchmaking_rules(); self._rebuild_matchmaking_rules(); self.refresh_matchmaking()
 
     def save_matchmaking_rule(self, index):
-        if not (0 <= index < len(self.matchmakingRules)): return
+        if not (0 <= index < len(self.matchmakingRules)):
+            return
         e = self.matchmakingEditors[index]
         old = self.matchmakingRules[index]
-        self.matchmakingRules[index] = {"id":old.get("id") or uuid.uuid4().hex,"alias":e["alias"].text().strip() or f"Rule #{index+1}","active":e["active"].isChecked(),"servers":[int(b.property("serverNumber")) for b in e["checks"] if b.isChecked()],"server_mode":e["server_mode"].currentData(),"min_enabled":e["min_on"].isChecked(),"min_players":e["min"].value(),"max_enabled":e["max_on"].isChecked(),"max_players":e["max"].value(),"map_conditions":[{"enabled":r["enabled"].isChecked(),"operator":r["op"].currentData(),"name":r["text"].text().strip()} for r in e["map_rows"]],"player_conditions":[{"enabled":r["enabled"].isChecked(),"operator":r["op"].currentData(),"name":r["text"].text().strip()} for r in e["player_rows"]],"color":e["color"].currentData(),"sound":e["sound"].isChecked()}
-        self._save_matchmaking_rules(); self.matchmakingRuleStates[self.matchmakingRules[index]["id"]] = False; self._update_matchmaking_status_ui(); self.refresh_matchmaking()
+        checks = e["checks"]
+        if isinstance(checks, QtWidgets.QListWidget):
+            selected_servers = [
+                int(checks.item(i).data(QtCore.Qt.ItemDataRole.UserRole))
+                for i in range(checks.count())
+                if checks.item(i).checkState() == QtCore.Qt.CheckState.Checked
+                and checks.item(i).data(QtCore.Qt.ItemDataRole.UserRole) is not None
+            ]
+        else:
+            # Preserve the original Paper Theme checkbox representation.
+            selected_servers = [
+                int(box.property("serverNumber"))
+                for box in checks if box.isChecked()
+            ]
+        self.matchmakingRules[index] = {
+            "id": old.get("id") or uuid.uuid4().hex,
+            "alias": e["alias"].text().strip() or f"Rule #{index+1}",
+            "active": e["active"].isChecked(),
+            "servers": selected_servers,
+            "server_mode": e["server_mode"].currentData(),
+            "min_enabled": e["min_on"].isChecked(),
+            "min_players": e["min"].value(),
+            "max_enabled": e["max_on"].isChecked(),
+            "max_players": e["max"].value(),
+            "map_conditions": [
+                {"enabled": r["enabled"].isChecked(),
+                 "operator": r["op"].currentData(),
+                 "name": r["text"].text().strip()}
+                for r in e["map_rows"]
+            ],
+            "player_conditions": [
+                {"enabled": r["enabled"].isChecked(),
+                 "operator": r["op"].currentData(),
+                 "name": r["text"].text().strip()}
+                for r in e["player_rows"]
+            ],
+            "color": e["color"].currentData(),
+            "sound": e["sound"].isChecked(),
+        }
+        self._save_matchmaking_rules()
+        self.matchmakingRuleStates[self.matchmakingRules[index]["id"]] = False
+        self._update_matchmaking_status_ui()
+        self.refresh_matchmaking()
 
     def refresh_matchmaking(self):
         if self._matchmaking_paused_for_game():
@@ -14997,14 +18114,25 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
         badges_hidden = time.monotonic() < getattr(self, "matchmakingBadgesHiddenUntil", 0.0)
         if matches and not badges_hidden:
             visible = matches[:3]
-            for index, dot in enumerate(getattr(self, "matchmakingAlertDots", [])):
-                if index < len(visible):
+            dots = getattr(self, "matchmakingAlertDots", [])
+            dot_size, dot_gap = 8, 3
+            visible_count = min(len(dots), len(visible))
+            # Center the *visible* group, not the three-dot maximum slot.
+            # This keeps one, two, and three alerts centered in the round nav.
+            total_w = visible_count * dot_size + max(0, visible_count - 1) * dot_gap
+            start_x = max(0, (self.matchmakingNav.width() - total_w) // 2)
+            y = max(0, self.matchmakingNav.height() - dot_size - 5)
+            visible_index = 0
+            for index, dot in enumerate(dots):
+                if index < visible_count:
+                    dot.move(start_x + visible_index * (dot_size + dot_gap), y)
                     accent = QtGui.QColor(str(visible[index][1].get("color", "#3b82f6")))
                     if not accent.isValid():
                         accent = QtGui.QColor("#3b82f6")
-                    dot.setStyleSheet(f"background-color: {accent.name()}; border: 1px solid #f0f2f5; border-radius: 5px;")
+                    dot.setStyleSheet(f"background-color: {accent.name()}; border: none; border-radius: 4px;")
                     dot.show()
                     dot.raise_()
+                    visible_index += 1
                 else:
                     dot.hide()
             aliases = [r.get("alias") or f"Rule #{i+1}" for i, r in matches]
@@ -15052,9 +18180,18 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
         self.mapsSortButton=GlowButton("NAME ↑"); self.mapsSortButton.setObjectName("mapToolbarButton"); self.mapsSortButton.setProperty("active",False); self.mapsSortButton.clicked.connect(self.cycle_maps_gametype_sort); c.addWidget(self.mapsSortButton)
         self.mapsLocationButton=GlowButton("ALL"); self.mapsLocationButton.setObjectName("mapToolbarButton"); self.mapsLocationButton.clicked.connect(self.cycle_maps_location_filter); c.addWidget(self.mapsLocationButton); ll.addLayout(c)
         self.mapsHint=QtWidgets.QLabel("F1 Shortcuts   ↑↓ Select   O Select PAK   Ctrl+F Search   Enter Play   Del Delete"); self.mapsHint.setObjectName("mapsHint"); ll.addWidget(self.mapsHint)
-        self.mapsKeys=QtWidgets.QLabel("KEY BINDS\n↑ / ↓ : Navigation\nEnter : Play\nO : Select PAK\nDel : Delete PAK\nCtrl+F : Search\nF3 : Sort\nF4 : Location\nF1 : Show/Hide"); self.mapsKeys.setObjectName("keyBindsLegend"); self.mapsKeys.hide(); ll.addWidget(self.mapsKeys)
+        self.mapsKeys=QtWidgets.QLabel("KEY BINDS\n↑ / ↓ : Navigation\nEnter : Play\nO : Select PAK\nDel : Delete PAK\nCtrl+F : Search\nF3 : Sort\nF4 : Location\nF5 : Refresh\nF1 : Show/Hide"); self.mapsKeys.setObjectName("keyBindsLegend"); self.mapsKeys.hide(); ll.addWidget(self.mapsKeys)
         self.mapsTable=QtWidgets.QTableWidget(0,6); self.mapsTable.setObjectName("mapsTable"); self.mapsTable.setHorizontalHeader(MaterialHeaderView(QtCore.Qt.Orientation.Horizontal, self.mapsTable)); self.mapsTable.setHorizontalHeaderLabels(["LEVELSHOT","MAP","PAK","SIZE","GAMETYPE",""])
-        self.mapsTable.verticalHeader().setVisible(False); self.mapsTable.setShowGrid(False); self.mapsTable.setSelectionBehavior(QtWidgets.QAbstractItemView.SelectionBehavior.SelectRows); self.mapsTable.setSelectionMode(QtWidgets.QAbstractItemView.SelectionMode.SingleSelection); self.mapsTable.setEditTriggers(QtWidgets.QAbstractItemView.EditTrigger.NoEditTriggers); self.mapsTable.setIconSize(QtCore.QSize(144,81)); self.mapsTable.setMouseTracking(True); self.mapsTable.viewport().setMouseTracking(True); self.mapsTable.setWordWrap(False); self.mapsTable.setItemDelegate(MapRowHoverDelegate(self.mapsTable))
+        self.mapsTable.verticalHeader().setVisible(False); self.mapsTable.verticalHeader().setDefaultSectionSize(92); self.mapsTable.setShowGrid(False); self.mapsTable.setStyleSheet("QTableWidget#mapsTable::item:selected { background: transparent; border: none; } QTableWidget#mapsTable::item:focus { outline: none; border: none; }"); self.mapsTable.setSelectionBehavior(QtWidgets.QAbstractItemView.SelectionBehavior.SelectRows); self.mapsTable.setSelectionMode(QtWidgets.QAbstractItemView.SelectionMode.SingleSelection); self.mapsTable.clicked.connect(self._on_local_map_clicked); self.mapsTable.setEditTriggers(QtWidgets.QAbstractItemView.EditTrigger.NoEditTriggers); self.mapsTable.setIconSize(QtCore.QSize(144,81)); self.mapsTable.setMouseTracking(True); self.mapsTable.viewport().setMouseTracking(True); self.mapsTable.setWordWrap(False); self.mapsTable.setItemDelegate(MapRowHoverDelegate(self.mapsTable)); self.mapsTable.setItemDelegateForColumn(0, LocalMapsThumbnailDelegate(self.mapsTable)); self._localMapsActionsDelegate = LocalMapsActionsDelegate(self.mapsTable, self); self.mapsTable.setItemDelegateForColumn(5, self._localMapsActionsDelegate)
+        self._map_thumbnail_load_pending = False
+        self._map_thumbnail_prefetch_pending = False
+        self._map_thumbnail_prefetch_cursor = 0
+        self.mapsTable.verticalScrollBar().valueChanged.connect(self._schedule_map_thumbnail_load)
+        self.pages.currentChanged.connect(
+            lambda _index, _page=page:
+                self._schedule_map_thumbnail_load()
+                if self.pages.currentWidget() is _page else None
+        )
         h=self.mapsTable.horizontalHeader(); h.setSectionResizeMode(0,QtWidgets.QHeaderView.ResizeMode.Fixed); h.resizeSection(0,164); h.setSectionResizeMode(1,QtWidgets.QHeaderView.ResizeMode.Stretch); h.setSectionResizeMode(2,QtWidgets.QHeaderView.ResizeMode.Stretch); h.setSectionResizeMode(3,QtWidgets.QHeaderView.ResizeMode.Fixed); h.resizeSection(3,theme_int("maps.size_column",100)); h.setSectionResizeMode(4,QtWidgets.QHeaderView.ResizeMode.ResizeToContents); h.setSectionResizeMode(5,QtWidgets.QHeaderView.ResizeMode.Fixed); h.resizeSection(5,theme_int("maps.local_actions_column",188))
         ll.addWidget(self.mapsTable,1); self.mapsStack.addWidget(local)
 
@@ -15062,13 +18199,29 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
         self.onlineMapsSearch=QtWidgets.QLineEdit(); self.onlineMapsSearch.setObjectName("mapsSearch"); self.onlineMapsSearch.setPlaceholderText("Search LvLWorld + Worldspawn maps…   Ctrl+F"); self.onlineMapsSearch.setClearButtonEnabled(True); ol.addWidget(self.onlineMapsSearch)
         self.onlineMapsHeading=QtWidgets.QLabel("LATEST MAPS — LvLWorld"); self.onlineMapsHeading.setObjectName("onlineMapsHeading"); ol.addWidget(self.onlineMapsHeading)
         self.onlineMapsTable=QtWidgets.QTableWidget(0,7); self.onlineMapsTable.setObjectName("mapsTable"); self.onlineMapsTable.setHorizontalHeader(MaterialHeaderView(QtCore.Qt.Orientation.Horizontal, self.onlineMapsTable)); self.onlineMapsTable.setHorizontalHeaderLabels(["LEVELSHOT","MAP","PAKNAME","SIZE","RELEASED","SOURCE",""])
-        self.onlineMapsTable.verticalHeader().setVisible(False); self.onlineMapsTable.verticalHeader().setDefaultSectionSize(92); self.onlineMapsTable.setShowGrid(False); self.onlineMapsTable.setSelectionBehavior(QtWidgets.QAbstractItemView.SelectionBehavior.SelectRows); self.onlineMapsTable.setSelectionMode(QtWidgets.QAbstractItemView.SelectionMode.SingleSelection); self.onlineMapsTable.setEditTriggers(QtWidgets.QAbstractItemView.EditTrigger.NoEditTriggers); self.onlineMapsTable.setIconSize(QtCore.QSize(144,81)); self.onlineMapsTable.setMouseTracking(True); self.onlineMapsTable.viewport().setMouseTracking(True); self.onlineMapsTable.setWordWrap(False); self.onlineMapsTable.setItemDelegate(MapRowHoverDelegate(self.onlineMapsTable))
+        self.onlineMapsTable.verticalHeader().setVisible(False); self.onlineMapsTable.verticalHeader().setDefaultSectionSize(92); self.onlineMapsTable.setShowGrid(False); self.onlineMapsTable.setSelectionBehavior(QtWidgets.QAbstractItemView.SelectionBehavior.SelectRows); self.onlineMapsTable.setSelectionMode(QtWidgets.QAbstractItemView.SelectionMode.SingleSelection); self.onlineMapsTable.setEditTriggers(QtWidgets.QAbstractItemView.EditTrigger.NoEditTriggers); self.onlineMapsTable.setIconSize(QtCore.QSize(144,81)); self.onlineMapsTable.setMouseTracking(True); self.onlineMapsTable.viewport().setMouseTracking(True); self.onlineMapsTable.setWordWrap(False); self.onlineMapsTable.setItemDelegate(MapRowHoverDelegate(self.onlineMapsTable)); self.onlineMapsTable.setItemDelegateForColumn(0, LocalMapsThumbnailDelegate(self.onlineMapsTable))
         h=self.onlineMapsTable.horizontalHeader(); h.setSectionResizeMode(0,QtWidgets.QHeaderView.ResizeMode.Fixed); h.resizeSection(0,164); h.setSectionResizeMode(1,QtWidgets.QHeaderView.ResizeMode.Stretch); h.setSectionResizeMode(2,QtWidgets.QHeaderView.ResizeMode.Stretch); h.setSectionResizeMode(3,QtWidgets.QHeaderView.ResizeMode.Fixed); h.resizeSection(3,theme_int("maps.size_column",100)); h.setSectionResizeMode(4,QtWidgets.QHeaderView.ResizeMode.Fixed); h.resizeSection(4,110); h.setSectionResizeMode(5,QtWidgets.QHeaderView.ResizeMode.Fixed); h.resizeSection(5,78); h.setSectionResizeMode(6,QtWidgets.QHeaderView.ResizeMode.Fixed); h.resizeSection(6,theme_int("maps.online_actions_column",194))
         ol.addWidget(self.onlineMapsTable,1)
         self.onlineLoadMore=GlowButton("LOAD MORE"); self.onlineLoadMore.setObjectName("mapToolbarButton"); self.onlineLoadMore.clicked.connect(self._load_more_online_maps); ol.addWidget(self.onlineLoadMore,0,QtCore.Qt.AlignmentFlag.AlignHCenter)
         self.mapsStack.addWidget(online)
 
-        self.localMaps=[]; self.mapCatalogWorker=None; self.onlineMapsWorker=None; self.onlineDownloadWorkers=[]; self.onlineDownloadByKey={}; self.mapsGametypeSort=0; self.mapsLocationFilter="All"; self.mapsMode="local"; self.onlineLatestLoaded=False; self.onlineSearchSerial=0; self.onlineLatestLimit=12; self._sourceFavicons={}; self._sourceFaviconWorkers=[]
+        self.localMaps=[]; self.mapCatalogWorker=None; self.onlineMapsWorker=None; self.onlineDownloadWorkers=[]; self.onlineDownloadByKey={}
+        try:
+            self.mapsGametypeSort = max(0, min(3, int(launcher_settings.get("maps_sort_mode", 0))))
+        except (TypeError, ValueError):
+            self.mapsGametypeSort = 0
+        self.mapsLocationFilter = str(launcher_settings.get("maps_location_filter", "All") or "All")
+        if self.mapsLocationFilter not in ("All", "Preinstalled", "Downloaded"):
+            self.mapsLocationFilter = "All"
+        self.mapsMode="local"; self.onlineLatestLoaded=False; self.onlineSearchSerial=0; self.onlineLatestLimit=12; self._sourceFavicons={}; self._sourceFaviconWorkers=[]
+        _maps_sort_labels = {0: "NAME ↑", 1: "NAME ↓", 2: "GAMETYPE ↑", 3: "GAMETYPE ↓"}
+        self.mapsSortButton.setText(_maps_sort_labels[self.mapsGametypeSort])
+        self.mapsSortButton.setProperty("active", self.mapsGametypeSort != 0)
+        self.mapsLocationButton.setText(self.mapsLocationFilter.upper())
+        self.mapsLocationButton.setProperty("active", self.mapsLocationFilter != "All")
+        for _button in (self.mapsSortButton, self.mapsLocationButton):
+            _button.style().unpolish(_button)
+            _button.style().polish(_button)
         self._map_population_complete = False
         self._maps_loaded = False
         self.onlineSearchTimer=QtCore.QTimer(self); self.onlineSearchTimer.setSingleShot(True); self.onlineSearchTimer.setInterval(450); self.onlineSearchTimer.timeout.connect(self._run_online_search); self.onlineMapsSearch.textChanged.connect(self._online_search_changed)
@@ -15083,7 +18236,7 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
                 action()
             return run
         shortcut("F1", map_action_shortcut(lambda: self.mapsKeys.setVisible(not self.mapsKeys.isVisible()), local_only=True)); shortcut("Up",lambda:self._step_map(-1) if self.mapsMode=="local" else self._step_online_map(-1)); shortcut("Down",lambda:self._step_map(1) if self.mapsMode=="local" else self._step_online_map(1)); shortcut("Return",lambda:self.play_selected_map() if self.mapsMode=="local" else self.activate_selected_online_map()); shortcut("O",map_action_shortcut(lambda:self.open_selected_map_location() if self.mapsMode=="local" else self.open_selected_online_map_location())); shortcut("Delete",map_action_shortcut(lambda:self.delete_selected_map_pak() if self.mapsMode=="local" else self.delete_selected_online_map())); shortcut("F3",map_action_shortcut(self.cycle_maps_gametype_sort, local_only=True)); shortcut("F4",map_action_shortcut(self.cycle_maps_location_filter, local_only=True))
-        self.mapsTable.itemDoubleClicked.connect(lambda _:self.play_selected_map())
+        self.mapsTable.doubleClicked.connect(lambda index: self.play_selected_map() if index.column() != 5 else None)
         return page
 
     def set_maps_mode(self,mode):
@@ -15092,7 +18245,9 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
             b.setProperty("active",a); b.style().unpolish(b); b.style().polish(b)
         if online:
             if not self.onlineLatestLoaded and not self.onlineMapsSearch.text().strip(): self._start_online_worker("latest","")
-        else:self.mapsStatus.setText(f"{len(self.localMaps)} local map(s)")
+        else:
+            self.mapsStatus.setText(f"{len(self.localMaps)} local map(s)")
+            self._schedule_map_thumbnail_load()
 
     def _online_search_changed(self,text):
         q=text.strip(); self.onlineSearchTimer.stop()
@@ -15213,20 +18368,14 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
     def _set_map_thumbnail(self, table, row, pixmap):
         if not (0 <= row < table.rowCount()) or pixmap is None or pixmap.isNull():
             return
-        label = table.cellWidget(row, 0)
-        if not isinstance(label, AspectFillLabel):
-            label = AspectFillLabel(16, 9, table)
-            label.setObjectName("mapLevelshot16x9")
-            label.setMinimumSize(1, 1)
-            label.setSizePolicy(QtWidgets.QSizePolicy.Policy.Expanding, QtWidgets.QSizePolicy.Policy.Expanding)
-            host = QtWidgets.QWidget(table)
-            host.setObjectName("mapLevelshotHost")
-            lay = QtWidgets.QHBoxLayout(host)
-            lay.setContentsMargins(0, 0, 0, 0)
-            lay.setSpacing(0)
-            lay.addWidget(label)
-            table.setCellWidget(row, 0, host)
-        label.setSourcePixmap(pixmap)
+        item = table.item(row, 0)
+        if item is None:
+            return
+        item.setData(LocalMapsThumbnailDelegate.THUMBNAIL_ROLE, QtGui.QPixmap(pixmap))
+        # The delegate paints into the same cell geometry; no QLabel, host
+        # QWidget, layout or resize-driven pixmap copies are created per row.
+        table.viewport().update(table.visualRect(table.model().index(row, 0)))
+
 
     def _set_online_row_action(self,row,data):
         if not (0 <= row < self.onlineMapsTable.rowCount()): return
@@ -15604,7 +18753,7 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
         ])
         for path in candidates:
             if path.is_file():
-                pix = _load_pixmap_file(path)
+                pix = _load_map_levelshot_pixmap(path, QtCore.QSize(144, 82))
                 if not pix.isNull():
                     return pix
         return QtGui.QPixmap()
@@ -15615,11 +18764,11 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
         if self.mapCatalogWorker is not None and self.mapCatalogWorker.isRunning():
             return
         if force:
-            try:
-                MAPS_MANIFEST_FILE.unlink(missing_ok=True)
-            except OSError:
-                pass
-            # Forced refresh must not consume stale startup preload.
+            # Force a fresh directory/stat pass, but KEEP the manifest.
+            # Deleting it here invalidates every PK3 cache entry and forces
+            # every archive to be opened and parsed again on each refresh.
+            # A forced refresh bypasses startup preload only; the worker still
+            # validates every PK3 against its size/mtime_ns signature.
             self._map_catalog_future = None
 
         preload = getattr(self, "_map_catalog_future", None)
@@ -15698,18 +18847,184 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
             items.sort(key=lambda x: (str(x.get("name", "")).casefold(), str(x.get("pak", "")).casefold()))
         return items
 
+    def _schedule_map_thumbnail_load(self, *_args):
+        """Queue one viewport-aware thumbnail pass; scrolling prioritizes visible rows."""
+        if getattr(self, "_map_thumbnail_load_pending", False):
+            return
+        self._map_thumbnail_load_pending = True
+        QtCore.QTimer.singleShot(0, self._load_visible_map_thumbnails)
+
+    def _schedule_map_thumbnail_prefetch(self, delay=25):
+        """Load remaining local thumbnails gradually while the Local Maps view is active."""
+        if getattr(self, "_map_thumbnail_prefetch_pending", False):
+            return
+        if not getattr(self, "_map_population_complete", False):
+            return
+        self._map_thumbnail_prefetch_pending = True
+        QtCore.QTimer.singleShot(max(0, int(delay)), self._load_next_map_thumbnail_prefetch_batch)
+
+    def _load_visible_map_thumbnails(self):
+        self._map_thumbnail_load_pending = False
+        table = getattr(self, "mapsTable", None)
+        if (table is None or not table.isVisible()
+                or getattr(self, "mapsMode", "local") != "local"
+                or not getattr(self, "_map_population_complete", False)):
+            return
+        row_count = table.rowCount()
+        if row_count <= 0:
+            return
+
+        viewport = table.viewport()
+        first = table.rowAt(0)
+        last = table.rowAt(max(0, viewport.height() - 1))
+        if first < 0:
+            first = 0
+        if last < first:
+            last = min(row_count - 1, first + 5)
+
+        # Decode visible thumbnails plus a small forward buffer first. The
+        # remaining catalog is filled in short background batches.
+        stop = min(row_count, last + 1 + 8)
+        _load_t0 = time.perf_counter()
+        _decode_ms = 0.0
+        loaded = 0
+        attempted = 0
+        table.setUpdatesEnabled(False)
+        try:
+            for row in range(first, stop):
+                if table.isRowHidden(row):
+                    continue
+                cell = table.item(row, 0)
+                if cell is None or bool(cell.data(LocalMapsThumbnailDelegate.ATTEMPTED_ROLE)):
+                    continue
+                cell.setData(LocalMapsThumbnailDelegate.ATTEMPTED_ROLE, True)
+                item = cell.data(QtCore.Qt.ItemDataRole.UserRole) or {}
+                if not isinstance(item, dict):
+                    continue
+                _decode_t0 = time.perf_counter()
+                pix = self._map_levelshot_pixmap(item)
+                _decode_ms += (time.perf_counter() - _decode_t0) * 1000.0
+                attempted += 1
+                if pix is not None and not pix.isNull():
+                    cell.setData(LocalMapsThumbnailDelegate.THUMBNAIL_ROLE, QtGui.QPixmap(pix))
+                    loaded += 1
+        finally:
+            table.setUpdatesEnabled(True)
+        if attempted:
+            table.viewport().update()
+            _map_profile_log(
+                "lazy_thumbnail_batch",
+                rows=f"{first}-{stop}",
+                attempted=attempted,
+                loaded=loaded,
+                decode_ms=_decode_ms,
+                total=(time.perf_counter() - _load_t0) * 1000.0,
+                cache_hits=_MAP_LEVELSHOT_CACHE_STATS["hits"],
+                cache_misses=_MAP_LEVELSHOT_CACHE_STATS["misses"],
+            )
+        self._schedule_map_thumbnail_prefetch(25)
+
+    def _load_next_map_thumbnail_prefetch_batch(self):
+        self._map_thumbnail_prefetch_pending = False
+        table = getattr(self, "mapsTable", None)
+        if (table is None or not table.isVisible()
+                or getattr(self, "mapsMode", "local") != "local"
+                or not getattr(self, "_map_population_complete", False)):
+            return
+
+        row_count = table.rowCount()
+        cursor = max(0, int(getattr(self, "_map_thumbnail_prefetch_cursor", 0)))
+        if row_count <= 0 or cursor >= row_count:
+            return
+
+        # Four images per pass keeps work bounded and gives Qt time to paint/respond.
+        batch_limit = max(1, min(6, theme_int("performance.map_thumbnail_prefetch_batch", 4)))
+        _load_t0 = time.perf_counter()
+        _decode_ms = 0.0
+        attempted = 0
+        loaded = 0
+        first_row = cursor
+        last_row = cursor
+        table.setUpdatesEnabled(False)
+        try:
+            while cursor < row_count and attempted < batch_limit:
+                row = cursor
+                cursor += 1
+                last_row = row
+                if table.isRowHidden(row):
+                    continue
+                cell = table.item(row, 0)
+                if cell is None or bool(cell.data(LocalMapsThumbnailDelegate.ATTEMPTED_ROLE)):
+                    continue
+                cell.setData(LocalMapsThumbnailDelegate.ATTEMPTED_ROLE, True)
+                item = cell.data(QtCore.Qt.ItemDataRole.UserRole) or {}
+                if not isinstance(item, dict):
+                    continue
+                _decode_t0 = time.perf_counter()
+                pix = self._map_levelshot_pixmap(item)
+                _decode_ms += (time.perf_counter() - _decode_t0) * 1000.0
+                attempted += 1
+                if pix is not None and not pix.isNull():
+                    cell.setData(LocalMapsThumbnailDelegate.THUMBNAIL_ROLE, QtGui.QPixmap(pix))
+                    loaded += 1
+        finally:
+            table.setUpdatesEnabled(True)
+
+        self._map_thumbnail_prefetch_cursor = cursor
+        if attempted:
+            table.viewport().update()
+            _map_profile_log(
+                "lazy_thumbnail_prefetch_batch",
+                rows=f"{first_row}-{last_row + 1}",
+                attempted=attempted,
+                loaded=loaded,
+                decode_ms=_decode_ms,
+                total=(time.perf_counter() - _load_t0) * 1000.0,
+                cache_hits=_MAP_LEVELSHOT_CACHE_STATS["hits"],
+                cache_misses=_MAP_LEVELSHOT_CACHE_STATS["misses"],
+            )
+
+        if cursor < row_count:
+            self._schedule_map_thumbnail_prefetch(25)
+
     def _populate_maps_table(self):
         table = self.mapsTable
+        # V23.1: keep the existing table when navigating away and back. The
+        # manifest caches PK3 contents; this avoids rebuilding table items and
+        # decoding levelshot thumbnails on every Maps visit.
+        if (getattr(self, "_map_table_built_for_catalog", False)
+                and getattr(self, "_map_population_complete", False)
+                and table.rowCount() == len(self._visible_maps())):
+            self._filter_maps_table(self.mapsSearch.text())
+            self._sort_maps_table_fast()
+            return
+        _populate_t0 = time.perf_counter()
+        self._map_population_started_at = _populate_t0
         self._map_population_complete = False
+        self._map_thumbnail_prefetch_cursor = 0
         self._map_population_serial = int(getattr(self, "_map_population_serial", 0)) + 1
         serial = self._map_population_serial
+        _visible_t0 = time.perf_counter()
         items = self._visible_maps()
+        _visible_ms = (time.perf_counter() - _visible_t0) * 1000.0
+        _index_t0 = time.perf_counter()
         self._map_levelshot_index = self._build_map_levelshot_index()
+        _index_ms = (time.perf_counter() - _index_t0) * 1000.0
         self._map_population_items = items
+        _reset_t0 = time.perf_counter()
         table.setUpdatesEnabled(False)
         table.clearContents()
         table.setRowCount(len(items))
         table.setUpdatesEnabled(True)
+        _reset_ms = (time.perf_counter() - _reset_t0) * 1000.0
+        _map_profile_log(
+            "table_prepare",
+            rows=len(items),
+            visible_sort=_visible_ms,
+            levelshot_index=_index_ms,
+            table_reset=_reset_ms,
+            total=(time.perf_counter() - _populate_t0) * 1000.0,
+        )
         self.mapsStatus.setText(f"Loading {len(items)} local map(s)…")
         QtCore.QTimer.singleShot(0, lambda s=serial: self._populate_maps_table_batch(s, 0))
 
@@ -15718,20 +19033,40 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
             return
         table = self.mapsTable
         items = getattr(self, "_map_population_items", [])
-        batch = max(4, theme_int("performance.map_population_batch", 10))
+        batch = max(16, theme_int("performance.map_population_batch", 16))
         stop = min(len(items), start_row + batch)
+        _batch_t0 = time.perf_counter()
+        _pixmap_ms = 0.0
+        _thumbnail_widget_ms = 0.0
+        _thumbnail_cache_hits_before = _MAP_THUMBNAIL_CACHE_HITS
+        _thumbnail_cache_misses_before = _MAP_THUMBNAIL_CACHE_MISSES
+        _row_items_ms = 0.0
+        _action_widget_ms = 0.0
+        _row_height_ms = 0.0
+        _thumbnail_cell_ms = 0.0
+        _action_container_ms = 0.0
+        _action_cell_attach_ms = 0.0
+        _widgets_t0 = time.perf_counter()
+        # These values are identical for every row in the batch.
+        action_gap = theme_int("maps.action_gap", 8)
+        primary_w = theme_int("maps.primary_action_width", 116)
+        delete_w = theme_int("maps.delete_action_width", 40)
+        delete_icon = _map_delete_icon() if qta is not None else QtGui.QIcon()
         table.setUpdatesEnabled(False)
         try:
             for row in range(start_row, stop):
                 item = items[row]
-                table.setRowHeight(row, 92)
+                # V19: all Local Maps rows use the same 92px height. Set it once
+                # on the vertical header instead of issuing 157 per-row calls.
                 shot_item = QtWidgets.QTableWidgetItem()
-                pix = self._map_levelshot_pixmap(item)
+                _thumb_cell_t0 = time.perf_counter()
+                # Keep the complete map payload in the cell, but decode its
+                # levelshot only when the row is visible (plus a small buffer).
                 shot_item.setData(QtCore.Qt.ItemDataRole.UserRole, item)
                 table.setItem(row, 0, shot_item)
-                if not pix.isNull():
-                    self._set_map_thumbnail(table, row, pix)
+                _thumbnail_cell_ms += (time.perf_counter() - _thumb_cell_t0) * 1000.0
 
+                _row_items_t0 = time.perf_counter()
                 map_name = str(item.get("name") or item.get("map") or "Unknown")
                 map_item = MapTableSortItem(
                     map_name,
@@ -15750,43 +19085,48 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
                     row, 4,
                     MapTableSortItem(gametype, self._map_gametype_sort_key(item)),
                 )
+                _row_items_ms += (time.perf_counter() - _row_items_t0) * 1000.0
 
-                actions = QtWidgets.QWidget()
-                actions.setObjectName("mapRowActions")
-                action_l = QtWidgets.QHBoxLayout(actions)
-                action_l.setContentsMargins(0, 0, 0, 0)
-                action_l.setSpacing(theme_int("maps.action_gap", 8))
-                action_l.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
-                primary_w = theme_int("maps.primary_action_width", 116)
-                delete_w = theme_int("maps.delete_action_width", 40)
-                actions.setFixedWidth(primary_w + theme_int("maps.action_gap", 8) + delete_w)
+                _action_container_t0 = time.perf_counter()
+                # V21: PLAY/DELETE are painted by LocalMapsActionsDelegate.
+                # Store only the row payload; avoid creating and attaching a
+                # QWidget + layout + two QPushButtons for every map.
+                action_item = QtWidgets.QTableWidgetItem()
+                action_item.setData(QtCore.Qt.ItemDataRole.UserRole, item)
+                pak_path = str(item.get("pak_path", "") or "")
+                protected = self._map_pak_is_protected(Path(pak_path))
+                action_item.setToolTip(
+                    "Protected Q3/Q3Elite content cannot be deleted."
+                    if protected else
+                    "PLAY launches this map; trash removes its PK3 from disk."
+                )
+                _action_container_ms += (time.perf_counter() - _action_container_t0) * 1000.0
 
-                play = MaterialPushButton("PLAY")
-                play.setObjectName("mapPlayButton")
-                play.setFixedWidth(primary_w)
-                play.setProperty("bsp", str(item.get("map", "")))
-                play.clicked.connect(lambda checked=False, b=play: self.play_local_map(str(b.property("bsp") or "")))
-                action_l.addWidget(play, 1)
-
-                delete = MaterialPushButton("")
-                delete.setObjectName("mapDeleteIconButton")
-                delete.setFixedSize(delete_w, 38)
-                delete.setProperty("pak_path", str(item.get("pak_path", "")))
-                protected = self._map_pak_is_protected(Path(str(item.get("pak_path", "") or "")))
-                delete.setEnabled(not protected)
-                delete.setToolTip("Protected Q3/Q3Elite content cannot be deleted." if protected else "Delete this PK3 from disk. Extracted levelshots are kept.")
-                if qta is not None:
-                    try:
-                        delete.setIcon(qta.icon("ph.trash", color=theme_value("colors.semantic.danger", "#E54C4C")))
-                    except Exception:
-                        delete.setText("×")
-                else:
-                    delete.setText("×")
-                delete.clicked.connect(lambda checked=False, b=delete: self.delete_map_pak(Path(str(b.property("pak_path") or ""))))
-                action_l.addWidget(delete)
-                table.setCellWidget(row, 5, actions)
+                _attach_t0 = time.perf_counter()
+                table.setItem(row, 5, action_item)
+                _action_cell_attach_ms += (time.perf_counter() - _attach_t0) * 1000.0
         finally:
             table.setUpdatesEnabled(True)
+        _widgets_ms = (time.perf_counter() - _widgets_t0) * 1000.0 - _pixmap_ms
+        _batch_ms = (time.perf_counter() - _batch_t0) * 1000.0
+        _map_profile_log(
+            "table_batch",
+            rows=f"{start_row}-{stop}",
+            count=stop - start_row,
+            levelshot_decode=_pixmap_ms,
+            thumbnail_delegate_setup=_thumbnail_widget_ms,
+            thumbnail_cache_hits=_MAP_THUMBNAIL_CACHE_HITS - _thumbnail_cache_hits_before,
+            thumbnail_cache_misses=_MAP_THUMBNAIL_CACHE_MISSES - _thumbnail_cache_misses_before,
+            row_items=_row_items_ms,
+            thumbnail_cell=_thumbnail_cell_ms,
+            action_container=_action_container_ms,
+            action_widgets=_action_widget_ms,
+            action_cell_attach=_action_cell_attach_ms,
+            action_rendering="delegate_cached_prototypes",
+            row_height_mode="default_92px",
+            row_widgets=_widgets_ms,
+            total=_batch_ms,
+        )
         table.viewport().update()
 
         if stop < len(items):
@@ -15798,12 +19138,29 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
         if table.rowCount() and table.currentRow() < 0:
             table.selectRow(0)
         self._map_population_complete = True
+        self._map_table_built_for_catalog = True
+        _finalize_t0 = time.perf_counter()
         self._sort_maps_table_fast()
+        self._schedule_map_thumbnail_load()
+        _map_profile_log(
+            "table_complete",
+            rows=len(items),
+            finalize_sort_filter=(time.perf_counter() - _finalize_t0) * 1000.0,
+            levelshot_cache_hits=_MAP_LEVELSHOT_CACHE_STATS["hits"],
+            levelshot_cache_misses=_MAP_LEVELSHOT_CACHE_STATS["misses"],
+            levelshot_cache_decode_ms=_MAP_LEVELSHOT_CACHE_STATS["decode_ms"],
+            levelshot_cache_mb=round(_MAP_LEVELSHOT_DECODE_CACHE.bytes_used / (1024.0 * 1024.0), 2),
+            elapsed_since_prepare=(
+                time.perf_counter() - getattr(self, "_map_population_started_at", time.perf_counter())
+            ) * 1000.0,
+        )
         self.mapsStatus.setText(f"{len(self.localMaps)} local map(s) • ready")
 
     def _filter_maps_table(self, query):
         if not hasattr(self, "mapsTable"):
             return
+        self._map_thumbnail_prefetch_cursor = 0
+        _filter_t0 = time.perf_counter()
         q = str(query or "").strip().casefold()
         for row in range(self.mapsTable.rowCount()):
             data_item = self.mapsTable.item(row, 0)
@@ -15815,6 +19172,13 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
                 and data.get("location") != self.mapsLocationFilter
             )
             self.mapsTable.setRowHidden(row, search_hidden or location_hidden)
+        _map_profile_log(
+            "table_filter",
+            rows=self.mapsTable.rowCount(),
+            query_length=len(q),
+            total=(time.perf_counter() - _filter_t0) * 1000.0,
+        )
+        self._schedule_map_thumbnail_load()
 
     def focus_maps_search(self):
         self.mapsSearch.setFocus()
@@ -15827,12 +19191,14 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
         self.mapsSortButton.setProperty("active", self.mapsGametypeSort != 0)
         self.mapsSortButton.style().unpolish(self.mapsSortButton)
         self.mapsSortButton.style().polish(self.mapsSortButton)
+        self._save_launcher_preference("maps_sort_mode", self.mapsGametypeSort)
         if getattr(self, "_map_population_complete", False):
             self._sort_maps_table_fast()
 
     def _sort_maps_table_fast(self):
         """Reorder existing local map rows without rescanning or rebuilding thumbnails."""
         table = getattr(self, "mapsTable", None)
+        self._map_thumbnail_prefetch_cursor = 0
         if table is None or table.rowCount() < 2:
             return
         if self.mapsGametypeSort in (0, 1):
@@ -15849,6 +19215,7 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
                 if self.mapsGametypeSort == 3
                 else QtCore.Qt.SortOrder.AscendingOrder
             )
+        _sort_t0 = time.perf_counter()
         table.setUpdatesEnabled(False)
         try:
             table.sortItems(column, order)
@@ -15856,6 +19223,13 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
         finally:
             table.setUpdatesEnabled(True)
         table.viewport().update()
+        _map_profile_log(
+            "table_sort",
+            rows=table.rowCount(),
+            mode=self.mapsGametypeSort,
+            total=(time.perf_counter() - _sort_t0) * 1000.0,
+        )
+        self._schedule_map_thumbnail_load()
 
     def cycle_maps_location_filter(self):
         modes = ("All", "Preinstalled", "Downloaded")
@@ -15868,8 +19242,23 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
         self.mapsLocationButton.setProperty("active", self.mapsLocationFilter != "All")
         self.mapsLocationButton.style().unpolish(self.mapsLocationButton)
         self.mapsLocationButton.style().polish(self.mapsLocationButton)
+        self._save_launcher_preference("maps_location_filter", self.mapsLocationFilter)
         # Instant filter: do not rebuild rows or reload levelshots.
         self._filter_maps_table(self.mapsSearch.text())
+
+    def _on_local_map_clicked(self, index):
+        """Normalize mouse selection to a whole-row selection at column zero."""
+        if not index.isValid():
+            return
+        row = index.row()
+        try:
+            self.mapsTable.selectRow(row)
+            self.mapsTable.setCurrentCell(row, 0)
+            delegate = self.mapsTable.itemDelegate()
+            if isinstance(delegate, MapRowHoverDelegate):
+                delegate.set_selected_row(row)
+        except RuntimeError:
+            pass
 
     def _selected_map_data(self):
         row = self.mapsTable.currentRow()
@@ -15960,6 +19349,7 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
             self._play_launcher_sound("start_button")
         try:
             import subprocess
+            ignored_pids = {pid for pid, _name in self._running_xq3e_processes()}
             subprocess.Popen(
                 [str(launcher_bat), "+devmap", bsp_name],
                 cwd=str(launcher_bat.parent),
@@ -15967,6 +19357,7 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
                 creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
             )
             self.mapsStatus.setText(f"Launching {bsp_name}…")
+            self._track_launched_game_and_apply_behavior("play_map", ignored_pids)
         except Exception as error:
             self.qerror(f"Could not launch map:\n{error}")
 
@@ -15990,9 +19381,9 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
         if not SERVER_ROUTE_PRESETS:
             self.qerror(f"Server preset file could not be loaded:\n{SERVER_PRESETS_FILE}")
             return
-        selected_ids = launcher_settings.get("server_preset_ids", SERVER_LOGICAL_PRESET_IDS)
+        selected_ids = launcher_settings.get("server_preset_ids", SERVER_DEFAULT_PRESET_IDS)
         if not isinstance(selected_ids, list):
-            selected_ids = list(SERVER_LOGICAL_PRESET_IDS)
+            selected_ids = list(SERVER_DEFAULT_PRESET_IDS)
         dialog = ServerPresetDialog(
             self,
             en_enabled=launcher_settings.get("server_region_en", True),
@@ -16125,7 +19516,7 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
                 initial = _server_route_entries(
                     launcher_settings.get("server_region_en", True),
                     launcher_settings.get("server_region_ru", False),
-                    launcher_settings.get("server_preset_ids", SERVER_LOGICAL_PRESET_IDS),
+                    launcher_settings.get("server_preset_ids", SERVER_DEFAULT_PRESET_IDS),
                 )
                 server_monitor.save_custom_servers(self.serverConfigPath, initial)
             else:
@@ -16135,19 +19526,121 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
         self.serverLevelshotsDir = MAP_LEVELSHOTS_DIR
         self.serverCards = []
         self.serverQueryWorker = None
+        self._server_details_queue = []
+        self._server_details_timer = QtCore.QTimer(self)
+        self._server_details_timer.setSingleShot(True)
+        self._server_details_timer.timeout.connect(self._process_next_server_detail)
         self._serverScrollAccum = 0
         self._serverCarouselIndex = 0
         self._serverCardStep = 1
-        self._serverVisibleCount = 3
+        self._serverVisibleCount = 5
         self.serverRefreshTimer = QtCore.QTimer(self)
         self.serverRefreshTimer.setInterval(30000)
         self.serverRefreshTimer.timeout.connect(self._auto_refresh_servers)
-        self._reload_server_cards()
+        # Construct server cards in small GUI-thread batches. This keeps the
+        # first Servers visit responsive instead of creating every card at once.
+        self._reload_server_cards(deferred=True)
         if not launcher_settings.get("server_region_initialized", False):
             self.serverRefreshLabel.setText("No official preset loaded • click LOAD SERVERS.")
         return page
 
-    def _reload_server_cards(self):
+    def _add_server_card(self, server):
+        _card_started = time.perf_counter()
+        card = ServerCard(
+            server, self.serverLevelshotsDir, self.serversContent,
+            profile_callback=self._q3_write_section_profile,
+        )
+        _card_construct_ms = (time.perf_counter() - _card_started) * 1000.0
+        _bind_started = time.perf_counter()
+        card.connectRequested.connect(self.connect_to_server)
+        card.copyRequested.connect(self.copy_server_address)
+        card.removeRequested.connect(self.remove_custom_server)
+        card.moveRequested.connect(self.move_server)
+        card.aliasRequested.connect(self.alias_server)
+        card.wheelRequested.connect(self.scroll_server_monitors)
+        _card_bind_ms = (time.perf_counter() - _bind_started) * 1000.0
+        self.serverCards.append(card)
+        self.serversRow.addWidget(card)
+        _filter_started = time.perf_counter()
+        card.installEventFilter(self)
+        _card_child_count = 0
+        for child in card.findChildren(QtWidgets.QWidget):
+            _card_child_count += 1
+            child.installEventFilter(self)
+        self._q3_write_section_profile(
+            "server_card_build", "servers",
+            construct_ms=_card_construct_ms, bind_ms=_card_bind_ms,
+            event_filter_ms=(time.perf_counter() - _filter_started) * 1000.0,
+            child_widgets=_card_child_count,
+            total_ms=(time.perf_counter() - _card_started) * 1000.0,
+        )
+
+    def _finish_server_cards_build(self):
+        if not self.serverCards:
+            empty = QtWidgets.QLabel("No servers configured.\nUse LOAD SERVERS or + ADD SERVER.")
+            empty.setObjectName("serverEmpty")
+            empty.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
+            empty.setWordWrap(True)
+            empty.setSizePolicy(
+                QtWidgets.QSizePolicy.Policy.Expanding,
+                QtWidgets.QSizePolicy.Policy.Expanding,
+            )
+            self.serversRow.setAlignment(QtCore.Qt.AlignmentFlag(0))
+            self.serversRow.addWidget(empty, 1)
+        else:
+            self.serversRow.setAlignment(
+                QtCore.Qt.AlignmentFlag.AlignLeft | QtCore.Qt.AlignmentFlag.AlignTop
+            )
+        self._resize_servers_content()
+        if hasattr(self, "editServersButton"):
+            self.set_server_edit_mode(self.editServersButton.isChecked())
+        self._update_server_position_label()
+        if getattr(self, "_server_refresh_pending", False):
+            self._server_refresh_pending = False
+            self.refresh_servers()
+
+    def _build_server_cards_batch(self, generation):
+        if generation != getattr(self, "_server_card_build_generation", -1):
+            return
+        _batch_started = time.perf_counter()
+        queue = getattr(self, "_server_card_build_queue", [])
+        # One card per event-loop turn bounds synchronous widget construction.
+        # Levelshot decode/blur is cached, so repeated refreshes do not pay that
+        # cost again and the UI can process input between cards.
+        _batch_count = min(1, len(queue))
+        for _ in range(_batch_count):
+            self._add_server_card(queue.pop(0))
+        self._q3_write_section_profile(
+            "server_cards_batch", "servers",
+            batch_ms=(time.perf_counter() - _batch_started) * 1000.0,
+            cards=_batch_count, remaining=len(queue),
+        )
+        if queue:
+            QtCore.QTimer.singleShot(8, lambda g=generation: self._build_server_cards_batch(g))
+            return
+        self._server_cards_building = False
+        self._server_card_build_queue = []
+        _started = getattr(self, "_server_card_build_started", None)
+        if _started is not None:
+            self._q3_write_section_profile(
+                "server_cards_complete", "servers",
+                total_ms=(time.perf_counter() - _started) * 1000.0,
+                cards=len(self.serverCards),
+            )
+            self._server_card_build_started = None
+        self._finish_server_cards_build()
+
+    def _reload_server_cards(self, *, deferred=False):
+        generation = int(getattr(self, "_server_card_build_generation", 0)) + 1
+        self._server_card_build_generation = generation
+        self._server_cards_building = False
+        self._server_refresh_pending = False
+        if hasattr(self, "_server_details_timer"):
+            self._server_details_timer.stop()
+        if hasattr(self, "_server_details_queue"):
+            self._server_details_queue.clear()
+        self._server_card_build_started = None
+        self._server_card_build_queue = []
         while self.serversRow.count():
             item = self.serversRow.takeAt(0)
             widget = item.widget()
@@ -16173,40 +19666,38 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
         self.serverCards = []
         self._serverCarouselIndex = 0
         self.configuredServers = server_monitor.load_servers(self.serverConfigPath)
+        # Server monitor refreshes/reloads can happen without changing the
+        # configured route catalogue. Keep Matchmaking's editor tree intact
+        # unless addresses/order/aliases actually changed.
+        editor_servers = getattr(self, "_matchmaking_editor_servers", None)
+        if editor_servers is not None:
+            old_signature = self._server_catalog_signature(editor_servers)
+            new_signature = self._server_catalog_signature(self.configuredServers)
+            if old_signature != new_signature:
+                self._matchmaking_editor_servers = None
+                self._matchmaking_editor_server_signature = new_signature
+
+        if deferred and self.configuredServers:
+            self._server_card_build_started = time.perf_counter()
+            self._server_card_build_queue = list(self.configuredServers)
+            self._server_cards_building = True
+            self._build_server_cards_batch(generation)
+            return
+
         for server in self.configuredServers:
-            card = ServerCard(server, self.serverLevelshotsDir, self.serversContent)
-            card.connectRequested.connect(self.connect_to_server)
-            card.copyRequested.connect(self.copy_server_address)
-            card.removeRequested.connect(self.remove_custom_server)
-            card.moveRequested.connect(self.move_server)
-            card.aliasRequested.connect(self.alias_server)
-            card.wheelRequested.connect(self.scroll_server_monitors)
-            self.serverCards.append(card)
-            self.serversRow.addWidget(card)
-            card.installEventFilter(self)
-            for child in card.findChildren(QtWidgets.QWidget):
-                child.installEventFilter(self)
-        if not self.serverCards:
-            empty = QtWidgets.QLabel("No servers configured.\nUse LOAD SERVERS or + ADD SERVER.")
-            empty.setObjectName("serverEmpty")
-            empty.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
-            self.serversRow.addWidget(empty)
-        self._resize_servers_content()
-        if hasattr(self, "editServersButton"):
-            self.set_server_edit_mode(self.editServersButton.isChecked())
-        self._update_server_position_label()
+            self._add_server_card(server)
+        self._finish_server_cards_build()
 
     def _resize_servers_content(self):
         count = max(1, len(self.serverCards))
-        spacing = 12
-        viewport_w = max(900, self.serversScroll.viewport().width())
-        # Aim for ~390–440 logical px cards instead of stretching three cards to
-        # absurd widths on 2K/4K monitors. More cards simply become visible.
-        visible = max(3, min(6, viewport_w // 390))
+        spacing = self.serversRow.spacing()
+        viewport_w = max(1, self.serversScroll.viewport().width())
+        preferred_card_w = max(220, min(280, theme_int("servers.card_width", 250)))
+        # Decide how many whole cards fit, then calculate their width so the
+        # next card starts exactly outside the viewport (never show half a card).
+        visible = max(4, (viewport_w + spacing) // (preferred_card_w + spacing))
+        card_w = max(120, (viewport_w - max(0, visible - 1) * spacing) // visible)
         self._serverVisibleCount = min(max(1, len(self.serverCards)), visible)
-        divisor = max(1, self._serverVisibleCount)
-        card_w = (viewport_w - spacing * max(0, divisor - 1)) // divisor
-        card_w = max(300, min(470, card_w))
         viewport_h = self.serversScroll.viewport().height()
         height = max(430, viewport_h - 2)
         for card in self.serverCards:
@@ -16273,6 +19764,9 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
             self.serverPositionLabel.setText(text)
 
     def refresh_servers(self):
+        if getattr(self, "_server_cards_building", False):
+            self._server_refresh_pending = True
+            return
         for card in getattr(self, "serverCards", []):
             card.update_install_state()
         if not launcher_settings.get("server_region_initialized", False):
@@ -16293,7 +19787,26 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
 
     def _server_result_ready(self, index, result):
         if 0 <= index < len(self.serverCards):
-            self.serverCards[index].apply_result(result)
+            card = self.serverCards[index]
+            # Apply status/telemetry immediately, but queue player-table creation
+            # and first-time levelshot blur so the initial navigation paint can run.
+            card.apply_result(result, defer_ms=None)
+            if card not in self._server_details_queue:
+                self._server_details_queue.append(card)
+            if not self._server_details_timer.isActive():
+                self._server_details_timer.start(35)
+
+    def _process_next_server_detail(self):
+        if not self._server_details_queue:
+            return
+        card = self._server_details_queue.pop(0)
+        try:
+            card._apply_pending_server_details()
+        except RuntimeError:
+            pass
+        if self._server_details_queue:
+            # One card per event-loop turn; leave a small gap for painting/input.
+            self._server_details_timer.start(35)
 
     def _server_refresh_finished(self):
         self.serverRefreshLabel.setText("Auto refresh every 30 seconds")
@@ -16336,6 +19849,12 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
         self.refresh_servers()
 
     def remove_custom_server(self, address):
+        # The REMOVE button is muted in the generic QApplication/widget event
+        # filters (the same event can reach both filters). Emit one deliberate
+        # click sound here, then suppress hover sounds while replacement cards
+        # are rebuilt beneath the stationary pointer.
+        self._play_launcher_sound("click")
+        self._launcherSfxSuppressHoverUntil = time.monotonic() + 3.0
         current = server_monitor.load_servers(self.serverConfigPath)
         current = [x for x in current if str(x.get("address","")).lower() != str(address).lower()]
         server_monitor.save_custom_servers(self.serverConfigPath, current)
@@ -16583,6 +20102,220 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
         # Start the one and only navigation now, still in a detached top-level.
         return self._create_detached_telegram_renderer(source)
 
+    def _save_launcher_preference(self, key, value):
+        """Persist one lightweight UI preference through the existing settings file."""
+        launcher_settings[key] = value
+        try:
+            save_launcher_settings(launcher_settings)
+        except Exception as error:
+            print(f"[settings] Could not save {key}: {error}")
+
+    def _refresh_q3news_notification(self, rows=None, success=True):
+        """Track the newest public Q3News post by its published date."""
+        if not hasattr(self, "_q3news_unread"):
+            self._q3news_unread = False
+        if not hasattr(self, "_q3news_latest_date"):
+            self._q3news_latest_date = ""
+        if not hasattr(self, "_q3news_latest_id"):
+            self._q3news_latest_id = 0
+        if rows is not None and success:
+            valid = [row for row in rows if isinstance(row, dict) and int(row.get("id") or 0) > 0]
+            if valid:
+                newest = max(valid, key=lambda row: int(row.get("id") or 0))
+                self._q3news_latest_date = str(newest.get("date") or "")[:10]
+                self._q3news_latest_id = int(newest.get("id") or 0)
+                state = _load_notification_state()
+                last_date = str(state.get("q3news_last_read_date", "") or "")[:10]
+                last_id = int(state.get("q3news_last_read_id", 0) or 0)
+                if not last_date and not last_id:
+                    # Establish a first-run baseline; do not notify about old posts.
+                    state["q3news_last_read_date"] = self._q3news_latest_date
+                    state["q3news_last_read_id"] = self._q3news_latest_id
+                    _save_notification_state(state)
+                    self._q3news_unread = False
+                else:
+                    date_newer = bool(self._q3news_latest_date and last_date and self._q3news_latest_date > last_date)
+                    id_newer = self._q3news_latest_id > last_id
+                    same_or_unknown_date = not last_date or not self._q3news_latest_date or self._q3news_latest_date >= last_date
+                    self._q3news_unread = bool(date_newer or (id_newer and same_or_unknown_date))
+                # If the user is already viewing Q3News, the fetched latest post
+                # is immediately considered read.
+                if getattr(self, "_q3news_tab_active", False):
+                    self._mark_q3news_read()
+        show_q3news_unread = bool(self._q3news_unread) and not launcher_settings.get("disable_q3news_notifications", False)
+        page = getattr(self, "changelogPage", None)
+        if page is not None and not hasattr(page, "_q3news_tab_alert_dot"):
+            page = getattr(page, "_q3_real_page", page)
+        dot = getattr(page, "_q3news_tab_alert_dot", None) if page is not None else None
+        button = getattr(page, "_q3news_tab_button", None) if page is not None else None
+        if dot is not None and button is not None:
+            dot.move(max(0, button.width() - dot.width() - 5), 5)
+            dot.setVisible(show_q3news_unread)
+            if show_q3news_unread:
+                dot.raise_()
+                button.setToolTip(f"New Q3News post: {self._q3news_latest_date or self._q3news_latest_id}")
+            else:
+                button.setToolTip("Q3News")
+        self._refresh_changelog_notification()
+        if hasattr(self, "homeNotificationDot"):
+            has_update = any(
+                _home_state_has_version_update(home_update_checks.get(key))
+                or _home_state_needs_repair(home_update_checks.get(key))
+                for key in ("launcher", "q3elite")
+            ) or bool(isinstance(home_update_checks.get("osp2be"), dict) and home_update_checks["osp2be"].get("update_available"))
+            has_changelog = bool(self._changelog_unread and not launcher_settings.get("disable_changelog_notifications", False))
+            has_q3news = bool(self._q3news_unread and not launcher_settings.get("disable_q3news_notifications", False))
+            self.homeNotificationDot.setVisible(has_update or has_changelog or has_q3news)
+        return self._q3news_unread
+
+    def _mark_q3news_read(self):
+        latest_date = str(getattr(self, "_q3news_latest_date", "") or "")[:10]
+        latest_id = int(getattr(self, "_q3news_latest_id", 0) or 0)
+        if latest_date or latest_id:
+            state = _load_notification_state()
+            state["q3news_last_read_date"] = latest_date
+            state["q3news_last_read_id"] = latest_id
+            _save_notification_state(state)
+        self._q3news_unread = False
+        page = getattr(self, "changelogPage", None)
+        if page is not None and not hasattr(page, "_q3news_tab_alert_dot"):
+            page = getattr(page, "_q3_real_page", page)
+        dot = getattr(page, "_q3news_tab_alert_dot", None) if page is not None else None
+        if dot is not None:
+            dot.hide()
+        self._refresh_changelog_notification()
+        if hasattr(self, "homeNotificationDot"):
+            has_update = any(
+                _home_state_has_version_update(home_update_checks.get(key))
+                or _home_state_needs_repair(home_update_checks.get(key))
+                for key in ("launcher", "q3elite")
+            ) or bool(isinstance(home_update_checks.get("osp2be"), dict) and home_update_checks["osp2be"].get("update_available"))
+            has_changelog = bool(getattr(self, "_changelog_unread", False) and not launcher_settings.get("disable_changelog_notifications", False))
+            has_q3news = bool(getattr(self, "_q3news_unread", False) and not launcher_settings.get("disable_q3news_notifications", False))
+            self.homeNotificationDot.setVisible(has_update or has_changelog or has_q3news)
+
+    def _refresh_home_update_notification(self):
+        """Show a Home navigation dot while any component update/repair is available."""
+        dot = getattr(self, "homeAlertDot", None)
+        button = getattr(self, "homeNav", None)
+        if dot is None or button is None:
+            return
+        has_update = any(
+            _home_state_has_version_update(home_update_checks.get(key))
+            or _home_state_needs_repair(home_update_checks.get(key))
+            for key in ("launcher", "q3elite")
+        )
+        osp_state = home_update_checks.get("osp2be")
+        has_update = has_update or bool(
+            isinstance(osp_state, dict) and osp_state.get("update_available")
+        )
+        dot.move(
+            max(0, (button.width() - dot.width()) // 2),
+            max(0, button.height() - dot.height() - 5),
+        )
+        dot.setVisible(has_update)
+        if has_update:
+            dot.raise_()
+            dot.setToolTip("Launcher / Q3Elite / OSP2-BE update available")
+        else:
+            dot.setToolTip("HOME")
+
+    def _refresh_changelog_notification(self):
+        """Track Launcher Changelog and Q3Elite release versions independently."""
+        entries = read_changelog_entries()
+        state = _load_notification_state()
+        read_versions = dict(state.get("last_read_versions", {}) or {})
+        osp_state = home_update_checks.get("osp2be")
+        latest_osp_version = (
+            str(osp_state.get("remote_version") or "").strip()
+            if isinstance(osp_state, dict) else ""
+        )
+        latest_versions = {
+            "launcher": _latest_changelog_version(entries, "launcher"),
+            "q3elite": _latest_changelog_version(entries, "q3elite"),
+            "osp2be": latest_osp_version,
+        }
+        baselined = False
+        for track, latest in latest_versions.items():
+            if latest and not read_versions.get(track):
+                read_versions[track] = latest
+                baselined = True
+        if baselined:
+            state["last_read_versions"] = read_versions
+            _save_notification_state(state)
+        unread_tracks = [
+            track for track, latest in latest_versions.items()
+            if _version_is_unread(latest, read_versions.get(track, ""))
+        ]
+        unread = bool(unread_tracks) and not launcher_settings.get("disable_changelog_notifications", False)
+
+        dot = getattr(self, "changelogAlertDot", None)
+        button = getattr(self, "changelogNav", None)
+        if dot is not None and button is not None:
+            if unread:
+                dot.move(max(0, (button.width() - dot.width()) // 2), max(0, button.height() - dot.height() - 5))
+                dot.show(); dot.raise_()
+                labels = [
+                    "Changelog" if track == "launcher"
+                    else "Q3Elite" if track == "q3elite"
+                    else "OSP2-BE"
+                    for track in unread_tracks
+                ]
+                button.setToolTip("New " + " + ".join(labels) + " version available")
+            else:
+                dot.hide(); button.setToolTip("CHANGELOG")
+        changelog_page = getattr(self, "changelogPage", None)
+        if changelog_page is not None and not hasattr(changelog_page, "_changelog_tab_alert_dot"):
+            changelog_page = getattr(changelog_page, "_q3_real_page", changelog_page)
+        if changelog_page is not None and hasattr(changelog_page, "_changelog_tab_alert_dot"):
+            tab_dot = changelog_page._changelog_tab_alert_dot
+            tab_button = getattr(changelog_page, "_changelog_tab_button", None)
+            if tab_button is not None:
+                tab_dot.move(max(0, tab_button.width() - tab_dot.width() - 5), 5)
+                tab_dot.setVisible(bool(unread))
+                if unread:
+                    tab_dot.raise_(); tab_button.setToolTip(button.toolTip() if button else "New release available")
+                else:
+                    tab_button.setToolTip("CHANGELOG")
+        self._changelog_latest_versions = latest_versions
+        self._changelog_unread = unread
+        self._refresh_home_update_notification()
+        if hasattr(self, "homeNotificationDot"):
+            has_update = any(
+                _home_state_has_version_update(home_update_checks.get(key))
+                or _home_state_needs_repair(home_update_checks.get(key))
+                for key in ("launcher", "q3elite")
+            ) or bool(isinstance(home_update_checks.get("osp2be"), dict) and home_update_checks["osp2be"].get("update_available"))
+            has_q3news = bool(getattr(self, "_q3news_unread", False) and not launcher_settings.get("disable_q3news_notifications", False))
+            self.homeNotificationDot.setVisible(has_update or unread or has_q3news)
+        # The sidebar dot represents either unread release notes or unread Q3News.
+        combined_unread = unread or (getattr(self, "_q3news_unread", False) and not launcher_settings.get("disable_q3news_notifications", False))
+        if dot is not None and button is not None and combined_unread:
+            dot.show(); dot.raise_()
+            if not unread and getattr(self, "_q3news_unread", False):
+                button.setToolTip(f"New Q3News post: {getattr(self, '_q3news_latest_date', '') or getattr(self, '_q3news_latest_id', 0)}")
+        elif dot is not None:
+            dot.hide()
+        return unread
+
+    def _mark_changelog_read(self):
+        state = _load_notification_state()
+        read_versions = dict(state.get("last_read_versions", {}) or {})
+        latest_versions = getattr(self, "_changelog_latest_versions", {}) or {}
+        if not latest_versions:
+            entries = read_changelog_entries()
+            latest_versions = {
+                "launcher": _latest_changelog_version(entries, "launcher"),
+                "q3elite": _latest_changelog_version(entries, "q3elite"),
+            }
+        for track, latest in latest_versions.items():
+            if latest:
+                read_versions[track] = latest
+        state["last_read_versions"] = read_versions
+        _save_notification_state(state)
+        self._changelog_unread = False
+        self._refresh_changelog_notification()
+
     def _build_changelog(self):
         page = QtWidgets.QWidget()
         root = QtWidgets.QVBoxLayout(page)
@@ -16601,12 +20334,20 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
 
         tabs = QtWidgets.QHBoxLayout()
         tabs.setSpacing(8)
-        changelog_tab = MaterialPushButton("CHANGELOG")
-        changelog_tab.setObjectName("secondaryButton")
         news_tab = MaterialPushButton("Q3News")
         news_tab.setObjectName("secondaryButton")
-        tabs.addWidget(changelog_tab)
+        changelog_tab = MaterialPushButton("CHANGELOG")
+        changelog_tab.setObjectName("secondaryButton")
+        changelog_tab_alert_dot = QtWidgets.QLabel(changelog_tab)
+        changelog_tab_alert_dot.setFixedSize(8, 8)
+        changelog_tab_alert_dot.setAttribute(QtCore.Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+        changelog_tab_alert_dot.setStyleSheet("background-color: #3b82f6; border: none; border-radius: 4px;")
+        changelog_tab_alert_dot.hide()
+        page._changelog_tab_button = changelog_tab
+        page._changelog_tab_alert_dot = changelog_tab_alert_dot
+        page._changelog_set_tab = None
         tabs.addWidget(news_tab)
+        tabs.addWidget(changelog_tab)
         tabs.addStretch(1)
         root.addLayout(tabs)
 
@@ -16629,6 +20370,26 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
         feed.setSpacing(12)
 
         entries = read_changelog_entries()
+        # OSP2-BE release notes are sourced from the same website check used by
+        # the updater. Replace any older synthetic/static OSP2-BE entry.
+        osp_state = home_update_checks.get("osp2be")
+        if isinstance(osp_state, dict) and (osp_state.get("changelog") or osp_state.get("changelog_text")):
+            entries = [
+                item for item in entries
+                if "osp2be" not in re.sub(r"[^a-z0-9]", "", str(item.get("type", "") or "").casefold())
+            ]
+            osp_notes = osp_state.get("changelog") or []
+            if isinstance(osp_notes, str):
+                osp_notes = [osp_notes]
+            entries.append({
+                "type": "OSP2-BE",
+                "version": str(osp_state.get("remote_version") or "?"),
+                "date": str(osp_state.get("changelog_date") or ""),
+                "text": str(osp_state.get("changelog_summary") or "Latest OSP2-BE update"),
+                "changelog": list(osp_notes),
+                "link": str(osp_state.get("changelog_url") or "https://osp2.q3a.space/en/index.html"),
+                "list": True,
+            })
         if entries:
             from datetime import datetime
             def _key(item):
@@ -16713,7 +20474,6 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
             QtCore.QTimer.singleShot(0, append_changelog_batch)
 
         scroll.setWidget(content)
-        stack.addWidget(scroll)
 
         # -----------------------------------------------------------------
         # Live public Q3News feed. Oldest is above, newest is at the bottom;
@@ -16737,9 +20497,14 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
         news_status.setObjectName("muted")
         news_status.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
         news_feed.addWidget(news_status)
-        news_feed.addStretch(1)
+        # Spacer belongs between the toolbar and the timeline. This pins the
+        # newest posts to the bottom when only a couple of posts are present.
+        news_feed.insertStretch(2, 1)
         news_scroll.setWidget(news_content)
+        # Q3News is the default/first tab. Keep the traditional release notes
+        # second so opening the section does not mark them as read implicitly.
         stack.addWidget(news_scroll)
+        stack.addWidget(scroll)
 
         page._q3news_scroll = news_scroll
         page._q3news_feed = news_feed
@@ -16750,18 +20515,42 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
         page._q3news_loading = False
         page._q3news_exhausted = False
         page._q3news_worker = None
+        page._q3news_follow_latest = True
+        page._q3news_user_scrolling = False
+        if not hasattr(self, "_q3news_latest_date"):
+            self._q3news_latest_date = ""
+        if not hasattr(self, "_q3news_latest_id"):
+            self._q3news_latest_id = 0
+        if not hasattr(self, "_q3news_unread"):
+            self._q3news_unread = False
+        self._q3news_tab_alert_dot = QtWidgets.QLabel(news_tab)
+        self._q3news_tab_alert_dot.setFixedSize(8, 8)
+        self._q3news_tab_alert_dot.setAttribute(QtCore.Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+        self._q3news_tab_alert_dot.setStyleSheet("background-color: #3b82f6; border: none; border-radius: 4px;")
+        self._q3news_tab_alert_dot.hide()
+        page._q3news_tab_alert_dot = self._q3news_tab_alert_dot
+        page._q3news_tab_button = news_tab
 
-        def set_tab(index):
+        def set_tab(index, mark_read=True):
             stack.setCurrentIndex(index)
-            changelog_tab.setProperty("active", index == 0)
-            news_tab.setProperty("active", index == 1)
-            for button in (changelog_tab, news_tab):
+            page._changelog_set_tab = set_tab
+            self._q3news_tab_active = (index == 0 and bool(mark_read))
+            news_tab.setProperty("active", index == 0)
+            changelog_tab.setProperty("active", index == 1)
+            for button in (news_tab, changelog_tab):
                 button.style().unpolish(button); button.style().polish(button)
-            if index == 1 and not page._q3news_ids and not page._q3news_loading:
-                self._load_q3news_page(page, initial=True)
+            changelog_tab_alert_dot.move(max(0, changelog_tab.width() - changelog_tab_alert_dot.width() - 5), 5)
+            page._q3news_tab_alert_dot.move(max(0, news_tab.width() - page._q3news_tab_alert_dot.width() - 5), 5)
+            if index == 0:
+                if mark_read:
+                    self._mark_q3news_read()
+                if not page._q3news_ids and not page._q3news_loading:
+                    self._load_q3news_page(page, initial=True)
+            elif index == 1:
+                self._mark_changelog_read()
 
-        changelog_tab.clicked.connect(lambda _checked=False: set_tab(0))
-        news_tab.clicked.connect(lambda _checked=False: set_tab(1))
+        changelog_tab.clicked.connect(lambda _checked=False: set_tab(1))
+        news_tab.clicked.connect(lambda _checked=False: set_tab(0, mark_read=True))
         news_load.clicked.connect(lambda _checked=False: self._load_q3news_page(page, initial=False))
 
         def news_scroll_changed(value):
@@ -16769,7 +20558,28 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
             if value <= 10 and bar.maximum() > 30 and page._q3news_ids and not page._q3news_loading:
                 self._load_q3news_page(page, initial=False)
         news_scroll.verticalScrollBar().valueChanged.connect(news_scroll_changed)
-        set_tab(0)
+
+        def follow_q3news_tail():
+            if getattr(page, "_q3news_follow_latest", False):
+                bar = news_scroll.verticalScrollBar()
+                bar.setValue(bar.maximum())
+
+        def q3news_range_changed(_minimum, _maximum):
+            if getattr(page, "_q3news_follow_latest", False):
+                QtCore.QTimer.singleShot(0, follow_q3news_tail)
+
+        news_scroll.verticalScrollBar().rangeChanged.connect(q3news_range_changed)
+
+        def q3news_user_scroll(value):
+            bar = news_scroll.verticalScrollBar()
+            if value < bar.maximum() - 24:
+                page._q3news_follow_latest = False
+
+        news_scroll.verticalScrollBar().valueChanged.connect(q3news_user_scroll)
+        page._q3news_follow_latest_to_bottom = follow_q3news_tail
+        set_tab(0, mark_read=False)
+        self._refresh_changelog_notification()
+        self._refresh_q3news_notification()
         return page
 
     def _load_q3news_page(self, page, initial=False):
@@ -16784,7 +20594,7 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
             button.setEnabled(False); button.setText("LOADING…")
         if status is not None:
             status.setText("Loading latest Q3News…" if initial else "Loading older Q3News…")
-        worker = Q3NewsWorker(before=before, limit=2, parent=self)
+        worker = Q3NewsWorker(before=before, limit=(2 if initial else 3), parent=self)
         page._q3news_worker = worker
         worker.result_ready.connect(lambda ok, data, p=page, first=initial: self._q3news_page_ready(p, first, ok, data))
         worker.finished.connect(worker.deleteLater)
@@ -16800,6 +20610,8 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
                 status.setText(f"Q3News unavailable: {result}")
                 return
             rows = [dict(x) for x in (result or []) if isinstance(x, dict) and int(x.get("id") or 0) > 0]
+            if initial:
+                self._refresh_q3news_notification(rows, success=True)
             existing = set(int(x) for x in page._q3news_ids)
             rows = [x for x in rows if int(x["id"]) not in existing]
             rows.sort(key=lambda x: int(x["id"]))
@@ -16812,7 +20624,7 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
             bar = page._q3news_scroll.verticalScrollBar()
             old_max = bar.maximum()
             old_value = bar.value()
-            insert_at = 2  # LOAD MORE + status; stretch remains before cards.
+            insert_at = 3  # LOAD MORE + status + timeline spacer.
             # Keep a stretch between toolbar and cards so a short feed sits at
             # the bottom like a chat timeline. Older rows are prepended.
             for offset, row in enumerate(rows):
@@ -16946,6 +20758,14 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
     def eventFilter(self, obj, event):
         event_type = event.type()
 
+        if obj is getattr(self, "heroImage", None) and event_type == QtCore.QEvent.Type.Resize:
+            if not getattr(self, "_hero_resize_refresh_pending", False):
+                self._hero_resize_refresh_pending = True
+                def _refresh_after_hero_resize():
+                    self._hero_resize_refresh_pending = False
+                    self._refresh_hero_image_for_size()
+                QtCore.QTimer.singleShot(0, _refresh_after_hero_resize)
+
         # Media-list feedback is handled independently from button clicks.
         # Use row-change detection and tiny rate limits so rapid list browsing
         # does not enqueue a pile of sounds.
@@ -17007,8 +20827,9 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
             )
             if event_type == QtCore.QEvent.Type.Enter and obj.isEnabled():
                 now = time.monotonic()
+                suppress_until = float(getattr(self, "_launcherSfxSuppressHoverUntil", 0.0))
                 last_hover = float(getattr(self, "_launcherSfxLastHoverAt", 0.0))
-                if now - last_hover >= 0.5:
+                if now >= suppress_until and now - last_hover >= 0.5:
                     self._launcherSfxLastHoverAt = now
                     self._play_launcher_sound("hover")
             elif is_toggle_control and event_type in (
@@ -17024,6 +20845,13 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
                     "toggle_off" if obj.isChecked() else "toggle_on", force=True
                 )
             elif event_type == QtCore.QEvent.Type.MouseButtonPress and obj.isEnabled():
+                if obj.objectName() == "serverRemoveButton":
+                    # Removing a server rebuilds the cards under the stationary
+                    # cursor. Qt then emits Enter for the replacement button,
+                    # which otherwise sounds like a second action. Keep the
+                    # normal click sound, but suppress these synthetic hover
+                    # sounds briefly after the remove click.
+                    self._launcherSfxSuppressHoverUntil = time.monotonic() + 3.0
                 nav_buttons = tuple(
                     getattr(self, name, None) for name in (
                         "homeNav", "addonsNav", "statisticsNav", "serversNav", "mapsNav",
@@ -17164,6 +20992,8 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
         statistics_active = page == "statistics"
         if hasattr(self, "statisticsFilterShortcut"):
             self.statisticsFilterShortcut.setEnabled(statistics_active)
+        if hasattr(self, "statisticsKeysShortcut"):
+            self.statisticsKeysShortcut.setEnabled(statistics_active)
         for shortcut in getattr(self, "screenshotShortcuts", []):
             shortcut.setEnabled(screenshots_active)
         for shortcut in getattr(self, "demoShortcuts", []):
@@ -17236,14 +21066,16 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
         self.show_page(page)
 
     def show_page(self, page):
+        _q3_nav_started = time.perf_counter()
         page = str(page)
         current_is_matchmaking = (
             "matchmaking" in getattr(self, "_built_pages", set())
             and self.pages.currentWidget() is getattr(self, "matchmakingPage", None)
         )
-        if current_is_matchmaking and page != "matchmaking":
-            # Matchmaking editors are staged. Leaving without SAVE RULE discards
-            # widget-only edits instead of making them look auto-saved.
+        if (current_is_matchmaking and page != "matchmaking"
+                and getattr(self, "_matchmaking_edit_dirty", False)):
+            # Matchmaking editors are staged. Leaving with unsaved edits discards
+            # widget-only changes, but an untouched editor tree is retained.
             self._rebuild_matchmaking_rules()
 
         nav_mapping = {
@@ -17260,6 +21092,10 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
             "changelog": self.changelogNav,
         }
         active = nav_mapping[page]
+        if (page == "matchmaking"
+                and page in getattr(self, "_built_pages", set())
+                and getattr(self, "_matchmaking_editor_servers", None) is None):
+            self._rebuild_matchmaking_rules()
         attr = self._page_attr_names.get(page, f"{page}Page")
         widget = getattr(self, attr)
         changed = self.pages.currentWidget() is not widget
@@ -17281,6 +21117,8 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
         # the real QWidget tree on the next event-loop turn, then re-enter this
         # method for page-specific refreshes.
         if page in self._page_builders and page not in self._built_pages:
+            if self.pages.indexOf(widget) < 0:
+                self.pages.addWidget(widget)
             self.pages.setCurrentWidget(widget)
             self._sync_home_hero_timer()
             for b in nav_mapping.values():
@@ -17288,6 +21126,7 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
             self._refresh_nav_icons()
             self._move_nav_indicator(active, animate=changed)
             self._sync_media_shortcuts(page)
+            self._q3_profile_navigation(page, _q3_nav_started, changed)
             QtCore.QTimer.singleShot(0, lambda p=page: self._finish_deferred_page_navigation(p))
             return
 
@@ -17300,6 +21139,14 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
         # every animation frame; that is disproportionately expensive for the
         # textured/supersampled Obsidian material. The small nav indicator keeps
         # motion feedback while content switches at native speed.
+        if page == "changelog":
+            real_changelog = getattr(widget, "_q3_real_page", widget)
+            follow_latest = getattr(real_changelog, "_q3news_follow_latest_to_bottom", None)
+            if callable(follow_latest):
+                real_changelog._q3news_follow_latest = True
+                QtCore.QTimer.singleShot(120, follow_latest)
+                QtCore.QTimer.singleShot(450, follow_latest)
+
         if page == "statistics" and not self._statistics_payload and self.statisticsNickname.text().strip():
             QtCore.QTimer.singleShot(0, self.lookup_statistics)
         if page == "account":
@@ -17333,6 +21180,8 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
             QtCore.QTimer.singleShot(0, self.demoList.setFocus)
         if page == "maps":
             self.refresh_maps(force=False)
+        if page == "changelog":
+            self._refresh_changelog_notification()
         if page == "changelog" and theme_bool("performance.changelog_auto_webengine", False):
             # Optional compatibility mode. The default V4 path stays native and
             # creates no Chromium surfaces simply by opening Changelog.
@@ -17343,6 +21192,65 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
             self.refresh_servers()
         elif hasattr(self, "serverRefreshTimer"):
             self.serverRefreshTimer.stop()
+
+        self._q3_profile_navigation(page, _q3_nav_started, changed)
+
+    def refresh_current_section(self):
+        """F5 refreshes the active page when that page has a refresh workflow."""
+        current = self.pages.currentWidget()
+        page_name = next(
+            (name for name, attr in self._page_attr_names.items()
+             if getattr(self, attr, None) is current),
+            "home",
+        )
+        try:
+            if page_name == "home":
+                refresh_updates()
+            elif page_name == "maps":
+                if getattr(self, "mapsMode", "local") == "online":
+                    query = self.onlineMapsSearch.text().strip()
+                    if query:
+                        self._start_online_worker("search", query)
+                    else:
+                        self.onlineLatestLimit = 12
+                        self._start_online_worker("latest", "")
+                else:
+                    self.refresh_maps(force=True)
+            elif page_name == "screenshots":
+                self.refresh_screenshots()
+            elif page_name == "demos":
+                self.refresh_demos()
+            elif page_name == "servers":
+                self.refresh_servers()
+            elif page_name == "statistics":
+                if self.statisticsNickname.text().strip():
+                    self.lookup_statistics()
+            elif page_name == "account":
+                self.refresh_account_overview()
+            elif page_name == "addons":
+                refresh_component_gui()
+            elif page_name == "changelog":
+                real_page = getattr(self.changelogPage, "_q3_real_page", self.changelogPage)
+                if getattr(real_page, "_q3news_loading", False):
+                    return
+                for card in list(getattr(real_page, "_q3news_cards", []) or []):
+                    try:
+                        real_page._q3news_feed.removeWidget(card)
+                        card.setParent(None)
+                        card.deleteLater()
+                    except RuntimeError:
+                        pass
+                real_page._q3news_cards = []
+                real_page._q3news_ids = []
+                real_page._q3news_exhausted = False
+                real_page._q3news_follow_latest = True
+                self._load_q3news_page(real_page, initial=True)
+            else:
+                return
+            if hasattr(self, "_play_launcher_sound"):
+                self._play_launcher_sound("click")
+        except Exception as error:
+            print(f"[refresh] F5 failed for {page_name}: {error}")
 
     def set_navigation_enabled(self, enabled):
         for b in (self.homeNav, self.addonsNav, self.statisticsNav, self.serversNav, self.mapsNav, self.matchmakingNav, self.screenshotsNav, self.demosNav, self.accountNav, self.settingsNav, self.changelogNav, self.refreshButton):
@@ -17469,6 +21377,8 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
         player._launcherPlayRequested = False
 
     def _launcher_active_sound_count(self, sound_keys=None):
+        if QtMultimedia is None:
+            return 0
         playing = QtMultimedia.QMediaPlayer.PlaybackState.PlayingState
         players = getattr(self, "launcherSoundPlayers", {})
         keys = sound_keys if sound_keys is not None else players.keys()
@@ -17481,7 +21391,7 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
 
     def prepare_launcher_sounds(self):
         """Warm local media sources after the first frame to avoid hover stutter."""
-        if QtMultimedia is None:
+        if _ensure_qtmultimedia() is None:
             return
         if launcher_settings.get("launcher_sounds_enabled", False):
             keys = tuple(LAUNCHER_SFX_FILES)
@@ -17517,7 +21427,7 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
             return False
         if sound_key == "startup" and not launcher_settings.get("launcher_startup_sound_enabled", False):
             return False
-        if QtMultimedia is None:
+        if _ensure_qtmultimedia() is None:
             return False
         filename = LAUNCHER_SFX_FILES.get(str(sound_key))
         if not filename:
@@ -17581,7 +21491,7 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
         self._apply_launcher_sound_volume()
 
     def _play_matchmaking_sound(self):
-        if QtMultimedia is None:
+        if _ensure_qtmultimedia() is None:
             return False
         path = resolve_notify_sound()
         if path is None:
@@ -17613,6 +21523,8 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
         self.startMinimizedBox.setChecked(launcher_settings.get("start_minimized", False))
         self.startMinimizedBox.setEnabled(self.startWindowsBox.isChecked())
         self.trayBox.setChecked(launcher_settings.get("minimize_to_tray", False))
+        self.keepWindowPositionBox.setChecked(launcher_settings.get("keep_window_position", True))
+        self.fullscreenModeBox.setChecked(launcher_settings.get("fullscreen_mode", False))
 
         start_value = str(launcher_settings.get("starting_section", "home") or "home")
         start_index = self.startSectionCombo.findData(start_value)
@@ -17621,12 +21533,15 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
         behavior_value = str(launcher_settings.get("game_launch_behavior", "keep") or "keep")
         behavior_index = self.gameLaunchBehaviorCombo.findData(behavior_value)
         self.gameLaunchBehaviorCombo.setCurrentIndex(behavior_index if behavior_index >= 0 else 0)
-        if hasattr(self, "playtimeLabel"):
-            self.playtimeLabel.setText(f"LOCAL PLAYTIME  •  {format_playtime(total_playtime_seconds())}")
-
         self.vulkanLayerBox.setChecked(reshade_layer_enabled())
         self.changelogMediaBox.setChecked(
             launcher_settings.get("show_changelog_media", False)
+        )
+        self.disableChangelogNotificationsBox.setChecked(
+            launcher_settings.get("disable_changelog_notifications", False)
+        )
+        self.disableQ3NewsNotificationsBox.setChecked(
+            launcher_settings.get("disable_q3news_notifications", False)
         )
         self.pauseServerRefreshBox.setChecked(
             launcher_settings.get("pause_server_refresh_unfocused", False)
@@ -17879,7 +21794,9 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
         self._populate_account_page()
         busy = self.accountWorker is not None and self.accountWorker.isRunning()
         if hasattr(self, "accountPageSignIn"):
-            self.accountPageSignIn.setEnabled(configured and not busy)
+            # Keep the entry point clickable even when the backend is missing or its
+            # in-memory config is stale. The click handler can recover/reload it.
+            self.accountPageSignIn.setEnabled(not busy)
 
     def _set_account_busy(self, busy, text=""):
         if text:
@@ -18104,11 +22021,44 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
             self._account_sync_after_worker = False
             QtCore.QTimer.singleShot(80, self.sync_account_now)
 
+    def _on_account_sign_in_clicked(self):
+        """Account-page entry point with visible recovery and exception handling."""
+        try:
+            # Repair may have replaced backend.json after AccountManager was
+            # constructed. Always refresh the in-memory config from disk first.
+            if not self.accountManager.reload_backend_config():
+                self.accountManager.ensure_backend_config(force=True)
+                self.accountManager.reload_backend_config()
+            self._refresh_account_ui()
+            self.open_account_dialog()
+        except Exception as error:
+            detail = f"Could not open Q3Elite sign-in: {type(error).__name__}: {error}"
+            print(f"[account] Sign-in button failed: {detail}")
+            self._refresh_account_ui(detail)
+            QtWidgets.QMessageBox.warning(self, "Q3Elite Account", detail)
+
     def open_account_dialog(self, *, initial_email="", initial_mode="login"):
         if not self.accountManager.configured:
-            self._refresh_account_ui(
-                "Q3Elite Cloud is not configured yet. Add Launcher/settings/backend.json first."
+            try:
+                self.accountManager.ensure_backend_config()
+            except Exception as error:
+                detail = f"Could not restore Q3Elite Cloud configuration: {error}"
+                self._refresh_account_ui(detail)
+                try:
+                    QtWidgets.QMessageBox.warning(self, "Q3Elite Account", detail)
+                except Exception:
+                    pass
+                return
+        if not self.accountManager.configured:
+            detail = (
+                "Q3Elite Cloud is not configured: "
+                f"{getattr(self.accountManager, 'config_status', 'unknown configuration error')}."
             )
+            self._refresh_account_ui(detail)
+            try:
+                QtWidgets.QMessageBox.warning(self, "Q3Elite Account", detail)
+            except Exception:
+                pass
             return
         dialog = AccountAuthDialog(self, initial_email=initial_email, initial_mode=initial_mode)
         if dialog.exec() != QtWidgets.QDialog.DialogCode.Accepted:
@@ -18927,12 +22877,42 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
             return
         self._repair_running = True
         self.repairLauncherButton.setEnabled(False)
-        self.settingsMessage.setText("Checking Launcher files...")
+        self.settingsMessage.setText("Checking all Launcher files (SHA-256)...")
         QtWidgets.QApplication.processEvents()
         try:
+            backend_recovered = False
+            # Manual Repair is intentionally independent of the automatic-update
+            # preference. Refresh the public backend config from origin every time
+            # Repair is requested, even when the local file exists but is stale.
+            try:
+                backend_recovered = bool(self.accountManager.ensure_backend_config(force=True))
+                if not backend_recovered or not self.accountManager.reload_backend_config():
+                    raise RuntimeError(
+                        "GitHub returned no usable backend configuration. "
+                        "Check the network connection and try Repair again."
+                    )
+                # Account controls may have been disabled during startup when
+                # backend.json was missing. Re-evaluate visibility/enabled state
+                # immediately after the configuration is restored.
+                self._account_message = ""
+                self._refresh_account_ui("Q3Elite Cloud configuration restored. You can sign in now.")
+                if backend_recovered:
+                    try:
+                        self.supportManager = _q3_profile_component(
+                            "support_manager", lambda: SupportManager(LAUNCHER_DIR, LAUNCHER_DATA_DIR)
+                        )
+                    except Exception as support_error:
+                        print(f"[repair] Support manager refresh skipped: {support_error}")
+            except Exception as backend_error:
+                print(f"[repair] Backend config refresh failed: {backend_error}")
+                self.settingsMessage.setText(f"Backend config refresh failed: {backend_error}")
+                return
             repair_info = check_launcher_repair()
             if not repair_info:
-                self.settingsMessage.setText("Launcher files are OK. No repair needed.")
+                if backend_recovered:
+                    self.settingsMessage.setText("Backend configuration refreshed. Launcher files are otherwise OK.")
+                else:
+                    self.settingsMessage.setText("Backend configuration refreshed. Launcher files are OK.")
                 return
             self.settingsMessage.setText("Repairing Launcher files...")
             QtWidgets.QApplication.processEvents()
@@ -18963,11 +22943,158 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
         else:
             self.showMinimized()
 
+    def _restore_saved_window_geometry(self):
+        """Restore normal geometry only when the saved rectangle is on a connected screen."""
+        if not launcher_settings.get("keep_window_position", True):
+            return
+        try:
+            x = int(launcher_settings.get("window_x", -1))
+            y = int(launcher_settings.get("window_y", -1))
+            width = max(640, int(launcher_settings.get("window_width", 1366)))
+            height = max(480, int(launcher_settings.get("window_height", 768)))
+            app_instance = QtWidgets.QApplication.instance()
+            screens = list(app_instance.screens()) if app_instance is not None else []
+            if not screens:
+                return
+            saved = QtCore.QRect(x, y, width, height)
+            matching = None
+            if (x, y) != (-1, -1):
+                for screen in screens:
+                    available = screen.availableGeometry()
+                    intersection = saved.intersected(available)
+                    if intersection.width() >= 160 and intersection.height() >= 120:
+                        matching = screen
+                        break
+            if matching is not None:
+                available = matching.availableGeometry()
+                width = min(width, available.width())
+                height = min(height, available.height())
+                x = max(available.left(), min(x, available.right() - width + 1))
+                y = max(available.top(), min(y, available.bottom() - height + 1))
+            else:
+                primary = app_instance.primaryScreen()
+                if primary is None:
+                    return
+                available = primary.availableGeometry()
+                width = min(width, available.width())
+                height = min(height, available.height())
+                x = available.left() + max(0, (available.width() - width) // 2)
+                y = available.top() + max(0, (available.height() - height) // 2)
+            self.setGeometry(x, y, width, height)
+        except Exception as error:
+            print(f"[window] Could not restore saved geometry: {error}")
+
+    def _save_window_geometry(self):
+        if not launcher_settings.get("keep_window_position", True):
+            return
+        try:
+            rect = self.normalGeometry()
+            if not rect.isValid() or rect.width() < 640 or rect.height() < 480:
+                rect = self.geometry()
+            launcher_settings["window_x"] = int(rect.x())
+            launcher_settings["window_y"] = int(rect.y())
+            launcher_settings["window_width"] = int(rect.width())
+            launcher_settings["window_height"] = int(rect.height())
+        except Exception as error:
+            print(f"[window] Could not save geometry: {error}")
+
     def restore_from_tray(self):
-        self.show()
-        self.showNormal()
-        self.raise_()
-        self.activateWindow()
+        """Restore and explicitly request Windows foreground ownership."""
+        try:
+            was_fullscreen = (
+                self.isFullScreen()
+                or bool(self.windowState() & QtCore.Qt.WindowState.WindowFullScreen)
+            )
+            state = self.windowState()
+            state &= ~QtCore.Qt.WindowState.WindowMinimized
+            self.setWindowState(state)
+            if was_fullscreen:
+                self.showFullScreen()
+            else:
+                self.showNormal()
+            self.show()
+            self.raise_()
+            self.activateWindow()
+            QtWidgets.QApplication.processEvents()
+
+            if sys.platform == "win32":
+                import ctypes
+                from ctypes import wintypes
+
+                user32 = ctypes.windll.user32
+                kernel32 = ctypes.windll.kernel32
+                hwnd = wintypes.HWND(int(self.winId()))
+
+                # Declare pointer-sized HWND signatures explicitly; without
+                # prototypes ctypes may truncate 64-bit window handles.
+                user32.GetForegroundWindow.restype = wintypes.HWND
+                user32.GetWindowThreadProcessId.argtypes = (
+                    wintypes.HWND, ctypes.POINTER(wintypes.DWORD)
+                )
+                user32.GetWindowThreadProcessId.restype = wintypes.DWORD
+                user32.AttachThreadInput.argtypes = (
+                    wintypes.DWORD, wintypes.DWORD, wintypes.BOOL
+                )
+                user32.AttachThreadInput.restype = wintypes.BOOL
+                user32.ShowWindow.argtypes = (wintypes.HWND, ctypes.c_int)
+                user32.BringWindowToTop.argtypes = (wintypes.HWND,)
+                user32.SetForegroundWindow.argtypes = (wintypes.HWND,)
+                user32.SetActiveWindow.argtypes = (wintypes.HWND,)
+                user32.SetFocus.argtypes = (wintypes.HWND,)
+
+                foreground = user32.GetForegroundWindow()
+                current_tid = kernel32.GetCurrentThreadId()
+                foreground_pid = wintypes.DWORD()
+                foreground_tid = (
+                    user32.GetWindowThreadProcessId(
+                        foreground, ctypes.byref(foreground_pid)
+                    ) if foreground else 0
+                )
+                target_pid = wintypes.DWORD()
+                target_tid = user32.GetWindowThreadProcessId(
+                    hwnd, ctypes.byref(target_pid)
+                )
+
+                # Windows may reject SetForegroundWindow when the launcher
+                # was activated by a second process. Temporarily share input
+                # queues with the current foreground thread, then detach.
+                attached = []
+                try:
+                    for thread_id in {foreground_tid, target_tid}:
+                        if thread_id and thread_id != current_tid:
+                            if user32.AttachThreadInput(current_tid, thread_id, True):
+                                attached.append(thread_id)
+                    user32.ShowWindow(hwnd, 9)  # SW_RESTORE
+                    user32.BringWindowToTop(hwnd)
+                    user32.SetForegroundWindow(hwnd)
+                    user32.SetActiveWindow(hwnd)
+                    user32.SetFocus(hwnd)
+                finally:
+                    for thread_id in reversed(attached):
+                        user32.AttachThreadInput(current_tid, thread_id, False)
+
+                foreground_after = user32.GetForegroundWindow()
+                if int(foreground_after or 0) != int(hwnd or 0):
+                    class FLASHWINFO(ctypes.Structure):
+                        _fields_ = [
+                            ("cbSize", wintypes.UINT),
+                            ("hwnd", wintypes.HWND),
+                            ("dwFlags", wintypes.DWORD),
+                            ("uCount", wintypes.UINT),
+                            ("dwTimeout", wintypes.DWORD),
+                        ]
+                    flash = FLASHWINFO(
+                        ctypes.sizeof(FLASHWINFO), hwnd, 3, 3, 0
+                    )
+                    user32.FlashWindowEx(ctypes.byref(flash))
+        except Exception as error:
+            print(f"[instance] Could not fully activate launcher window: {error}")
+            try:
+                self.showNormal()
+                self.raise_()
+                self.activateWindow()
+            except Exception:
+                pass
 
     def exit_from_tray(self):
         self._allow_close = True
@@ -19013,6 +23140,7 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
                 self.diagnosticsManager.flush_async()
             if self._game_session_id is not None:
                 self._heartbeat_game_session()
+            self._save_window_geometry()
             save_launcher_settings(launcher_settings)
         except Exception:
             pass
@@ -19051,10 +23179,8 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
             return []
 
     def _refresh_playtime_ui(self):
-        if hasattr(self, "playtimeLabel"):
-            self.playtimeLabel.setText(
-                f"LOCAL PLAYTIME  •  {format_playtime(total_playtime_seconds())}"
-            )
+        # Playtime tracking remains active; its Settings display was removed.
+        return
 
     def _start_detached_game_session_tracker(self, ignored_pids, launched_at):
         helper = Path(__file__).resolve().with_name("game_session_tracker.py")
@@ -19081,7 +23207,7 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
             "--ignore-pids", ignored,
             "--started-at", str(launched_at or ""),
             "--wait-seconds", "35",
-            "--heartbeat-seconds", "15",
+            "--heartbeat-seconds", "60",
         ]
         try:
             creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
@@ -19247,7 +23373,9 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
                 pass
             # The helper is already a detached process, so there is no reason to
             # keep the GUI alive after the game has successfully launched.
-            QtCore.QTimer.singleShot(50, self.close)
+            # QMediaPlayer playback is asynchronous. Closing too quickly cuts the PLAY/START sound off; allow a short finish window.
+            # This delay applies only to the explicit Quit-after-launch path.
+            QtCore.QTimer.singleShot(800, self.close)
 
     def launch(self):
         """Start Q3Elite and hand playtime tracking to a detached watcher."""
@@ -19286,9 +23414,12 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
             return
         self._hero_index = (self._hero_index + delta) % (len(self._hero_local) if getattr(self, "_hero_local", None) else len(self._hero_urls))
         self.load_hero_image()
-        if (not automatic and self.pages.currentWidget() is self.homePage
-                and self.isVisible()):
-            self.heroAutoTimer.start()
+        if not automatic:
+            # A manual navigation starts a fresh interval; don't auto-advance
+            # immediately after the user has just selected an image.
+            self.heroAutoTimer.stop()
+            if self.pages.currentWidget() is self.homePage and self.isVisible():
+                self.heroAutoTimer.start()
 
     def _hero_cache_path(self, url):
         name = Path(urllib.parse.urlparse(str(url)).path).name or "image"
@@ -19349,6 +23480,19 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
                 return
         self._request_hero_image(url)
 
+    def _refresh_initial_hero_geometry(self):
+        """Render the first Home screenshot against the settled hero geometry."""
+        if not hasattr(self, "heroImage") or not self._hero_urls:
+            return
+        key = (str(self._hero_local[self._hero_index % len(self._hero_local)])
+               if getattr(self, "_hero_local", None)
+               else self._hero_urls[self._hero_index])
+        pixmap = self._hero_pixmaps.get(key)
+        if pixmap is not None and not pixmap.isNull():
+            self._set_hero_pixmap(pixmap)
+        else:
+            self.load_hero_image()
+
     def load_hero_image(self):
         if not self._hero_urls:
             return
@@ -19401,10 +23545,71 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
             reply.deleteLater()
             self._start_next_hero_prefetch()
 
-    def _set_hero_pixmap(self, pixmap):
+    def _refresh_hero_image_for_size(self):
+        """Re-crop the current cached source image after Home layout resizing."""
+        if not hasattr(self, "heroImage"):
+            return
         target = self.heroImage.size()
         if target.width() < 10 or target.height() < 10:
             return
+        source = None
+        if getattr(self, "_hero_local", None):
+            local_path = self._hero_local[self._hero_index % len(self._hero_local)]
+            source = self._hero_pixmaps.get(str(local_path))
+            if source is None:
+                source = _load_pixmap_file(str(local_path))
+                if source is not None and not source.isNull():
+                    self._hero_pixmaps[str(local_path)] = source
+        elif getattr(self, "_hero_urls", None):
+            url = self._hero_urls[self._hero_index % len(self._hero_urls)]
+            source = self._hero_pixmaps.get(url)
+            if source is None:
+                cache_path = self._hero_cache_path(url)
+                if cache_path.is_file():
+                    candidate = QtGui.QPixmap(str(cache_path))
+                    source = candidate if not candidate.isNull() else None
+                    if source is not None:
+                        self._hero_pixmaps[url] = source
+        if source is None or source.isNull():
+            return
+        scaled = source.scaled(
+            target,
+            QtCore.Qt.AspectRatioMode.KeepAspectRatioByExpanding,
+            QtCore.Qt.TransformationMode.SmoothTransformation,
+        )
+        x = max(0, (scaled.width() - target.width()) // 2)
+        y = max(0, (scaled.height() - target.height()) // 2)
+        cropped = scaled.copy(x, y, target.width(), target.height())
+        rendered = _rounded_pixmap(cropped, theme_float("home.hero_image_radius", 12.0))
+        if self._hero_fade_animation is not None:
+            self._hero_fade_animation.stop()
+            self._hero_fade_animation = None
+        if self._hero_opacity_effect is not None:
+            self.heroImage.setGraphicsEffect(None)
+            self._hero_opacity_effect = None
+        self.heroImage.setPixmap(rendered)
+
+    def _set_hero_pixmap(self, pixmap):
+        target = self.heroImage.size()
+        if target.width() < 10 or target.height() < 10:
+            # The first cached/downloaded image can arrive before Qt has laid
+            # out the Home hero. Keep it and retry after the first real frame;
+            # otherwise the hero stays blank/small until the next carousel tick.
+            self._hero_pending_pixmap = pixmap
+            if not getattr(self, "_hero_pending_retry_queued", False):
+                self._hero_pending_retry_queued = True
+                def retry_pending_hero():
+                    self._hero_pending_retry_queued = False
+                    pending = getattr(self, "_hero_pending_pixmap", None)
+                    if pending is not None and not pending.isNull():
+                        if self.heroImage.width() >= 10 and self.heroImage.height() >= 10:
+                            self._hero_pending_pixmap = None
+                            self._set_hero_pixmap(pending)
+                        else:
+                            QtCore.QTimer.singleShot(180, retry_pending_hero)
+                QtCore.QTimer.singleShot(180, retry_pending_hero)
+            return
+        self._hero_pending_pixmap = None
         scaled = pixmap.scaled(
             target,
             QtCore.Qt.AspectRatioMode.KeepAspectRatioByExpanding,
@@ -19414,7 +23619,17 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
         y = max(0, (scaled.height() - target.height()) // 2)
         cropped = scaled.copy(x, y, target.width(), target.height())
         rendered = _rounded_pixmap(cropped, theme_float("home.hero_image_radius", 12.0))
-        if self.heroImage.pixmap() is not None and not self.heroImage.pixmap().isNull():
+        if (str(getattr(ui_theme, "theme_name", "Steel")).casefold() == "paper"
+                or self.heroImage.pixmap() is None
+                or self.heroImage.pixmap().isNull()):
+            if self._hero_fade_animation is not None:
+                self._hero_fade_animation.stop()
+                self._hero_fade_animation = None
+            if self._hero_opacity_effect is not None:
+                self.heroImage.setGraphicsEffect(None)
+                self._hero_opacity_effect = None
+            self.heroImage.setPixmap(rendered)
+        elif self.heroImage.pixmap() is not None and not self.heroImage.pixmap().isNull():
             if self._hero_fade_animation is not None:
                 self._hero_fade_animation.stop()
             if self._hero_opacity_effect is None:
@@ -19466,10 +23681,26 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
         if hasattr(self, "sizeGrip"):
             self.sizeGrip.setVisible(not self.isMaximized() and not self.isFullScreen())
 
+    def _refresh_shell_geometry_state(self):
+        """Re-evaluate shell/rail corner clipping after maximize/fullscreen changes."""
+        expanded = bool(self.isMaximized() or self.isFullScreen())
+        outer = 0 if expanded else theme_int("layout.window.outer_margin", 13)
+        if hasattr(self, "shell"):
+            self.shell.setGeometry(
+                outer, outer,
+                max(1, self.width() - outer * 2),
+                max(1, self.height() - outer * 2),
+            )
+            self.shell.update()
+        if hasattr(self, "sidebar"):
+            self.sidebar.update()
+        self.update()
+
     def changeEvent(self, event):
         super().changeEvent(event)
         if event.type() == QtCore.QEvent.Type.WindowStateChange:
             QtCore.QTimer.singleShot(0, self._sync_window_controls)
+            QtCore.QTimer.singleShot(0, self._refresh_shell_geometry_state)
             if not self.isMinimized():
                 QtCore.QTimer.singleShot(80, self._apply_native_backdrop)
 
@@ -19549,6 +23780,29 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
+        compact_home = int(self.height()) < 820
+        updates_card = getattr(self, "homeUpdatesCard", None)
+        if updates_card is not None and updates_card.layout() is not None:
+            updates_card.layout().setContentsMargins(
+                7 if compact_home else 10,
+                4 if compact_home else 7,
+                7 if compact_home else 10,
+                4 if compact_home else 7,
+            )
+            updates_card.layout().setSpacing(3 if compact_home else 5)
+        for button_name in ("homeUpdateButton", "homeChangelogButton"):
+            button = getattr(self, button_name, None)
+            if button is not None:
+                button.setFixedHeight(36 if compact_home else 40)
+        panel_layout = getattr(self, "homePanelLayout", None)
+        if panel_layout is not None:
+            panel_layout.setSpacing(6 if compact_home else 10)
+        updates_value = getattr(self, "homeUpdatesValue", None)
+        if updates_value is not None:
+            font = updates_value.font()
+            font.setPointSizeF(9.0 if compact_home else 9.6)
+            updates_value.setFont(font)
+            updates_value.setMaximumHeight(52 if compact_home else 62)
         self._apply_window_mask()
         self._sync_window_controls()
         if hasattr(self, "serversScroll"):
@@ -19576,6 +23830,8 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
                 key = self._hero_urls[self._hero_index]
             pixmap = self._hero_pixmaps.get(key)
             if pixmap is not None: self._set_hero_pixmap(pixmap)
+            elif hasattr(self, "heroImage"):
+                QtCore.QTimer.singleShot(0, self._refresh_initial_hero_geometry)
 
     def _sync_scroll_clearance(self):
         """Align fixed/floating cards with the scroll viewport content edge."""
@@ -19662,6 +23918,8 @@ def q3elite_update_result(success, result=None):
         )
         return
 
+    # The Q3Elite manifest/version check is complete; PAK verification follows.
+    _activity_set("Q3Elite files checked", "ok", "stage")
     # Existing installation is now accepted for this startup.
     install_state["q3elite_done"] = True
     install_state["q3elite_ok"] = True
@@ -19803,11 +24061,74 @@ def post_update_result(success):
     # Keep the merged launcher alive. This is now the persistent launcher.
     _activity_set("Installation ready", "ok", "final")
     set_gui_ready(offline=install_state["offline"])
+    if getattr(window, "_home_update_sequence_waiting", False):
+        window._home_update_sequence_waiting = False
+        QtCore.QTimer.singleShot(150, window._run_home_update_sequence_step)
+
+
+def _activate_existing_launcher():
+    """Send an activation request to the already-running launcher process."""
+    server_name = "Q3EliteLauncher-" + hashlib.sha1(str(LAUNCHER_DATA_DIR).casefold().encode("utf-8")).hexdigest()[:16]
+    for _attempt in range(12):
+        socket = QtNetwork.QLocalSocket()
+        socket.connectToServer(server_name, QtCore.QIODevice.OpenModeFlag.WriteOnly)
+        if socket.waitForConnected(120):
+            socket.write(b"ACTIVATE")
+            socket.waitForBytesWritten(300)
+            socket.disconnectFromServer()
+            return True
+        socket.abort()
+        time.sleep(0.08)
+    return False
+
+
+def _start_instance_activation_server():
+    """Listen for activation requests from later launcher invocations."""
+    server_name = "Q3EliteLauncher-" + hashlib.sha1(str(LAUNCHER_DATA_DIR).casefold().encode("utf-8")).hexdigest()[:16]
+    server = QtNetwork.QLocalServer()
+    QtNetwork.QLocalServer.removeServer(server_name)
+    if not server.listen(server_name):
+        print(f"[instance] Could not start activation server: {server.errorString()}")
+        return None
+
+    def accept_connections():
+        while server.hasPendingConnections():
+            client = server.nextPendingConnection()
+            if client is None:
+                continue
+            def receive_request(sock=client):
+                payload = bytes(sock.readAll()).decode("utf-8", errors="ignore")
+                if "ACTIVATE" in payload:
+                    target = globals().get("window")
+                    if target is not None:
+                        target.restore_from_tray()
+                    else:
+                        globals()["_instance_activation_pending"] = True
+                sock.disconnectFromServer()
+            client.readyRead.connect(receive_request)
+            client.disconnected.connect(client.deleteLater)
+    server.newConnection.connect(accept_connections)
+    return server
 
 
 def main():
-    global app, window, download_timer, ui_theme
+    global app, window, download_timer, ui_theme, instance_server
     global launcher_self_update, q3elite_update, fdownload, q3elite_download, post_update
+
+    # Fine-grained startup timings. Existing cumulative fields are retained for
+    # compatibility with older logs; these values measure individual stages.
+    _q3_main_t0 = time.perf_counter()
+    _q3_startup_profile = {
+        "import_ms": (_q3_main_t0 - _Q3_IMPORT_T0) * 1000.0,
+        "qapp_create_ms": 0.0,
+        "theme_create_ms": 0.0,
+        "theme_apply_ms": 0.0,
+        "window_construct_ms": 0.0,
+        "pre_show_ms": 0.0,
+        "show_call_ms": 0.0,
+        "first_paint_ms": None,
+        "event_loop_ready_ms": None,
+    }
 
     try:
         # Qt 6 renders text/widgets at the monitor's native device-pixel ratio.
@@ -19818,7 +24139,10 @@ def main():
             )
         except Exception:
             pass
+        _q3_stage_t0 = time.perf_counter()
         app = QApplication(sys.argv)
+        _q3_startup_profile["qapp_create_ms"] = (time.perf_counter() - _q3_stage_t0) * 1000.0
+        _q3_qapp_ms = (time.perf_counter() - _Q3_IMPORT_T0) * 1000.0
         icon_path = APP_ICON_ICO if APP_ICON_ICO.is_file() else APP_ICON_PNG
         if icon_path.is_file():
             app.setWindowIcon(QtGui.QIcon(str(icon_path)))
@@ -19829,23 +24153,52 @@ def main():
         instance_lock = QLockFile(str(instance_dir / "Q3EliteLauncher.lock"))
         instance_lock.setStaleLockTime(0)
         if not instance_lock.tryLock(100):
-            print("Q3Elite Launcher is already running.")
+            if _activate_existing_launcher():
+                return 0
+            print("Q3Elite Launcher is already running, but the active window could not be reached.")
             return 0
+
+        instance_server = _start_instance_activation_server()
 
         # Identity layer -----------------------------------------------------
         # `Themes/active.json` chooses the current theme. Use --ui-dev for
         # Ctrl+S hot reload while tuning tokens/QSS.
+        _q3_stage_t0 = time.perf_counter()
         ui_theme = ThemeManager(
             app,
             launcher_dir=LAUNCHER_DIR,
             assets_dir=ASSETS_DIR,
             dev_mode=("--ui-dev" in sys.argv),
         )
-        ui_theme.apply()
+        _q3_startup_profile["theme_create_ms"] = (time.perf_counter() - _q3_stage_t0) * 1000.0
 
+        _q3_stage_t0 = time.perf_counter()
+        ui_theme.apply()
+        _q3_startup_profile["theme_apply_ms"] = (time.perf_counter() - _q3_stage_t0) * 1000.0
+
+        _q3_theme_ms = (time.perf_counter() - _Q3_IMPORT_T0) * 1000.0
+        _q3_stage_t0 = time.perf_counter()
         window = ModernLauncherWindow()
-        ui_theme.polish_widget_tree(window)
+        window._restore_saved_window_geometry()
+        if globals().pop("_instance_activation_pending", False):
+            QtCore.QTimer.singleShot(0, window.restore_from_tray)
+        _q3_startup_profile["window_construct_ms"] = (time.perf_counter() - _q3_stage_t0) * 1000.0
+        _q3_window_ms = (time.perf_counter() - _Q3_IMPORT_T0) * 1000.0
+        # Stop diagnostics immediately after construction; no event-filter
+        # overhead remains during show(), first paint or normal interaction.
+        try:
+            app.removeEventFilter(window._startup_qt_event_probe)
+        except Exception:
+            pass
+
+        # Full-tree font polish is an O(number of widgets) GUI-thread walk.
+        # It changes rendering hints only, not font sizes or weights. Defer it
+        # until after the first visible frame so it cannot delay first paint.
+        _q3_polish_state = {"ms": 0.0, "widgets": 0}
+        _q3_pre_show_t0 = time.perf_counter()
+        _q3_mask_start = time.perf_counter()
         window._apply_window_mask()
+        _q3_mask_ms = (time.perf_counter() - _q3_mask_start) * 1000.0
         ui_theme.themeReloaded.connect(window.apply_runtime_theme)
 
         # Capture uncaught Qt/Python callback exceptions into the local crash
@@ -19875,23 +24228,85 @@ def main():
         )
         QtCore.QTimer.singleShot(5000, window._flush_diagnostics_background)
 
+        # Observe the first top-level paint without changing widget behavior.
+        # This separates "show() returned" from the first frame actually painted.
+        class _Q3StartupPaintProbe(QtCore.QObject):
+            def eventFilter(self, watched, event):
+                if (event.type() == QtCore.QEvent.Type.Paint
+                        and _q3_startup_profile["first_paint_ms"] is None):
+                    _q3_startup_profile["first_paint_ms"] = (
+                        time.perf_counter() - _Q3_IMPORT_T0
+                    ) * 1000.0
+                return False
+
+        _q3_startup_paint_probe = _Q3StartupPaintProbe(app)
+        if _Q3_PROFILE_ENABLED:
+            window.installEventFilter(_q3_startup_paint_probe)
+
         autostart_mode = "--autostart" in sys.argv
         start_minimized = launcher_settings.get("start_minimized", False)
         if autostart_mode and start_minimized and QtWidgets.QSystemTrayIcon.isSystemTrayAvailable():
             window.trayIcon.show()
             window.hide()
         else:
-            window.show()
-            QtCore.QTimer.singleShot(900, window.prepare_launcher_sounds)
+            _q3_startup_profile["pre_show_ms"] = (time.perf_counter() - _q3_pre_show_t0) * 1000.0
+            _q3_show_t0 = time.perf_counter()
+            if launcher_settings.get("fullscreen_mode", False):
+                window.showFullScreen()
+            else:
+                window.show()
+            _q3_startup_profile["show_call_ms"] = (time.perf_counter() - _q3_show_t0) * 1000.0
+            _q3_shown_ms = (time.perf_counter() - _Q3_IMPORT_T0) * 1000.0
+            # Record import/theme/window construction milestones asynchronously.
+            # This helps distinguish Python import cost from UI construction cost.
+            def _write_startup_profile():
+                try:
+                    profile_dir = LAUNCHER_DATA_DIR / "logs"
+                    profile_dir.mkdir(parents=True, exist_ok=True)
+                    profile_file = profile_dir / "startup_profile.log"
+                    with profile_file.open("a", encoding="utf-8") as _log:
+                        _log.write(
+                            f"{datetime.datetime.now().isoformat(timespec='seconds')} "
+                            f"theme={getattr(ui_theme, 'theme_name', 'unknown')} "
+                            f"imports={_q3_startup_profile['import_ms']:.0f}ms "
+                            f"qapp_create={_q3_startup_profile['qapp_create_ms']:.0f}ms "
+                            f"theme_create={_q3_startup_profile['theme_create_ms']:.0f}ms "
+                            f"theme_apply={_q3_startup_profile['theme_apply_ms']:.0f}ms "
+                            f"window_construct={_q3_startup_profile['window_construct_ms']:.0f}ms "
+                            f"pre_show={_q3_startup_profile['pre_show_ms']:.0f}ms "
+                            f"show_call={_q3_startup_profile['show_call_ms']:.0f}ms "
+                            f"first_paint={_q3_startup_profile['first_paint_ms'] if _q3_startup_profile['first_paint_ms'] is not None else -1:.0f}ms "
+                            f"event_loop_ready={_q3_startup_profile['event_loop_ready_ms'] if _q3_startup_profile['event_loop_ready_ms'] is not None else -1:.0f}ms "
+                            f"qapp_cumulative={_q3_qapp_ms:.0f}ms theme_cumulative={_q3_theme_ms:.0f}ms "
+                            f"window_cumulative={_q3_window_ms:.0f}ms shown_cumulative={_q3_shown_ms:.0f}ms "
+                            f"mask={_q3_mask_ms:.0f}ms "
+                            f"deferred_font_polish={_q3_polish_state['ms']:.0f}ms "
+                            f"widgets={_q3_polish_state['widgets']} "
+                            f"qt_event_counts={';'.join(f'{event_name}:{getattr(window, '_startup_qt_event_counts', {}).get(int(event_type), 0)}' for event_type, event_name in ((QtCore.QEvent.Type.Polish, 'Polish'), (QtCore.QEvent.Type.PolishRequest, 'PolishRequest'), (QtCore.QEvent.Type.LayoutRequest, 'LayoutRequest'), (QtCore.QEvent.Type.ChildAdded, 'ChildAdded'), (QtCore.QEvent.Type.StyleChange, 'StyleChange'), (QtCore.QEvent.Type.FontChange, 'FontChange'), (QtCore.QEvent.Type.Resize, 'Resize'), (QtCore.QEvent.Type.Show, 'Show'))) } "
+                            f"components={';'.join(f'{name}:{duration:.0f}ms' for name, duration in getattr(window, '_startup_component_timings', []))} "
+                            f"event_ops={';'.join(f'{name}[{delta}]' for name, delta in getattr(window, '_startup_qt_event_deltas', []))}\n"
+                        )
+                except Exception:
+                    pass
+            def _mark_event_loop_ready():
+                _q3_startup_profile["event_loop_ready_ms"] = (time.perf_counter() - _q3_main_t0) * 1000.0
+
+            if _Q3_PROFILE_ENABLED:
+                QtCore.QTimer.singleShot(0, _mark_event_loop_ready)
+                QtCore.QTimer.singleShot(2500, _write_startup_profile)
+            QtCore.QTimer.singleShot(1200, window.prepare_launcher_sounds)
             if (launcher_settings.get("launcher_sounds_enabled", False)
                     and launcher_settings.get("launcher_startup_sound_enabled", False)):
                 QtCore.QTimer.singleShot(1600, lambda: window._play_launcher_sound("startup"))
-            # ThemeManager.apply() + pre-show font polish already established the
-            # theme. A second full apply_runtime_theme() here used to clear all
+            # ThemeManager.apply() already established the application font and
+            # stylesheet. A second full apply_runtime_theme() here used to clear all
             # Obsidian caches and walk/repaint the complete widget tree immediately
             # after the first frame, producing the visible freeze/restart effect.
             # Only the HWND-dependent native backdrop needs a post-show pass.
             QtCore.QTimer.singleShot(0, window._apply_native_backdrop)
+
+        # QApplication's default font already carries the configured rendering
+        # hints. Avoid a second O(widget-count) setFont walk after first paint.
 
         download_timer = QtCore.QTimer(window)
         download_timer.timeout.connect(update_download_overlay)
@@ -19907,6 +24322,17 @@ def main():
                 max(1500, theme_int("performance.telegram_webengine_prewarm_delay_ms", 3500)),
                 window._prewarm_latest_telegram_posts,
             )
+
+        # Check the newest public Q3News post independently from the versioned
+        # Changelog feed. This is a lightweight one-page request in the background.
+        if not launcher_settings.get("disable_q3news_notifications", False):
+            q3news_notification_worker = Q3NewsWorker(before=None, limit=1, parent=window)
+            window._q3news_notification_worker = q3news_notification_worker
+            q3news_notification_worker.result_ready.connect(
+                lambda ok, rows: window._refresh_q3news_notification(rows, success=ok)
+            )
+            q3news_notification_worker.finished.connect(q3news_notification_worker.deleteLater)
+            q3news_notification_worker.start()
 
         # Create every worker BEFORE starting the first one.
         # A very fast self-update check can emit "continue" immediately, and
@@ -19925,6 +24351,7 @@ def main():
         q3elite_download.result_ready.connect(q3elite_install_result)
         post_update.result_ready.connect(post_update_result)
         post_update.offline.connect(post_update_offline)
+        post_update.update_checked.connect(lambda data: update_home_updates("osp2be", data if isinstance(data, dict) else None))
 
         set_gui_checking("Checking Launcher...")
 

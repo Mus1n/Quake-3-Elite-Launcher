@@ -15,6 +15,7 @@
 !/Q3Elite/Launcher/**
 
 # Ignore cache files
+/Q3Elite/Launcher/maps_manifest
 /Q3Elite/Launcher/python/pyen/*
 /Q3Elite/Launcher/temp_files/*
 /Q3Elite/Launcher/python/pyenv/bin/*.exe
