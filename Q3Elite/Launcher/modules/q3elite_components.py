@@ -338,6 +338,13 @@ def _zip_member_to_basic_path(member_name):
         return None
 
     rel = norm(str(PurePosixPath(*parts)))
+
+    # FirstLaunch.bat belongs exclusively to Manual Installation.
+    # The Launcher performs the equivalent setup itself, so never copy this
+    # root-level batch file from the bulk Core/Basic archive.
+    if rel.casefold() == "firstlaunch.bat":
+        return None
+
     if rel.casefold().startswith("q3elite/launcher/"):
         # Launcher has its own self-update/cache lifecycle.  A cached Basic ZIP
         # must never downgrade the currently running launcher.
