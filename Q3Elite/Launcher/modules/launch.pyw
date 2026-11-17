@@ -12821,14 +12821,10 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
         self.mediaFindShortcut.activated.connect(lambda: self._play_launcher_sound("click"))
         _q3_profile_mark("window_shortcuts_filters")
 
-        # The installer uses this one-shot argument only on a fresh installation.
-        # Show HOME for the first session without changing the saved Starting section
-        # preference (which remains SERVERS for the next normal launch).
-        first_launch_home = "--first-launch-home" in sys.argv
-        requested_start = (
-            "home" if first_launch_home
-            else str(launcher_settings.get("starting_section", "home") or "home").lower()
-        )
+        if os.environ.pop("Q3ELITE_FIRST_RUN", "") == "1":
+            requested_start = "home"
+        else:
+            requested_start = str(launcher_settings.get("starting_section", "home") or "home").lower()
         if requested_start == "last":
             requested_start = str(launcher_settings.get("last_section", "home") or "home").lower()
         if requested_start not in NAV_PAGE_ORDER:
