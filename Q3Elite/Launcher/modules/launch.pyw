@@ -35,6 +35,35 @@ from pathlib import Path
 
 from PyQt6 import QtCore, QtGui, QtWidgets, QtNetwork
 
+
+# Suppress only the repetitive Qt FFmpeg disconnect warning emitted during
+# multimedia object destruction. Keep every other Qt message visible in the
+# debug console.
+def _q3elite_qt_message_handler(mode, context, message):
+    try:
+        if message.startswith(
+            "QObject::disconnect: wildcard call disconnects from destroyed signal of QFFmpeg::"
+        ):
+            return
+    except Exception:
+        pass
+
+    if _q3elite_previous_qt_message_handler is not None:
+        _q3elite_previous_qt_message_handler(mode, context, message)
+    else:
+        # No previous handler: preserve Qt's normal console output.
+        try:
+            import sys
+            print(message, file=sys.stderr)
+        except Exception:
+            pass
+
+
+_q3elite_previous_qt_message_handler = None
+_q3elite_previous_qt_message_handler = QtCore.qInstallMessageHandler(
+    _q3elite_qt_message_handler
+)
+
 # Detached Telegram renderers live off-screen. Chromium normally throttles
 # occluded/background windows, which would freeze animated custom emoji between
 # snapshot frames. These flags only affect QtWebEngine and the renderers are
@@ -2049,49 +2078,118 @@ def _telegram_channel_post_urls(channel="Q3News", before=None, limit=2):
     ids = ids[-limit:]
     return [{"id": value, "url": f"https://t.me/{channel}/{value}", "date": post_dates.get(value, "")} for value in ids]
 
-def read_changelog_entries():
-    """Combine the shared changelog feed with local Launcher_Version.json notes.
+Q3ELITE_VERSION_FILE = GAME_ROOT / "Q3Elite" / "Version.json"
+Q3ELITE_CHANGELOG_HISTORY_FILE = LAUNCHER_DATA_DIR / "q3elite_changelog_history.json"
 
-    Changelog.json remains the primary source for Q3Elite/other release tracks,
-    but must not suppress the launcher updater's own release metadata.
-    """
+
+def _release_items_from_metadata(path, default_type):
+    """Read release entries from the Version.json formats used by Q3Elite."""
+    try:
+        raw = json.loads(Path(path).read_text(encoding="utf-8-sig"))
+    except Exception as error:
+        print(f"[changelog] Could not read {Path(path).name}: {error}")
+        return []
+    if not isinstance(raw, dict):
+        return []
+
+    version = str(raw.get("version", raw.get("Version", raw.get("q3elite_version", "—"))) or "—")
+    releases = raw.get("releases", raw.get("changelog", raw.get("history", [])))
+    if isinstance(releases, dict):
+        releases = [dict(value if isinstance(value, dict) else {"changes": value}, version=key)
+                    for key, value in releases.items()]
+    elif isinstance(releases, str):
+        releases = [{"version": version, "changes": [releases]}]
+    elif isinstance(releases, list) and releases and all(not isinstance(x, dict) for x in releases):
+        releases = [{"version": version, "date": raw.get("date", raw.get("release_date", "")),
+                     "changes": [str(x) for x in releases]}]
+    elif not isinstance(releases, list):
+        releases = []
+
+    if not releases:
+        notes = raw.get("changes", raw.get("notes", raw.get("items", raw.get("release_notes", []))))
+        if isinstance(notes, str):
+            notes = [notes]
+        if isinstance(notes, list) and notes:
+            releases = [{"version": version, "date": raw.get("date", raw.get("release_date", "")),
+                         "changes": notes}]
+
+    result = []
+    for release in releases:
+        if not isinstance(release, dict):
+            continue
+        item = dict(release)
+        item.setdefault("type", default_type)
+        item.setdefault("version", version)
+        if not item.get("changelog"):
+            notes = item.get("changes", item.get("notes", item.get("items", [])))
+            if isinstance(notes, str):
+                notes = [notes]
+            item["changelog"] = list(notes) if isinstance(notes, (list, tuple)) else []
+        item.setdefault("text", str(item.get("summary", item.get("description", "")) or ""))
+        result.append(item)
+    return result
+
+
+def _merge_release_entries(target, additions):
+    seen = set()
+    for existing in target:
+        seen.add((str(existing.get("type", "")).casefold(),
+                   str(existing.get("version", "")).casefold(),
+                   str(existing.get("date", existing.get("release_date", "")))))
+    for item in additions:
+        key = (str(item.get("type", "")).casefold(),
+               str(item.get("version", "")).casefold(),
+               str(item.get("date", item.get("release_date", ""))))
+        if key not in seen:
+            target.append(dict(item))
+            seen.add(key)
+
+
+def read_changelog_entries():
+    """Combine shared, launcher, and Q3Elite release histories."""
     entries = []
     if CHANGELOG_FILE.is_file():
         try:
-            raw = json.loads(CHANGELOG_FILE.read_text(encoding="utf-8"))
+            raw = json.loads(CHANGELOG_FILE.read_text(encoding="utf-8-sig"))
             if isinstance(raw, dict):
                 raw = raw.get("releases", raw.get("changelog", [raw]))
             if isinstance(raw, list):
-                entries.extend(item for item in raw if isinstance(item, dict))
+                entries.extend(dict(item) for item in raw if isinstance(item, dict))
         except Exception as error:
             print(f"[changelog] Could not read {CHANGELOG_FILE.name}: {error}")
 
-    # Always merge local launcher releases, even when Changelog.json exists.
     launcher_releases = sorted_launcher_releases()
-    for release in launcher_releases:
-        item = dict(release)
+    for item in launcher_releases:
+        item = dict(item)
         item.setdefault("type", "Launcher")
         if not item.get("changelog"):
             notes = item.get("changes", item.get("notes", item.get("items", [])))
             if isinstance(notes, str):
                 notes = [notes]
             item["changelog"] = list(notes) if isinstance(notes, (list, tuple)) else []
-        if not item.get("text"):
-            item["text"] = str(item.get("summary", item.get("description", "")) or "")
-        # Avoid duplicate launcher releases already copied into Changelog.json.
-        key = (str(item.get("type", "")).casefold(), str(item.get("version", "")).casefold(), str(item.get("date", item.get("release_date", ""))))
-        duplicate = any(
-            str(existing.get("type", "")).casefold() == key[0]
-            and str(existing.get("version", "")).casefold() == key[1]
-            and str(existing.get("date", existing.get("release_date", ""))) == key[2]
-            for existing in entries
-        )
-        if not duplicate:
-            entries.append(item)
+        item.setdefault("text", str(item.get("summary", item.get("description", "")) or ""))
+        _merge_release_entries(entries, [item])
 
-    # If neither source provided anything, retain the old metadata fallback.
-    if not entries:
-        entries = [dict(x, type=x.get("type", "Launcher")) for x in launcher_releases]
+    # Q3Elite has its own Version.json under the game root, not Launcher/.
+    # Preserve prior versions in AppData so updates do not erase old entries.
+    q3elite_history = []
+    try:
+        if Q3ELITE_CHANGELOG_HISTORY_FILE.is_file():
+            cached = json.loads(Q3ELITE_CHANGELOG_HISTORY_FILE.read_text(encoding="utf-8-sig"))
+            if isinstance(cached, list):
+                q3elite_history = [dict(x) for x in cached if isinstance(x, dict)]
+    except Exception as error:
+        print(f"[changelog] Could not read Q3Elite history cache: {error}")
+    current_q3elite = _release_items_from_metadata(Q3ELITE_VERSION_FILE, "Q3Elite")
+    _merge_release_entries(q3elite_history, current_q3elite)
+    try:
+        Q3ELITE_CHANGELOG_HISTORY_FILE.parent.mkdir(parents=True, exist_ok=True)
+        Q3ELITE_CHANGELOG_HISTORY_FILE.write_text(
+            json.dumps(q3elite_history, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+        )
+    except Exception as error:
+        print(f"[changelog] Could not save Q3Elite history cache: {error}")
+    _merge_release_entries(entries, q3elite_history)
     return entries
 
 
@@ -2370,8 +2468,8 @@ DEFAULT_SETTINGS = {
     "server_preset_ids": [],
     "server_hybrid_default_migrated": True,
     "show_changelog_media": True,
-    "cleanup_screenshots_days": 14,
-    "cleanup_demos_days": 14,
+    "cleanup_screenshots_days": 7,
+    "cleanup_demos_days": 7,
     "pause_server_refresh_unfocused": False,
     "pause_matchmaking_when_game_launched": False,
     "screenshot_source": "reshade",
@@ -2661,8 +2759,8 @@ def load_launcher_settings():
             "starting_section": "home",
             "game_launch_behavior": "keep",
             "show_changelog_media": False,
-            "cleanup_screenshots_days": 0,
-            "cleanup_demos_days": 0,
+            "cleanup_screenshots_days": 7,
+            "cleanup_demos_days": 7,
             "screenshot_source": "both",
             "launcher_sounds_enabled": False,
             "launcher_sound_volume": 30,
@@ -5281,11 +5379,11 @@ class FullRowHoverDelegate(QtWidgets.QStyledItemDelegate):
         painter.restore()
 
     def paint(self, painter, option, index):
-        # Keep the original table appearance: column 0 owns the continuous row
-        # surface for standard columns. The custom action delegate paints its
-        # own clipped slice explicitly.
-        if index.column() == 0:
-            self._paint_row_surface(painter, option, index)
+        # Every column paints its own clipped slice of the shared row surface.
+        # Painting only column 0 leaves the rest of the row without a visible
+        # selection because native Qt selection is cleared below. The clip in
+        # _paint_row_surface prevents overlapping/doubled material.
+        self._paint_row_surface(painter, option, index)
         clean = QtWidgets.QStyleOptionViewItem(option)
         # The delegate owns whole-row hover/selection painting.  Removing both
         # native focus and selected flags prevents Qt/Windows from drawing
@@ -6167,10 +6265,10 @@ class AccountAuthDialog(MaterialDialog):
     @staticmethod
     def _repolish(widget):
         try:
-            if polish:
-                widget.style().unpolish(widget)
-                widget.style().polish(widget)
-                widget.update()
+            style = widget.style()
+            style.unpolish(widget)
+            style.polish(widget)
+            widget.update()
         except RuntimeError:
             pass
 
@@ -12125,37 +12223,51 @@ class LocalMapsActionsDelegate(LocalMapsThumbnailDelegate):
         return False
 
     def eventFilter(self, watched, event):
-        # LocalMapsActionsDelegate overrides the inherited eventFilter and is
-        # installed after FullRowHoverDelegate on the same viewport. Therefore
-        # Qt dispatches mouse events here instead of to the base implementation.
-        # Forward them explicitly so the shared row delegate updates hover_row
-        # for every column, including PLAY/DELETE.
+        # This delegate is installed after FullRowHoverDelegate on the same
+        # viewport, so forward events to keep shared row-hover state updated.
         FullRowHoverDelegate.eventFilter(self, watched, event)
-        if watched is self._table.viewport():
-            if event.type() == QtCore.QEvent.Type.MouseMove:
-                point = event.position().toPoint()
-                index = self._table.indexAt(point)
-                action = self._map_action_at(index, point)
-                current = (index.row(), action) if action else None
-                if current != self._hovered:
+
+        # A queued event can arrive while the parent QTableWidget is being
+        # destroyed during launcher shutdown. Its Python wrapper may survive,
+        # but accessing the deleted C++ viewport raises RuntimeError.
+        try:
+            table = self._table
+            viewport = table.viewport()
+        except RuntimeError:
+            return False
+
+        if watched is viewport:
+            try:
+                if event.type() == QtCore.QEvent.Type.MouseMove:
+                    point = event.position().toPoint()
+                    index = table.indexAt(point)
+                    action = self._map_action_at(index, point)
+                    current = (index.row(), action) if action else None
+                    if current != self._hovered:
+                        old = self._hovered
+                        self._hovered = current
+                        if old:
+                            old_index = table.model().index(old[0], 5)
+                            viewport.update(table.visualRect(old_index))
+                        if current:
+                            viewport.update(table.visualRect(index))
+                        viewport.setCursor(
+                            QtCore.Qt.CursorShape.PointingHandCursor if current
+                            else QtCore.Qt.CursorShape.ArrowCursor
+                        )
+                elif event.type() == QtCore.QEvent.Type.Leave:
                     old = self._hovered
-                    self._hovered = current
-                    if old:
-                        self._table.viewport().update(self._table.visualRect(self._table.model().index(old[0], 5)))
-                    if current:
-                        self._table.viewport().update(self._table.visualRect(index))
-                    self._table.viewport().setCursor(
-                        QtCore.Qt.CursorShape.PointingHandCursor if current
-                        else QtCore.Qt.CursorShape.ArrowCursor
-                    )
-            elif event.type() == QtCore.QEvent.Type.Leave:
-                old = self._hovered
-                self._hovered = None
-                self._pressed = None
-                self._table.viewport().setCursor(QtCore.Qt.CursorShape.ArrowCursor)
-                if old and 0 <= old[0] < self._table.model().rowCount():
-                    self._table.viewport().update(self._table.visualRect(self._table.model().index(old[0], 5)))
+                    self._hovered = None
+                    self._pressed = None
+                    viewport.setCursor(QtCore.Qt.CursorShape.ArrowCursor)
+                    if old and 0 <= old[0] < table.model().rowCount():
+                        old_index = table.model().index(old[0], 5)
+                        viewport.update(table.visualRect(old_index))
+            except RuntimeError:
+                # The table/viewport may be deleted between dispatch and repaint.
+                return False
         return False
+
 
 
 def _q3_is_paper_theme():
@@ -14795,7 +14907,7 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
             combo = QtWidgets.QComboBox(); combo.setObjectName(combo_name)
             combo.addItem("older than 1 day", 1); combo.addItem("older than 3 days", 3); combo.addItem("older than 7 days", 7); combo.addItem("older than 14 days", 14); combo.addItem("older than 30 days", 30); combo.addItem("Custom", -1)
             combo.setFixedWidth(theme_int("settings.cleanup_combo_width", 190)); combo.setEnabled(False)
-            custom = QtWidgets.QSpinBox(); custom.setObjectName(spin_name); custom.setRange(1,3650); custom.setSuffix(" days"); custom.setValue(14); custom.setFixedWidth(110); custom.setVisible(False); custom.setEnabled(False)
+            custom = QtWidgets.QSpinBox(); custom.setObjectName(spin_name); custom.setRange(1,3650); custom.setSuffix(" days"); custom.setValue(7); custom.setFixedWidth(110); custom.setVisible(False); custom.setEnabled(False)
             def refresh():
                 enabled = checkbox.isChecked(); combo.setEnabled(enabled); custom.setEnabled(enabled); custom.setVisible(enabled and combo.currentData() == -1)
             checkbox.toggled.connect(refresh); combo.currentIndexChanged.connect(refresh)
@@ -14988,7 +15100,7 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
         identity_actions = QtWidgets.QVBoxLayout(); identity_actions.setSpacing(8)
         self.accountPageSignIn = GlowButton("SIGN IN / REGISTER")
         self.accountPageSignIn.setObjectName("applyButton")
-        self.accountPageSignIn.clicked.connect(self.open_account_dialog)
+        self.accountPageSignIn.clicked.connect(lambda checked=False: self.open_account_dialog())
         identity_actions.addWidget(self.accountPageSignIn)
         self.accountEditProfileButton = MaterialPushButton("EDIT PROFILE")
         self.accountEditProfileButton.setObjectName("secondaryButton")
@@ -16978,6 +17090,8 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
                     rows.append((Path(entry.path), stat, demo_category))
         except OSError as error:
             print(f"[demos] Could not scan demo folder {folder}: {error}")
+
+        _demo_scan_ms = (time.perf_counter() - _demo_scan_started) * 1000.0
 
         reverse = mode.endswith("↓")
         if mode.startswith("Name"):
@@ -21758,7 +21872,9 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
         self._populate_account_page()
         busy = self.accountWorker is not None and self.accountWorker.isRunning()
         if hasattr(self, "accountPageSignIn"):
-            self.accountPageSignIn.setEnabled(configured and not busy)
+            # Keep the entry point available even if backend.json was removed;
+            # open_account_dialog attempts to restore the public client config.
+            self.accountPageSignIn.setEnabled(not busy)
 
     def _set_account_busy(self, busy, text=""):
         if text:
@@ -21983,12 +22099,49 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
             self._account_sync_after_worker = False
             QtCore.QTimer.singleShot(80, self.sync_account_now)
 
+    def _restore_account_backend_config(self):
+        """Restore the public Supabase client config if it is missing locally."""
+        manager = self.accountManager
+        if manager.configured:
+            return True
+        backend_file = Path(manager.backend_file)
+        url = (
+            "https://raw.githubusercontent.com/Mus1n/Quake-3-Elite-Launcher/"
+            "main/Q3Elite/Launcher/settings/backend.json"
+        )
+        try:
+            request = urllib.request.Request(
+                url,
+                headers={"User-Agent": "Q3Elite-Launcher/1.0", "Cache-Control": "no-cache"},
+            )
+            with urllib.request.urlopen(request, timeout=8) as response:
+                raw = json.loads(response.read().decode("utf-8-sig"))
+            if not isinstance(raw, dict):
+                raise ValueError("backend.json must contain a JSON object")
+            project_url = str(raw.get("url") or "").strip()
+            publishable_key = str(raw.get("publishable_key") or raw.get("anon_key") or "").strip()
+            if not project_url.startswith("https://") or not publishable_key:
+                raise ValueError("Downloaded backend.json is missing the Supabase URL or publishable key")
+            backend_file.parent.mkdir(parents=True, exist_ok=True)
+            temporary = backend_file.with_name(backend_file.name + ".tmp")
+            temporary.write_text(json.dumps(raw, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+            os.replace(temporary, backend_file)
+            manager._config = raw
+            manager._client = None
+            print("[account] Restored missing backend.json from the official Q3Elite repository.")
+            return bool(manager.configured)
+        except Exception as error:
+            print(f"[account] Could not restore backend.json: {error}")
+            return False
+
     def open_account_dialog(self, *, initial_email="", initial_mode="login"):
-        if not self.accountManager.configured:
+        if not self.accountManager.configured and not self._restore_account_backend_config():
             self._refresh_account_ui(
-                "Q3Elite Cloud is not configured yet. Add Launcher/settings/backend.json first."
+                "Q3Elite Cloud is unavailable: backend configuration could not be restored. "
+                "Check your connection or restore Launcher/settings/backend.json."
             )
             return
+        self._refresh_account_ui("")
         dialog = AccountAuthDialog(self, initial_email=initial_email, initial_mode=initial_mode)
         if dialog.exec() != QtWidgets.QDialog.DialogCode.Accepted:
             return
