@@ -5,7 +5,7 @@
 Q3Elite Music component — Step 18
 
 Remote:
-  Quake 3 Arena/z-Music-Playlist-by-Mus1n.pk3dir/music/*
+  Quake 3 Arena/Addons/z-Music-Playlist-by-Mus1n.pk3dir/music/*
 
 Local:
   GAME_ROOT/baseq3/mods/osp/z-Music-Playlist-by-Mus1n.pk3dir/music/*
