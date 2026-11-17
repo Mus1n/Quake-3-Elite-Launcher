@@ -161,6 +161,36 @@ if not "!SETUP_RESULT!"=="0" (
     exit /b !SETUP_RESULT!
 )
 echo.
+echo Moving setup utilities to "%INSTALL_DIR%\Tools"...
+if not exist "%INSTALL_DIR%\Tools" mkdir "%INSTALL_DIR%\Tools" >nul 2>&1
+if not exist "%INSTALL_DIR%\Tools\" (
+    echo WARNING: Could not create Tools folder. Setup files remain in their current location.
+    goto SETUP_DONE
+)
+set "TOOLS_EXE=%INSTALL_DIR%\Tools\Q3Elite_Setup.exe"
+set "TOOLS_BAT=%INSTALL_DIR%\Tools\Q3Elite_Setup.bat"
+if exist "%~dp0Q3Elite_Setup.exe" (
+    if /I not "%~dp0Q3Elite_Setup.exe"=="%TOOLS_EXE%" (
+        copy /Y "%~dp0Q3Elite_Setup.exe" "%TOOLS_EXE%" >nul
+        if errorlevel 1 echo WARNING: Could not copy Q3Elite_Setup.exe to Tools.
+    )
+)
+if /I not "%~f0"=="%TOOLS_BAT%" (
+    copy /Y "%~f0" "%TOOLS_BAT%" >nul
+    if errorlevel 1 echo WARNING: Could not copy Q3Elite_Setup.bat to Tools.
+)
+if defined SETUP_PID (
+    set "ORIGINAL_EXE=%~dp0Q3Elite_Setup.exe"
+    set "ORIGINAL_BAT=%~f0"
+    start "" /min powershell.exe -NoProfile -WindowStyle Hidden -Command ^
+      "$pidToWait=[int]$env:SETUP_PID; $exe=$env:ORIGINAL_EXE; $bat=$env:ORIGINAL_BAT; while(Get-Process -Id $pidToWait -ErrorAction SilentlyContinue){Start-Sleep -Seconds 1}; Start-Sleep -Milliseconds 800; if($exe -and (Test-Path -LiteralPath $exe)){Remove-Item -LiteralPath $exe -Force -ErrorAction SilentlyContinue}; if($bat -and (Test-Path -LiteralPath $bat)){Remove-Item -LiteralPath $bat -Force -ErrorAction SilentlyContinue}"
+) else (
+    if /I not "%~f0"=="%TOOLS_BAT%" if exist "%TOOLS_BAT%" del /F /Q "%~f0"
+)
+:SETUP_DONE
+echo.
 echo Q3Elite setup completed.
+echo Launcher location: "%LAUNCHER%"
+echo Setup utilities: "%INSTALL_DIR%\Tools"
 pause
 exit /b 0

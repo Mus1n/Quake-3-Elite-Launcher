@@ -1555,12 +1555,6 @@ def read_launcher_metadata():
 
 CHANGELOG_FILE = LAUNCHER_DIR / "Changelog.json"
 CHANGELOG_STATE_FILE = LAUNCHER_DATA_DIR / "changelog_state.json"
-# Persistent archive of launcher releases observed in Launcher_Version.json.
-# This keeps older launcher versions visible after the remote version file is updated.
-LAUNCHER_CHANGELOG_HISTORY_FILE = LAUNCHER_DATA_DIR / "launcher_changelog_history.json"
-# Persistent archive of Q3Elite releases observed in %ROOT%/Q3Elite/Version.json.
-Q3ELITE_CHANGELOG_HISTORY_FILE = LAUNCHER_DATA_DIR / "q3elite_changelog_history.json"
-Q3ELITE_VERSION_FILE = GAME_ROOT / "Q3Elite" / "Version.json"
 
 
 def _changelog_version_key(value):
@@ -2055,108 +2049,11 @@ def _telegram_channel_post_urls(channel="Q3News", before=None, limit=2):
     ids = ids[-limit:]
     return [{"id": value, "url": f"https://t.me/{channel}/{value}", "date": post_dates.get(value, "")} for value in ids]
 
-def _launcher_release_from_version_metadata():
-    """Convert the current Launcher_Version.json release into a changelog card."""
-    metadata = read_launcher_metadata()
-    raw = metadata.get("raw") if isinstance(metadata, dict) else None
-    if not isinstance(raw, dict):
-        return None
-
-    version = str(raw.get("version", raw.get("Version", metadata.get("version", ""))) or "").strip()
-    changes = raw.get("changelog", raw.get("changes", raw.get("notes", [])))
-    if isinstance(changes, str):
-        changes = [changes]
-    if not version or not isinstance(changes, list) or not changes:
-        return None
-
-    return {
-        "type": "Launcher",
-        "version": version,
-        "date": str(raw.get("date", raw.get("release_date", raw.get("published_at", ""))) or ""),
-        "changelog": [str(item) for item in changes if str(item).strip()],
-        "list": True,
-    }
-
-
-def _q3elite_release_from_version_metadata():
-    """Convert the installed Q3Elite Version.json release into a changelog card."""
-    try:
-        raw = json.loads(Q3ELITE_VERSION_FILE.read_text(encoding="utf-8"))
-    except (OSError, ValueError, TypeError) as error:
-        print(f"[changelog] Could not read Q3Elite Version.json: {error}")
-        return None
-    if not isinstance(raw, dict):
-        return None
-
-    version = str(raw.get("version", raw.get("Version", "")) or "").strip()
-    changes = raw.get("changelog", raw.get("changes", raw.get("notes", [])))
-    if isinstance(changes, str):
-        changes = [changes]
-    if not version or not isinstance(changes, list) or not changes:
-        return None
-
-    return {
-        "type": "Q3Elite",
-        "version": version,
-        "date": str(raw.get("date", raw.get("release_date", raw.get("published_at", ""))) or ""),
-        "update_type": str(raw.get("update_type", "") or ""),
-        "changelog": [str(item) for item in changes if str(item).strip()],
-        "list": True,
-    }
-
-
-def _load_q3elite_changelog_history():
-    try:
-        raw = json.loads(Q3ELITE_CHANGELOG_HISTORY_FILE.read_text(encoding="utf-8"))
-        if isinstance(raw, dict):
-            raw = raw.get("releases", [])
-        if isinstance(raw, list):
-            return [item for item in raw if isinstance(item, dict)]
-    except (OSError, ValueError, TypeError):
-        pass
-    return []
-
-
-def _save_q3elite_changelog_history(entries):
-    """Atomically persist observed Q3Elite releases outside the game install."""
-    try:
-        Q3ELITE_CHANGELOG_HISTORY_FILE.parent.mkdir(parents=True, exist_ok=True)
-        temp = Q3ELITE_CHANGELOG_HISTORY_FILE.with_suffix(".tmp")
-        temp.write_text(json.dumps({"releases": entries}, ensure_ascii=False, indent=2), encoding="utf-8")
-        temp.replace(Q3ELITE_CHANGELOG_HISTORY_FILE)
-    except OSError as error:
-        print(f"[changelog] Could not save Q3Elite release history: {error}")
-
-
-def _load_launcher_changelog_history():
-    try:
-        raw = json.loads(LAUNCHER_CHANGELOG_HISTORY_FILE.read_text(encoding="utf-8"))
-        if isinstance(raw, dict):
-            raw = raw.get("releases", [])
-        if isinstance(raw, list):
-            return [item for item in raw if isinstance(item, dict)]
-    except (OSError, ValueError, TypeError):
-        pass
-    return []
-
-
-def _save_launcher_changelog_history(entries):
-    """Atomically persist observed Launcher_Version releases outside install files."""
-    try:
-        LAUNCHER_CHANGELOG_HISTORY_FILE.parent.mkdir(parents=True, exist_ok=True)
-        temp = LAUNCHER_CHANGELOG_HISTORY_FILE.with_suffix(".tmp")
-        temp.write_text(json.dumps({"releases": entries}, ensure_ascii=False, indent=2), encoding="utf-8")
-        temp.replace(LAUNCHER_CHANGELOG_HISTORY_FILE)
-    except OSError as error:
-        print(f"[changelog] Could not save launcher release history: {error}")
-
-
 def read_changelog_entries():
-    """
-    Merge the manually maintained Changelog.json with every Launcher_Version.json
-    release observed by this installation. Launcher release history is persisted
-    in AppData, so replacing Launcher_Version.json (for example 0.2 -> 0.21)
-    adds a new card without losing the previously observed 0.2 card.
+    """Combine the shared changelog feed with local Launcher_Version.json notes.
+
+    Changelog.json remains the primary source for Q3Elite/other release tracks,
+    but must not suppress the launcher updater's own release metadata.
     """
     entries = []
     if CHANGELOG_FILE.is_file():
@@ -2165,76 +2062,36 @@ def read_changelog_entries():
             if isinstance(raw, dict):
                 raw = raw.get("releases", raw.get("changelog", [raw]))
             if isinstance(raw, list):
-                entries = [item for item in raw if isinstance(item, dict)]
+                entries.extend(item for item in raw if isinstance(item, dict))
         except Exception as error:
             print(f"[changelog] Could not read {CHANGELOG_FILE.name}: {error}")
-    else:
-        # Backwards-compatible launcher-only metadata when no rich feed exists.
-        entries = [item for item in sorted_launcher_releases() if isinstance(item, dict)]
 
-    history = _load_launcher_changelog_history()
-    current = _launcher_release_from_version_metadata()
-    observed = history + ([current] if current else [])
-
-    # Keep one launcher card per version. A manually authored Changelog.json
-    # entry wins over the generated Launcher_Version.json representation.
-    known = set()
-    for item in entries:
-        kind = re.sub(r"[^a-z0-9]", "", str(item.get("type", "")).casefold())
-        version = str(item.get("version", "")).strip().casefold()
-        if kind in {"launcher", "changelog"} and version:
-            known.add(version)
-
-    merged_history = []
-    for item in observed:
-        version = str(item.get("version", "")).strip()
-        key = version.casefold()
-        if not key or key in known:
-            continue
-        known.add(key)
-        merged_history.append(item)
-        entries.append(item)
-
-    if merged_history:
-        # Save all previously observed versions, including the current one.
-        history_by_version = {
-            str(item.get("version", "")).strip().casefold(): item
-            for item in history if str(item.get("version", "")).strip()
-        }
-        for item in merged_history:
-            history_by_version[str(item.get("version", "")).strip().casefold()] = item
-        _save_launcher_changelog_history(list(history_by_version.values()))
-
-    # Q3Elite releases are archived independently from launcher releases.
-    q3elite_history = _load_q3elite_changelog_history()
-    q3elite_current = _q3elite_release_from_version_metadata()
-    q3elite_observed = q3elite_history + ([q3elite_current] if q3elite_current else [])
-    q3elite_known = set()
-    for item in entries:
-        kind = re.sub(r"[^a-z0-9]", "", str(item.get("type", "")).casefold())
-        version = str(item.get("version", "")).strip().casefold()
-        if kind in {"q3elite", "quake3elite"} and version:
-            q3elite_known.add(version)
-
-    q3elite_history_by_version = {
-        str(item.get("version", "")).strip().casefold(): item
-        for item in q3elite_history if str(item.get("version", "")).strip()
-    }
-    q3elite_history_changed = False
-    for item in q3elite_observed:
-        version = str(item.get("version", "")).strip()
-        key = version.casefold()
-        if not key:
-            continue
-        if key not in q3elite_history_by_version:
-            q3elite_history_by_version[key] = item
-            q3elite_history_changed = True
-        if key not in q3elite_known:
+    # Always merge local launcher releases, even when Changelog.json exists.
+    launcher_releases = sorted_launcher_releases()
+    for release in launcher_releases:
+        item = dict(release)
+        item.setdefault("type", "Launcher")
+        if not item.get("changelog"):
+            notes = item.get("changes", item.get("notes", item.get("items", [])))
+            if isinstance(notes, str):
+                notes = [notes]
+            item["changelog"] = list(notes) if isinstance(notes, (list, tuple)) else []
+        if not item.get("text"):
+            item["text"] = str(item.get("summary", item.get("description", "")) or "")
+        # Avoid duplicate launcher releases already copied into Changelog.json.
+        key = (str(item.get("type", "")).casefold(), str(item.get("version", "")).casefold(), str(item.get("date", item.get("release_date", ""))))
+        duplicate = any(
+            str(existing.get("type", "")).casefold() == key[0]
+            and str(existing.get("version", "")).casefold() == key[1]
+            and str(existing.get("date", existing.get("release_date", ""))) == key[2]
+            for existing in entries
+        )
+        if not duplicate:
             entries.append(item)
-            q3elite_known.add(key)
-    if q3elite_history_changed:
-        _save_q3elite_changelog_history(list(q3elite_history_by_version.values()))
 
+    # If neither source provided anything, retain the old metadata fallback.
+    if not entries:
+        entries = [dict(x, type=x.get("type", "Launcher")) for x in launcher_releases]
     return entries
 
 
@@ -2511,6 +2368,7 @@ DEFAULT_SETTINGS = {
     # Logical official server presets enabled on the Servers page. Populated
     # from server_presets.json after that file is parsed.
     "server_preset_ids": [],
+    "server_hybrid_default_migrated": True,
     "show_changelog_media": True,
     "cleanup_screenshots_days": 14,
     "cleanup_demos_days": 14,
@@ -2605,7 +2463,7 @@ SERVER_LOGICAL_PRESET_IDS = [preset_id for preset_id, _name in SERVER_LOGICAL_PR
 # from launcher_settings.json and are not overwritten by this list.
 SERVER_DEFAULT_PRESET_IDS = [
     preset_id for preset_id in (
-        "meat", "freeze", "ctf", "clan_arena", "freeze_eu"
+        "meat", "freeze", "ctf", "clan_arena", "freeze_eu", "q3elite_hybrid"
     )
     if preset_id in set(SERVER_LOGICAL_PRESET_IDS)
 ]
@@ -2893,6 +2751,17 @@ def load_launcher_settings():
                                 data[key] = list(SERVER_DEFAULT_PRESET_IDS)
                         else:
                             data[key] = bool(raw[key])
+
+                # One-time migration: add Q3Elite Hybrid to existing users'
+                # managed server selection. Users can uncheck it afterwards.
+                if not bool(raw.get("server_hybrid_default_migrated", False)):
+                    selected_servers = data.get("server_preset_ids", [])
+                    if not isinstance(selected_servers, list):
+                        selected_servers = []
+                    if "q3elite_hybrid" in set(SERVER_LOGICAL_PRESET_IDS) and "q3elite_hybrid" not in selected_servers:
+                        selected_servers.append("q3elite_hybrid")
+                    data["server_preset_ids"] = selected_servers
+                    data["server_hybrid_default_migrated"] = True
 
                 # Migrate the short-lived combined cleanup setting from v0.09.2.
                 if "cleanup_media_days" in raw:
@@ -3289,7 +3158,12 @@ def update_home_updates(label=None, result=None):
         return
     if label == "osp2be" and isinstance(result, dict):
         new_osp_version = str(result.get("remote_version") or "")
-        if new_osp_version and new_osp_version != previous_osp_version:
+        history = result.get("changelog_releases") or []
+        history_signature = (len(history), str(history[0].get("version", "")) if history and isinstance(history[0], dict) else "")
+        old_signature = getattr(window, "_osp_changelog_history_signature", None)
+        window._osp_changelog_history_signature = history_signature
+        if ((new_osp_version and new_osp_version != previous_osp_version)
+                or (history and history_signature != old_signature)):
             try:
                 window._refresh_changelog_notification()
                 if getattr(window, "changelogPage", None) is not None:
@@ -5407,11 +5281,11 @@ class FullRowHoverDelegate(QtWidgets.QStyledItemDelegate):
         painter.restore()
 
     def paint(self, painter, option, index):
-        # Paint the unified row surface in every cell. _paint_row_surface clips
-        # to option.rect, so each column contributes only its own slice. This is
-        # required for QTreeWidget/QTableWidget row selection: suppressing Qt's
-        # native State_Selected flag below otherwise leaves columns 1..N blank.
-        self._paint_row_surface(painter, option, index)
+        # Keep the original table appearance: column 0 owns the continuous row
+        # surface for standard columns. The custom action delegate paints its
+        # own clipped slice explicitly.
+        if index.column() == 0:
+            self._paint_row_surface(painter, option, index)
         clean = QtWidgets.QStyleOptionViewItem(option)
         # The delegate owns whole-row hover/selection painting.  Removing both
         # native focus and selected flags prevents Qt/Windows from drawing
@@ -6010,21 +5884,21 @@ class ServerPresetDialog(MaterialDialog):
         self.presetBoxes = {}
         duel_ids = ("duel_1", "duel_2", "duel_3")
         duel_set = set(duel_ids)
-        non_duels = [item for item in SERVER_LOGICAL_PRESETS if item[0] not in duel_set]
-        # Keep the familiar two-column list, but reserve one full horizontal
-        # row for Duel #1 / #2 / #3 so the three servers are visually grouped.
+        duels = [item for item in SERVER_LOGICAL_PRESETS if item[0] in duel_set]
+        regular = [item for item in SERVER_LOGICAL_PRESETS if item[0] not in duel_set]
+        # Keep exactly two columns and balance their item counts. Duel servers
+        # stay grouped at the top of column 1; distribute the remaining servers
+        # so the two columns differ by at most one item whenever possible.
         positions = {}
-        top_items = non_duels[:5]
-        tail_items = non_duels[5:]
-        for index, item in enumerate(top_items):
-            positions[item[0]] = (index // 2, index % 2)
-        duel_row = max(1, (len(top_items) + 1) // 2)
-        for column, preset_id in enumerate(duel_ids):
-            if any(item[0] == preset_id for item in SERVER_LOGICAL_PRESETS):
-                positions[preset_id] = (duel_row, column)
-        tail_start_row = duel_row + 1
-        for index, item in enumerate(tail_items):
-            positions[item[0]] = (tail_start_row + index // 2, index % 2)
+        for row, item in enumerate(duels):
+            positions[item[0]] = (row, 0)
+        first_column_capacity = (len(SERVER_LOGICAL_PRESETS) + 1) // 2
+        first_column_regular_count = max(0, first_column_capacity - len(duels))
+        for index, item in enumerate(regular):
+            if index < first_column_regular_count:
+                positions[item[0]] = (len(duels) + index, 0)
+            else:
+                positions[item[0]] = (index - first_column_regular_count, 1)
 
         for preset_id, preset_name in SERVER_LOGICAL_PRESETS:
             box = MaterialCheckBox(preset_name)
@@ -6034,7 +5908,7 @@ class ServerPresetDialog(MaterialDialog):
             self.presetBoxes[preset_id] = box
             row, column = positions[preset_id]
             grid.addWidget(box, row, column)
-        for column in range(3):
+        for column in range(2):
             grid.setColumnStretch(column, 1)
         grid.setRowStretch(max(row for row, _column in positions.values()) + 1, 1)
         scroll.setWidget(list_host)
@@ -6293,14 +6167,11 @@ class AccountAuthDialog(MaterialDialog):
     @staticmethod
     def _repolish(widget):
         try:
-            # Reapply the widget style after changing its Qt objectName.
-            # There is no local/global `polish` flag here; the previous
-            # conditional raised NameError while constructing the auth dialog.
-            style = widget.style()
-            style.unpolish(widget)
-            style.polish(widget)
-            widget.update()
-        except (RuntimeError, AttributeError):
+            if polish:
+                widget.style().unpolish(widget)
+                widget.style().polish(widget)
+                widget.update()
+        except RuntimeError:
             pass
 
     def _set_mode(self, mode):
@@ -13433,20 +13304,29 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
         return b
 
     def _handle_changelog_nav_click(self):
-        """Open Q3News on entry; repeated sidebar clicks toggle the two feeds."""
-        already_open = self.pages.currentWidget() is getattr(self, "changelogPage", None)
-        if not already_open:
+        """Open Q3News on first entry; subsequent sidebar clicks toggle the feeds."""
+        attr = self._page_attr_names.get("changelog", "changelogPage")
+        page_host = getattr(self, attr, None)
+        current = self.pages.currentWidget() if hasattr(self, "pages") else None
+        if current is not page_host:
+            self._changelog_sidebar_toggle_pending = False
             self.show_page("changelog")
-            # Q3News is the first/default view when entering the section.
             return
 
-        page = getattr(self, "changelogPage", None)
-        if page is not None and not callable(getattr(page, "_changelog_set_tab", None)):
-            page = getattr(page, "_q3_real_page", page)
-        callback = getattr(page, "_changelog_set_tab", None) if page is not None else None
-        stack = getattr(page, "_changelog_stack", None) if page is not None else None
-        if callable(callback) and stack is not None:
-            callback(1 if stack.currentIndex() == 0 else 0, mark_read=True)
+        real_page = getattr(page_host, "_q3_real_page", page_host)
+        toggle = getattr(real_page, "_changelog_toggle_tab", None)
+        if callable(toggle):
+            toggle()
+        else:
+            # The first click may still be building the lazy page. Preserve
+            # the next click and apply it once the real tab stack is ready.
+            self._changelog_sidebar_toggle_pending = not getattr(
+                self, "_changelog_sidebar_toggle_pending", False
+            )
+
+        # The sidebar button is checkable. Qt toggles it off before emitting
+        # clicked(); a feed-tab switch must not clear the active section.
+        self.changelogNav.setChecked(True)
 
     def _nav_indicator_rect(self, button):
         inset = max(0, theme_int("layout.nav_indicator_inset", 5))
@@ -15105,7 +14985,7 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
         identity_actions = QtWidgets.QVBoxLayout(); identity_actions.setSpacing(8)
         self.accountPageSignIn = GlowButton("SIGN IN / REGISTER")
         self.accountPageSignIn.setObjectName("applyButton")
-        self.accountPageSignIn.clicked.connect(lambda checked=False: self._on_account_sign_in_clicked())
+        self.accountPageSignIn.clicked.connect(self.open_account_dialog)
         identity_actions.addWidget(self.accountPageSignIn)
         self.accountEditProfileButton = MaterialPushButton("EDIT PROFILE")
         self.accountEditProfileButton.setObjectName("secondaryButton")
@@ -20370,26 +20250,37 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
         feed.setSpacing(12)
 
         entries = read_changelog_entries()
-        # OSP2-BE release notes are sourced from the same website check used by
-        # the updater. Replace any older synthetic/static OSP2-BE entry.
+        # OSP2-BE full release history comes from assets/changelog_be.txt.
+        # The source file is oldest-first; the updater parser returns dated
+        # release cards newest-first. Replace stale synthetic OSP2-BE entries
+        # only when real history has been fetched (or loaded from cache).
         osp_state = home_update_checks.get("osp2be")
-        if isinstance(osp_state, dict) and (osp_state.get("changelog") or osp_state.get("changelog_text")):
-            entries = [
-                item for item in entries
-                if "osp2be" not in re.sub(r"[^a-z0-9]", "", str(item.get("type", "") or "").casefold())
-            ]
-            osp_notes = osp_state.get("changelog") or []
-            if isinstance(osp_notes, str):
-                osp_notes = [osp_notes]
-            entries.append({
-                "type": "OSP2-BE",
-                "version": str(osp_state.get("remote_version") or "?"),
-                "date": str(osp_state.get("changelog_date") or ""),
-                "text": str(osp_state.get("changelog_summary") or "Latest OSP2-BE update"),
-                "changelog": list(osp_notes),
-                "link": str(osp_state.get("changelog_url") or "https://osp2.q3a.space/en/index.html"),
-                "list": True,
-            })
+        if isinstance(osp_state, dict):
+            osp_history = osp_state.get("changelog_releases") or []
+            if isinstance(osp_history, list) and osp_history:
+                entries = [
+                    item for item in entries
+                    if "osp2be" not in re.sub(r"[^a-z0-9]", "", str(item.get("type", "") or "").casefold())
+                ]
+                entries.extend(item for item in osp_history if isinstance(item, dict))
+            elif osp_state.get("changelog") or osp_state.get("changelog_text"):
+                # Compatibility fallback for older updater modules/cache files.
+                entries = [
+                    item for item in entries
+                    if "osp2be" not in re.sub(r"[^a-z0-9]", "", str(item.get("type", "") or "").casefold())
+                ]
+                osp_notes = osp_state.get("changelog") or []
+                if isinstance(osp_notes, str):
+                    osp_notes = [osp_notes]
+                entries.append({
+                    "type": "OSP2-BE",
+                    "version": str(osp_state.get("remote_version") or "?"),
+                    "date": str(osp_state.get("changelog_date") or ""),
+                    "text": str(osp_state.get("changelog_summary") or "Latest OSP2-BE update"),
+                    "changelog": list(osp_notes),
+                    "link": str(osp_state.get("changelog_url") or "https://osp2.q3a.space/en/index.html"),
+                    "list": True,
+                })
         if entries:
             from datetime import datetime
             def _key(item):
@@ -20549,8 +20440,20 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
             elif index == 1:
                 self._mark_changelog_read()
 
-        changelog_tab.clicked.connect(lambda _checked=False: set_tab(1))
-        news_tab.clicked.connect(lambda _checked=False: set_tab(0, mark_read=True))
+        def toggle_tab():
+            set_tab(1 if stack.currentIndex() == 0 else 0, mark_read=True)
+
+        page._changelog_toggle_tab = toggle_tab
+        if getattr(self, "_changelog_sidebar_toggle_pending", False):
+            self._changelog_sidebar_toggle_pending = False
+            QtCore.QTimer.singleShot(0, toggle_tab)
+
+        # Switch the stacked page on mouse press rather than waiting for the
+        # QPushButton clicked signal (release). This keeps the two feed tabs
+        # responsive even when the button is embedded above the scroll areas.
+        # set_tab() is idempotent, so repeated presses do not duplicate work.
+        changelog_tab.pressed.connect(lambda: set_tab(1))
+        news_tab.pressed.connect(lambda: set_tab(0, mark_read=True))
         news_load.clicked.connect(lambda _checked=False: self._load_q3news_page(page, initial=False))
 
         def news_scroll_changed(value):
@@ -20570,12 +20473,21 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
 
         news_scroll.verticalScrollBar().rangeChanged.connect(q3news_range_changed)
 
-        def q3news_user_scroll(value):
-            bar = news_scroll.verticalScrollBar()
-            if value < bar.maximum() - 24:
-                page._q3news_follow_latest = False
+        def q3news_user_scroll_action(_action):
+            # valueChanged also fires for some scrollbar/layout adjustments.
+            # Treat only an actual scrollbar action (wheel, page/line step,
+            # or thumb drag) as user intent, then inspect the settled position.
+            def update_follow_state():
+                bar = news_scroll.verticalScrollBar()
+                page._q3news_follow_latest = (
+                    bar.value() >= bar.maximum() - 24
+                )
 
-        news_scroll.verticalScrollBar().valueChanged.connect(q3news_user_scroll)
+            QtCore.QTimer.singleShot(0, update_follow_state)
+
+        news_scroll.verticalScrollBar().actionTriggered.connect(
+            q3news_user_scroll_action
+        )
         page._q3news_follow_latest_to_bottom = follow_q3news_tail
         set_tab(0, mark_read=False)
         self._refresh_changelog_notification()
@@ -20892,6 +20804,15 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
 
         # Global launcher navigation. Text-entry widgets keep ordinary Q/E
         # typing; modal dialogs also retain their own keyboard/mouse semantics.
+        # A QApplication event filter can observe a physical key press while
+        # focus is being transferred between widgets. Keep a press latch until
+        # KeyRelease so one physical Q/E press can never navigate twice.
+        if event_type == QtCore.QEvent.Type.KeyRelease:
+            if event.key() in (QtCore.Qt.Key.Key_Q, QtCore.Qt.Key.Key_E):
+                pressed = getattr(self, "_q3_navigation_keys_down", None)
+                if pressed is not None:
+                    pressed.discard(event.key())
+
         if QtWidgets.QApplication.activeModalWidget() is None:
             if event_type == QtCore.QEvent.Type.KeyPress:
                 if (
@@ -20899,6 +20820,14 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
                     and event.modifiers() == QtCore.Qt.KeyboardModifier.NoModifier
                     and not self._navigation_input_blocked()
                 ):
+                    if event.key() in (QtCore.Qt.Key.Key_Q, QtCore.Qt.Key.Key_E):
+                        pressed = getattr(self, "_q3_navigation_keys_down", None)
+                        if pressed is None:
+                            pressed = self._q3_navigation_keys_down = set()
+                        if event.key() in pressed:
+                            event.accept()
+                            return True
+                        pressed.add(event.key())
                     # SERVERS uses Left/Right as the keyboard equivalent of
                     # the visible carousel arrow buttons. Keep text fields and
                     # modal dialogs untouched.
@@ -21015,6 +20944,21 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
         return isinstance(focus, blocked_types)
 
     def _current_page_name(self):
+        # The checked state of sidebar buttons is presentation state, not the
+        # source of truth for navigation. Checkable buttons can briefly toggle
+        # during repeated clicks (notably Changelogs, which also switches its
+        # inner Q3News/CHANGELOG tab). Resolve the active section from the
+        # stacked widget so Q/E always move exactly one section from the page
+        # that is actually visible.
+        pages = getattr(self, "pages", None)
+        current_widget = pages.currentWidget() if pages is not None else None
+        if current_widget is not None:
+            for page in NAV_PAGE_ORDER:
+                attr = self._page_attr_names.get(page, f"{page}Page")
+                if current_widget is getattr(self, attr, None):
+                    return page
+
+        # Fallback for startup states before the stacked page is available.
         for page in NAV_PAGE_ORDER:
             button = getattr(self, {
                 "home": "homeNav",
@@ -21057,13 +21001,30 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
         return True
 
     def _finish_deferred_page_navigation(self, page):
+        # A lazy-page build is allowed to finish in the background, but it must
+        # never steal focus/navigation back from a page the user selected in
+        # the meantime (for example, pressing Q immediately after opening
+        # Changelogs). Keep the host identity stable: V4 mounts the real page
+        # inside the original placeholder widget.
+        attr = self._page_attr_names.get(page, f"{page}Page")
+        host = getattr(self, attr, None)
+        was_current_when_scheduled = (
+            host is not None and self.pages.currentWidget() is host
+        )
         try:
             self._ensure_page_built(page)
         except Exception as error:
             print(f"[ui] Could not build {page} page: {error}")
             traceback.print_exc()
             return
-        self.show_page(page)
+
+        # Re-check after construction as well. If navigation moved elsewhere,
+        # do not call show_page(): that would append/restore the stale section
+        # and make the first Q/E press appear to skip an extra section.
+        if (was_current_when_scheduled
+                and host is not None
+                and self.pages.currentWidget() is host):
+            self.show_page(page)
 
     def show_page(self, page):
         _q3_nav_started = time.perf_counter()
@@ -21794,9 +21755,7 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
         self._populate_account_page()
         busy = self.accountWorker is not None and self.accountWorker.isRunning()
         if hasattr(self, "accountPageSignIn"):
-            # Keep the entry point clickable even when the backend is missing or its
-            # in-memory config is stale. The click handler can recover/reload it.
-            self.accountPageSignIn.setEnabled(not busy)
+            self.accountPageSignIn.setEnabled(configured and not busy)
 
     def _set_account_busy(self, busy, text=""):
         if text:
@@ -22021,44 +21980,11 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
             self._account_sync_after_worker = False
             QtCore.QTimer.singleShot(80, self.sync_account_now)
 
-    def _on_account_sign_in_clicked(self):
-        """Account-page entry point with visible recovery and exception handling."""
-        try:
-            # Repair may have replaced backend.json after AccountManager was
-            # constructed. Always refresh the in-memory config from disk first.
-            if not self.accountManager.reload_backend_config():
-                self.accountManager.ensure_backend_config(force=True)
-                self.accountManager.reload_backend_config()
-            self._refresh_account_ui()
-            self.open_account_dialog()
-        except Exception as error:
-            detail = f"Could not open Q3Elite sign-in: {type(error).__name__}: {error}"
-            print(f"[account] Sign-in button failed: {detail}")
-            self._refresh_account_ui(detail)
-            QtWidgets.QMessageBox.warning(self, "Q3Elite Account", detail)
-
     def open_account_dialog(self, *, initial_email="", initial_mode="login"):
         if not self.accountManager.configured:
-            try:
-                self.accountManager.ensure_backend_config()
-            except Exception as error:
-                detail = f"Could not restore Q3Elite Cloud configuration: {error}"
-                self._refresh_account_ui(detail)
-                try:
-                    QtWidgets.QMessageBox.warning(self, "Q3Elite Account", detail)
-                except Exception:
-                    pass
-                return
-        if not self.accountManager.configured:
-            detail = (
-                "Q3Elite Cloud is not configured: "
-                f"{getattr(self.accountManager, 'config_status', 'unknown configuration error')}."
+            self._refresh_account_ui(
+                "Q3Elite Cloud is not configured yet. Add Launcher/settings/backend.json first."
             )
-            self._refresh_account_ui(detail)
-            try:
-                QtWidgets.QMessageBox.warning(self, "Q3Elite Account", detail)
-            except Exception:
-                pass
             return
         dialog = AccountAuthDialog(self, initial_email=initial_email, initial_mode=initial_mode)
         if dialog.exec() != QtWidgets.QDialog.DialogCode.Accepted:
@@ -22877,42 +22803,12 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
             return
         self._repair_running = True
         self.repairLauncherButton.setEnabled(False)
-        self.settingsMessage.setText("Checking all Launcher files (SHA-256)...")
+        self.settingsMessage.setText("Checking Launcher files...")
         QtWidgets.QApplication.processEvents()
         try:
-            backend_recovered = False
-            # Manual Repair is intentionally independent of the automatic-update
-            # preference. Refresh the public backend config from origin every time
-            # Repair is requested, even when the local file exists but is stale.
-            try:
-                backend_recovered = bool(self.accountManager.ensure_backend_config(force=True))
-                if not backend_recovered or not self.accountManager.reload_backend_config():
-                    raise RuntimeError(
-                        "GitHub returned no usable backend configuration. "
-                        "Check the network connection and try Repair again."
-                    )
-                # Account controls may have been disabled during startup when
-                # backend.json was missing. Re-evaluate visibility/enabled state
-                # immediately after the configuration is restored.
-                self._account_message = ""
-                self._refresh_account_ui("Q3Elite Cloud configuration restored. You can sign in now.")
-                if backend_recovered:
-                    try:
-                        self.supportManager = _q3_profile_component(
-                            "support_manager", lambda: SupportManager(LAUNCHER_DIR, LAUNCHER_DATA_DIR)
-                        )
-                    except Exception as support_error:
-                        print(f"[repair] Support manager refresh skipped: {support_error}")
-            except Exception as backend_error:
-                print(f"[repair] Backend config refresh failed: {backend_error}")
-                self.settingsMessage.setText(f"Backend config refresh failed: {backend_error}")
-                return
             repair_info = check_launcher_repair()
             if not repair_info:
-                if backend_recovered:
-                    self.settingsMessage.setText("Backend configuration refreshed. Launcher files are otherwise OK.")
-                else:
-                    self.settingsMessage.setText("Backend configuration refreshed. Launcher files are OK.")
+                self.settingsMessage.setText("Launcher files are OK. No repair needed.")
                 return
             self.settingsMessage.setText("Repairing Launcher files...")
             QtWidgets.QApplication.processEvents()

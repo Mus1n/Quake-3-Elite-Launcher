@@ -205,5 +205,16 @@
             "en"
         ],
         "route_label": "EU"
+    },
+    {
+        "preset_id": "q3elite_hybrid",
+        "name": "Q3Elite Hybrid",
+        "address": "172.104.253.108:27961",
+        "regions": [
+            "en",
+            "ru"
+        ],
+        "route_label": "EU/RU Proxy",
+        "shared": true
     }
 ]

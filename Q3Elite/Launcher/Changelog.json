@@ -1,5 +1,9 @@
 [
     {
+        "type": "OSP2-BE",
+        "version": "1.10c-beta2"
+    },
+    {
         "type": "Quake 3 Elite",
         "version": "1.19",
         "date": "2026-08-16",

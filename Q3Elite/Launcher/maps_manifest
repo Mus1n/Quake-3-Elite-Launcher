@@ -1199,6 +1199,24 @@
         }
       ]
     },
+    "baseq3/mods/baseq3/ospdm10.pk3": {
+      "signature": {
+        "size": 2075052,
+        "mtime_ns": 1794865321354912100
+      },
+      "maps": [
+        {
+          "map": "ospdm10",
+          "name": "Apologie",
+          "pak": "ospdm10.pk3",
+          "pak_path": "baseq3/mods/baseq3/ospdm10.pk3",
+          "pak_size": 2075052,
+          "location": "Downloaded",
+          "gametype": "FFA / Duel",
+          "levelshot": "levelshots/ospdm10.jpg"
+        }
+      ]
+    },
     "baseq3/mods/baseq3/ospdm7.pk3": {
       "signature": {
         "size": 652495,
@@ -1214,6 +1232,24 @@
           "location": "Downloaded",
           "gametype": "FFA / Duel",
           "levelshot": "levelshots/ospdm7.jpg"
+        }
+      ]
+    },
+    "baseq3/mods/baseq3/ospdm8.pk3": {
+      "signature": {
+        "size": 1226072,
+        "mtime_ns": 1794864822159651000
+      },
+      "maps": [
+        {
+          "map": "ospdm8",
+          "name": "The Chastity Belt Duel (Orange remix)",
+          "pak": "ospdm8.pk3",
+          "pak_path": "baseq3/mods/baseq3/ospdm8.pk3",
+          "pak_size": 1226072,
+          "location": "Downloaded",
+          "gametype": "FFA / TDM / Duel",
+          "levelshot": "levelshots/ospdm8.jpg"
         }
       ]
     },
