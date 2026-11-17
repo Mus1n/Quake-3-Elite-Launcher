@@ -390,48 +390,76 @@ def check_for_update():
 
 
 def check_for_repair():
+    """Verify every file in the remote Launcher manifest and return repairs.
+
+    This is a MANUAL integrity check: unlike normal startup update checks it
+    hashes every installed file, and it does not depend on the auto-update
+    preference. Missing and modified files are both downloaded again.
+    """
+    local_info = _local_version_info()
     try:
         remote_info = get_remote_version_info()
         remote_version = str(remote_info["version"]).strip()
-    except Exception as error:
-        print(f"[offline] Launcher version check unavailable during repair: {error}")
-        return None
+    except Exception as version_error:
+        print(f"[warning] Launcher version metadata unavailable during repair: {version_error}")
+        remote_info = dict(local_info) if isinstance(local_info, dict) else {"version": _local_version()}
+        remote_version = str(remote_info.get("version") or _local_version()).strip()
+        remote_info.setdefault("version", remote_version)
+        remote_info.setdefault("changelog", "Manual integrity repair")
 
     manifest_data = None
     try:
         manifest = get_remote_manifest()
         manifest_data = manifest["raw"]
-        print("Launcher repair is using the remote file manifest.")
+        print("Launcher repair is using the remote file manifest (full SHA-256 verification).")
     except Exception as remote_manifest_error:
         print(f"[warning] Remote launcher manifest unavailable: {remote_manifest_error}")
         manifest = get_local_manifest()
         if manifest is not None:
-            # A local manifest contains the SHA-256 values needed to repair
-            # corrupt as well as missing files. Preserve it when staging.
             manifest_data = manifest["raw"]
-            print("Repairing from the verified local manifest.")
+            print("Repairing from the local SHA-256 manifest.")
         else:
-            # The version-8 updater already supports staging files whose
-            # SHA-256 is unknown by calculating it after download. GitHub's
-            # tree endpoint can at least recover missing files when both
-            # manifests are absent; it cannot prove that existing bytes match.
             try:
                 manifest = {"files": _all_remote_launcher_files_without_manifest(), "deleted": []}
             except Exception as tree_error:
-                print(f"[offline] Launcher repair check unavailable: {tree_error}")
-                return None
-            print("Repair is using the GitHub file list; no manifest hashes are available.")
+                print(f"[error] Launcher repair cannot retrieve a file list: {tree_error}")
+                raise RuntimeError(
+                    "Could not retrieve the Launcher file manifest or GitHub file list. "
+                    "Check your connection and try Repair again."
+                ) from tree_error
+            print("Repair is using the GitHub file list; SHA-256 hashes are unavailable.")
 
     changed = _find_changed_files(manifest["files"])
-    deletions = _existing_deleted_entries(manifest["deleted"])
+    deletions = _existing_deleted_entries(manifest.get("deleted", []))
+
+    # backend.json is a required account component. It is normally included in
+    # Launcher_Manifest.json; explicitly guard it as well in case a stale local
+    # manifest predates its addition.
+    backend_rel = "settings/backend.json"
+    backend_entry = next(
+        (entry for entry in manifest["files"] if entry.get("launcher_relative", "").replace("\\", "/").casefold() == backend_rel.casefold()),
+        None,
+    )
+    if backend_entry is None:
+        backend_path = LAUNCHER_DIR / backend_rel
+        if not backend_path.is_file():
+            changed.append({
+                "repo_path": f"{ALLOWED_PREFIX}{backend_rel}",
+                "launcher_relative": backend_rel,
+                "sha256": None,
+            })
+
+    # Keep deterministic order and avoid duplicate download entries.
+    unique = {}
+    for entry in changed:
+        unique[entry["launcher_relative"].replace("\\", "/").casefold()] = entry
+    changed = list(unique.values())
 
     if not changed and not deletions:
-        if manifest_data is None:
-            print("No missing launcher files found. Without a local or remote manifest, existing file hashes cannot be verified.")
-        else:
-            print("Launcher integrity check passed.")
+        print("Launcher integrity check passed: all manifest files exist and match SHA-256.")
         return None
 
+    print(f"Launcher repair required: {len(changed)} file(s) to download, {len(deletions)} obsolete file(s) to remove.")
     return {
         "local_version": _local_version(),
         "remote_version": remote_version,

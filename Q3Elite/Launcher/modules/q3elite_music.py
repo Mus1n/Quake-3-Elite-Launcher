@@ -23,6 +23,7 @@ import os
 import zipfile
 
 import pcloud_q3elite as pcloud
+import network_proxy
 
 GAME_ROOT = pcloud.ROOT
 LOCAL_ROOT = (

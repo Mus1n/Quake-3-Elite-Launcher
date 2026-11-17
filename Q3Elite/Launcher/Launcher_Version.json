@@ -1,7 +1,22 @@
 {
-    "version": "0.1",
-    "date": "2026-10-11",
+    "version": "0.2",
+    "date": "2026-11-17",
     "changelog": [
-        "Alpha buld, new features, login system"
+        "Q3Elite Launcher v0.2 — Performance & Feature Update",
+        "This release focuses on performance improvements, stability, and expanding the launcher's functionality.",
+        "Optimized UI rendering and reduced unnecessary widget updates.",
+        "Improved loading times when opening sections with large amounts of data.",
+        "Implemented image caching to avoid repeatedly downloading and decoding assets.",
+        "Optimized levelshot loading for Servers, Maps, and Demos.",
+        "Improved table construction and data processing.",
+        "Enhanced screenshot browsing with native 16:9 image presentation.",
+        "Added smoother navigation and improved interaction responsiveness.",
+        "Improved Home section image carousel with automatic scrolling and transitions.",
+        "Enhanced Telegram changelog rendering and custom emoji support.",
+        "Refined audio handling to reduce unnecessary processing during rapid navigation.",
+        "Improved account management and backend configuration recovery.",
+        "Enhanced Repair functionality to detect and restore missing or corrupted launcher files.",
+        "Various UI refinements, bug fixes, and stability improvements.",
+        "A more responsive, polished, and reliable Q3Elite Launcher experience."
     ]
 }

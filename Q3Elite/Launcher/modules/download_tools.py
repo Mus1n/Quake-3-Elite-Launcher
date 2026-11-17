@@ -14,6 +14,7 @@ import http.client
 import socket
 from math import floor
 from pathlib import Path
+import network_proxy
 
 # Backend paths. This module intentionally has no GUI dependency.
 APPDATA_DIR = Path(os.environ.get("APPDATA", Path.home() / "AppData" / "Roaming"))
@@ -115,7 +116,7 @@ def _remote_size(file_url, headers, timeout_value):
             headers=headers,
             method="HEAD"
         )
-        with urllib.request.urlopen(req, timeout=timeout_value) as response:
+        with network_proxy.open_url(req, timeout=timeout_value) as response:
             value = response.headers.get("Content-Length")
             if value is not None:
                 return int(value)
@@ -323,7 +324,7 @@ def downloader(
         )
 
         try:
-            with urllib.request.urlopen(
+            with network_proxy.open_url(
                 request,
                 timeout=timeout_value
             ) as response:

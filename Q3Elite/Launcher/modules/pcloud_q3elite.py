@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import argparse, hashlib, json, os, time, urllib.error, urllib.parse, urllib.request
 from pathlib import Path, PurePosixPath
+import network_proxy
 
 API="https://eapi.pcloud.com"
 CORE="Quake 3 Arena/Quake 3 Elite"
@@ -58,7 +59,7 @@ def sha(path):
 def api(name, **params):
     url=f"{API}/{name}?"+urllib.parse.urlencode(params)
     req=urllib.request.Request(url,headers={"User-Agent":UA})
-    with urllib.request.urlopen(req,timeout=TIMEOUT) as r:
+    with network_proxy.open_url(req,timeout=TIMEOUT) as r:
         d=json.loads(r.read().decode())
     if d.get("result",0): raise RuntimeError(f"pCloud {d.get('result')}: {d.get('error')}")
     return d
@@ -214,7 +215,7 @@ def download(info,dest,want):
     part=dest.with_name(dest.name+".part"); part.unlink(missing_ok=True)
     req=urllib.request.Request(info["url"],headers={"User-Agent":UA})
     got=0; start=time.monotonic()
-    with urllib.request.urlopen(req,timeout=TIMEOUT) as r, part.open("wb") as f:
+    with network_proxy.open_url(req,timeout=TIMEOUT) as r, part.open("wb") as f:
         while True:
             b=r.read(1024*1024)
             if not b: break

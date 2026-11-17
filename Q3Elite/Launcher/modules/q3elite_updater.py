@@ -42,6 +42,7 @@ import tempfile
 from pathlib import Path, PurePosixPath
 
 import pcloud_q3elite as pcloud
+import network_proxy
 
 GAME_ROOT = pcloud.ROOT
 Q3ELITE_DIR = GAME_ROOT / "Q3Elite"
@@ -224,7 +225,7 @@ def fetch_remote_json(rel):
         info["url"],
         headers={"User-Agent": pcloud.UA},
     )
-    with urllib.request.urlopen(req, timeout=pcloud.TIMEOUT) as response:
+    with network_proxy.open_url(req, timeout=pcloud.TIMEOUT) as response:
         raw = response.read()
 
     if info.get("size") and len(raw) != int(info["size"]):

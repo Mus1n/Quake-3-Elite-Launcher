@@ -14,6 +14,7 @@ import sqlite3
 import threading
 import time
 import urllib.parse
+import urllib.request
 import webbrowser
 import uuid
 from pathlib import Path
@@ -130,6 +131,11 @@ class AccountManager:
     # ------------------------------------------------------------------
     # Configuration / local identity
     # ------------------------------------------------------------------
+    BACKEND_CONFIG_URL = (
+        "https://raw.githubusercontent.com/Mus1n/Quake-3-Elite-Launcher/"
+        "main/Q3Elite/Launcher/settings/backend.json"
+    )
+
     def _load_backend_config(self) -> dict[str, Any]:
         try:
             if not self.backend_file.is_file():
@@ -139,6 +145,77 @@ class AccountManager:
         except Exception as error:
             print(f"[account] Could not read backend.json: {error}")
             return {}
+
+    def ensure_backend_config(self, *, force: bool = False) -> bool:
+        """Restore/refresh the public Supabase config from GitHub.
+
+        Manual Repair uses force=True and must not depend on Launcher auto-update
+        or the local repair manifest. Raw GitHub is preferred; the Contents API is
+        a fallback for networks that block raw.githubusercontent.com.
+        """
+        self._config = self._load_backend_config()
+        if self.configured and not force:
+            return True
+        if (not force and self.backend_file.is_file()
+                and not bool(self._config.get("enabled", True))):
+            return False
+
+        headers = {
+            "User-Agent": "Q3Elite-Launcher/BackendBootstrap",
+            "Cache-Control": "no-cache, no-store",
+            "Pragma": "no-cache",
+        }
+        errors = []
+        raw_bytes = None
+        request_urls = [
+            self.BACKEND_CONFIG_URL + "?q3elite_repair=1",
+            "https://api.github.com/repos/Mus1n/Quake-3-Elite-Launcher/contents/"
+            "Q3Elite/Launcher/settings/backend.json?ref=main",
+        ]
+        for index, url in enumerate(request_urls):
+            try:
+                request = urllib.request.Request(url, headers=headers)
+                with urllib.request.urlopen(request, timeout=15) as response:
+                    payload = response.read(128 * 1024)
+                if index == 1:
+                    api_payload = json.loads(payload.decode("utf-8-sig"))
+                    if not isinstance(api_payload, dict) or not api_payload.get("content"):
+                        raise AccountError("GitHub Contents API returned no file content.")
+                    encoded = str(api_payload["content"]).replace("\n", "")
+                    raw_bytes = base64.b64decode(encoded, validate=False)
+                else:
+                    raw_bytes = payload
+                break
+            except Exception as error:
+                errors.append(f"{url.split('?')[0]}: {error}")
+
+        if raw_bytes is None:
+            raise AccountError("Could not download backend.json from GitHub. " + " | ".join(errors))
+
+        try:
+            remote = json.loads(raw_bytes.decode("utf-8-sig"))
+        except Exception as error:
+            raise AccountError(f"Downloaded backend.json is not valid JSON: {error}") from error
+        if not isinstance(remote, dict):
+            raise AccountError("Downloaded backend.json is not a JSON object.")
+        url = str(remote.get("url") or "").strip()
+        key = str(remote.get("publishable_key") or remote.get("anon_key") or "").strip()
+        if not url.startswith("https://") or not key or remote.get("enabled", True) is False:
+            raise AccountError("Downloaded backend.json is missing a valid Supabase URL or publishable key.")
+
+        self.backend_file.parent.mkdir(parents=True, exist_ok=True)
+        temporary = self.backend_file.with_name(self.backend_file.name + ".download.tmp")
+        temporary.write_text(json.dumps(remote, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        os.replace(temporary, self.backend_file)
+        self._config = remote
+        self._client = None
+        print(f"[account] Restored/refreshed backend config: {self.backend_file}")
+        return self.configured
+
+    def reload_backend_config(self) -> bool:
+        self._config = self._load_backend_config()
+        self._client = None
+        return self.configured
 
     @property
     def configured(self) -> bool:

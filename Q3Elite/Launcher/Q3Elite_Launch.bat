@@ -1,6 +1,9 @@
 @echo off
 setlocal EnableExtensions
 
+rem Explicitly disable profiling for every normal launch.
+set "Q3ELITE_PROFILE="
+
 rem ============================================================
 rem Q3Elite Launcher - FAST START
 rem Normal startup deliberately avoids Python import checks.

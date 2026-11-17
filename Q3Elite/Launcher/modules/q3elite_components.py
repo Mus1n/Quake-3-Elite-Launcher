@@ -19,7 +19,7 @@ functions later. Components can be added/removed after installation.
 
 from __future__ import annotations
 
-import argparse, hashlib, json, os, shutil, zipfile
+import argparse, hashlib, json, os, shutil, subprocess, zipfile
 from pathlib import Path, PurePosixPath
 
 import pcloud_q3elite as pcloud
@@ -338,6 +338,13 @@ def _zip_member_to_basic_path(member_name):
         return None
 
     rel = norm(str(PurePosixPath(*parts)))
+
+    # FirstLaunch.bat belongs exclusively to Manual Installation.
+    # The Launcher performs the equivalent setup itself, so never copy this
+    # root-level batch file from the bulk Core/Basic archive.
+    if rel.casefold() == "firstlaunch.bat":
+        return None
+
     if rel.casefold().startswith("q3elite/launcher/"):
         # Launcher has its own self-update/cache lifecycle.  A cached Basic ZIP
         # must never downgrade the currently running launcher.
@@ -614,6 +621,99 @@ def _bulk_install_basic_maps(files, control=None, progress_callback=None):
     return _extract_basic_maps_zip(archive, group, control)
 
 
+
+def _create_vulkan_cinematic_shortcut():
+    """Create an optional ROOT-level shortcut for the cinematic Vulkan engine."""
+    engine_bat = ROOT / "Q3Elite" / "Engines" / "Q3Elite (Vulkan) - Cinematic.bat"
+    icon_png = ROOT / "Q3Elite" / "Icons" / "b1.png"
+    icon_ico = ROOT / "Q3Elite" / "Icons" / "b1.ico"
+    shortcut = ROOT / "Q3Elite Vulkan Cinematic.lnk"
+
+    if not engine_bat.is_file():
+        print(f"[shortcut] Cinematic Vulkan batch not found; skipped: {engine_bat}")
+        return False
+
+    script = r"""
+$ErrorActionPreference = 'Stop'
+$target = $env:Q3E_VULKAN_BAT
+$workdir = Split-Path -Parent $target
+$iconPng = $env:Q3E_VULKAN_ICON_PNG
+$iconIco = $env:Q3E_VULKAN_ICON_ICO
+$linkPath = $env:Q3E_VULKAN_LINK
+
+if ((Test-Path -LiteralPath $iconPng) -and -not (Test-Path -LiteralPath $iconIco)) {
+    Add-Type -AssemblyName System.Drawing
+    $source = [System.Drawing.Image]::FromFile($iconPng)
+    try {
+        $sizes = @(16, 24, 32, 48, 64, 128, 256)
+        $frames = New-Object System.Collections.Generic.List[byte[]]
+        foreach ($size in $sizes) {
+            $bmp = New-Object System.Drawing.Bitmap($size, $size, [System.Drawing.Imaging.PixelFormat]::Format32bppArgb)
+            try {
+                $g = [System.Drawing.Graphics]::FromImage($bmp)
+                try {
+                    $g.Clear([System.Drawing.Color]::Transparent)
+                    $g.InterpolationMode = [System.Drawing.Drawing2D.InterpolationMode]::HighQualityBicubic
+                    $g.SmoothingMode = [System.Drawing.Drawing2D.SmoothingMode]::HighQuality
+                    $g.DrawImage($source, 0, 0, $size, $size)
+                } finally { $g.Dispose() }
+                $ms = New-Object System.IO.MemoryStream
+                try { $bmp.Save($ms, [System.Drawing.Imaging.ImageFormat]::Png); $frames.Add($ms.ToArray()) }
+                finally { $ms.Dispose() }
+            } finally { $bmp.Dispose() }
+        }
+    } finally { $source.Dispose() }
+
+    $ms = New-Object System.IO.MemoryStream
+    $bw = New-Object System.IO.BinaryWriter($ms)
+    try {
+        $bw.Write([UInt16]0); $bw.Write([UInt16]1); $bw.Write([UInt16]$sizes.Count)
+        $offset = 6 + 16 * $sizes.Count
+        for ($i = 0; $i -lt $sizes.Count; $i++) {
+            $dim = if ($sizes[$i] -eq 256) { [byte]0 } else { [byte]$sizes[$i] }
+            $frame = $frames[$i]
+            $bw.Write($dim); $bw.Write($dim); $bw.Write([byte]0); $bw.Write([byte]0)
+            $bw.Write([UInt16]1); $bw.Write([UInt16]32)
+            $bw.Write([UInt32]$frame.Length); $bw.Write([UInt32]$offset)
+            $offset += $frame.Length
+        }
+        foreach ($frame in $frames) { $bw.Write($frame) }
+        [IO.File]::WriteAllBytes($iconIco, $ms.ToArray())
+    } finally { $bw.Dispose(); $ms.Dispose() }
+}
+
+$ws = New-Object -ComObject WScript.Shell
+$link = $ws.CreateShortcut($linkPath)
+$link.TargetPath = $target
+$link.WorkingDirectory = $workdir
+if (Test-Path -LiteralPath $iconIco) { $link.IconLocation = $iconIco + ',0' }
+elseif (Test-Path -LiteralPath $iconPng) { Write-Host 'b1.ico was not created; shortcut will use the default icon.' }
+$link.Save()
+"""
+    env = os.environ.copy()
+    env.update({
+        "Q3E_VULKAN_BAT": str(engine_bat),
+        "Q3E_VULKAN_ICON_PNG": str(icon_png),
+        "Q3E_VULKAN_ICON_ICO": str(icon_ico),
+        "Q3E_VULKAN_LINK": str(shortcut),
+    })
+    try:
+        result = subprocess.run(
+            ["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", script],
+            env=env, capture_output=True, text=True, timeout=30,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
+        if result.returncode != 0:
+            detail = (result.stderr or result.stdout or "").strip()
+            print(f"[shortcut] Could not create Vulkan Cinematic shortcut: {detail}")
+            return False
+        print(f"[shortcut] Created: {shortcut}")
+        return True
+    except Exception as error:
+        print(f"[shortcut] Could not create Vulkan Cinematic shortcut: {error}")
+        return False
+
+
 def install_basic(external_maps=False, music_playlist=False, autoexec_update=False,
                   control=None, progress_callback=None):
     control = control or DownloadControl()
@@ -699,6 +799,11 @@ def install_basic(external_maps=False, music_playlist=False, autoexec_update=Fal
 
     atomic_json(LOCAL_MANIFEST, manifest)
     atomic_json(LOCAL_VERSION, version)
+
+    # Core includes the cinematic Vulkan engine; expose its direct launcher
+    # beside the game root after the core payload has been verified.
+    _create_vulkan_cinematic_shortcut()
+
     state = load_state()
     state["basic"] = True
     state["external_maps"] = bool(external_maps)

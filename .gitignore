@@ -47,3 +47,6 @@ Q3Elite.lnk
 # IDE
 .vscode/
 .idea/
+
+# Maps Cache
+Q3Elite/Launcher/maps_manifest
