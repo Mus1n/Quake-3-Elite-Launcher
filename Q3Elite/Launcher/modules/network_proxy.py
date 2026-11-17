@@ -125,8 +125,13 @@ def open_url(request, timeout=30):
     return opener.open(request, timeout=timeout)
 
 
-def test_connection(url: str, username: str = "", password: str = "", timeout: int = 12) -> tuple[bool, str]:
-    # Validate and test without persisting credentials or mutating global urllib state.
+def test_connection(url: str, username: str = "", password: str = "", timeout: int = 15) -> tuple[bool, str]:
+    """Test the configured proxy against pCloud's API, not a generic website.
+
+    getapiserver is a lightweight unauthenticated pCloud API endpoint. A valid
+    JSON response with result == 0 confirms that HTTPS CONNECT through this
+    proxy reached pCloud and that pCloud accepted the request.
+    """
     parsed = urllib.parse.urlsplit(str(url or "").strip())
     if parsed.scheme.lower() not in ("http", "https") or not parsed.hostname or parsed.port is None:
         return False, "Invalid proxy URL. Use http://host:port or https://host:port."
@@ -134,6 +139,7 @@ def test_connection(url: str, username: str = "", password: str = "", timeout: i
         return False, "Proxy URL must contain only scheme, host and port; credentials go in separate fields."
     if password and not username:
         return False, "A proxy password requires a username."
+
     proxy = urllib.parse.urlunsplit((parsed.scheme, parsed.netloc, "", "", ""))
     if username:
         user = urllib.parse.quote(username, safe="")
@@ -142,11 +148,40 @@ def test_connection(url: str, username: str = "", password: str = "", timeout: i
         if ":" in host and not host.startswith("["):
             host = f"[{host}]"
         proxy = f"{parsed.scheme}://{user}:{pwd}@{host}:{parsed.port}"
-    opener = urllib.request.build_opener(urllib.request.ProxyHandler({"http": proxy, "https": proxy}))
+
+    opener = urllib.request.build_opener(
+        urllib.request.ProxyHandler({"http": proxy, "https": proxy})
+    )
+    request = urllib.request.Request(
+        "https://eapi.pcloud.com/getapiserver",
+        headers={
+            "User-Agent": "Q3Elite-Launcher/1.0",
+            "Accept": "application/json",
+        },
+    )
     try:
-        req = urllib.request.Request("https://www.google.com/generate_204", headers={"User-Agent": "Q3Elite-Launcher/1.0"})
-        with opener.open(req, timeout=timeout) as response:
-            code = response.getcode()
-        return (code in (200, 204), f"Proxy connection successful (HTTP {code})." if code in (200, 204) else f"Proxy responded with HTTP {code}.")
+        with opener.open(request, timeout=timeout) as response:
+            status = response.getcode()
+            body = response.read(64 * 1024)
+
+        if status != 200:
+            return False, f"pCloud API returned HTTP {status}."
+
+        try:
+            data = json.loads(body.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            return False, f"Proxy reached pCloud, but its API response was invalid: {exc}"
+
+        if not isinstance(data, dict):
+            return False, "Proxy reached pCloud, but the API returned an unexpected response."
+
+        result = data.get("result")
+        if result == 0:
+            api_host = str(data.get("api") or "pCloud API").strip()
+            return True, f"pCloud connection successful (HTTP 200, API: {api_host})."
+
+        detail = data.get("error") or data.get("message") or f"result={result}"
+        return False, f"Proxy reached pCloud, but pCloud returned an API error: {detail}."
+
     except Exception as exc:
-        return False, f"Proxy connection failed: {exc}"
+        return False, f"pCloud connection through proxy failed: {exc}"

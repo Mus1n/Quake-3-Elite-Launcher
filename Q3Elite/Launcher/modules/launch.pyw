@@ -111,6 +111,12 @@ from ui_theme import ThemeManager
 from obsidian_material import OBSIDIAN_MATERIAL
 
 try:
+    import network_proxy
+except Exception as _network_proxy_import_error:
+    network_proxy = None
+    print(f"[proxy] Network proxy module unavailable: {_network_proxy_import_error}")
+
+try:
     import qtawesome as qta
 except Exception:
     qta = None
@@ -14794,6 +14800,57 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
         svl.addStretch(1)
         grid.addWidget(servers, 1, 1)
 
+        # Network proxy -----------------------------------------------------
+        proxy_card, proxy_l = make_card(
+            "PROXY",
+            "Optional HTTP/HTTPS proxy for Q3Elite network downloads. Credentials are stored encrypted with Windows DPAPI.",
+        )
+        self.proxyEnabledBox = ToggleSwitch("Enable proxy")
+        self.proxyEnabledBox.setObjectName("settingsToggle")
+        proxy_l.addWidget(self.proxyEnabledBox)
+
+        def _proxy_field_row(label_text, widget):
+            row = QtWidgets.QHBoxLayout(); row.setSpacing(10)
+            label = QtWidgets.QLabel(label_text); label.setObjectName("settingsHint")
+            label.setMinimumWidth(105)
+            row.addWidget(label)
+            row.addWidget(widget, 1)
+            proxy_l.addLayout(row)
+
+        self.proxyUrlEdit = QtWidgets.QLineEdit()
+        self.proxyUrlEdit.setObjectName("settingsLineEdit")
+        self.proxyUrlEdit.setPlaceholderText("http://127.0.0.1:8080")
+        _proxy_field_row("Proxy address", self.proxyUrlEdit)
+        self.proxyUsernameEdit = QtWidgets.QLineEdit()
+        self.proxyUsernameEdit.setObjectName("settingsLineEdit")
+        self.proxyUsernameEdit.setPlaceholderText("Optional")
+        _proxy_field_row("Username", self.proxyUsernameEdit)
+        self.proxyPasswordEdit = QtWidgets.QLineEdit()
+        self.proxyPasswordEdit.setObjectName("settingsLineEdit")
+        self.proxyPasswordEdit.setEchoMode(QtWidgets.QLineEdit.EchoMode.Password)
+        self.proxyPasswordEdit.setPlaceholderText("Optional")
+        _proxy_field_row("Password", self.proxyPasswordEdit)
+
+        proxy_actions = QtWidgets.QHBoxLayout(); proxy_actions.setSpacing(8)
+        self.proxyTestButton = MaterialPushButton("TEST CONNECTION")
+        self.proxyTestButton.setObjectName("secondaryButton")
+        self.proxyTestButton.clicked.connect(self.test_network_proxy)
+        proxy_actions.addWidget(self.proxyTestButton)
+        self.proxySaveButton = MaterialPushButton("SAVE PROXY")
+        self.proxySaveButton.setObjectName("secondaryButton")
+        self.proxySaveButton.clicked.connect(self.save_network_proxy)
+        proxy_actions.addWidget(self.proxySaveButton)
+        proxy_actions.addStretch(1)
+        proxy_l.addLayout(proxy_actions)
+        self.proxyStatusLabel = QtWidgets.QLabel("Proxy disabled.")
+        self.proxyStatusLabel.setObjectName("muted")
+        self.proxyStatusLabel.setWordWrap(True)
+        proxy_l.addWidget(self.proxyStatusLabel)
+        self.proxyEnabledBox.toggled.connect(self._set_proxy_fields_enabled)
+        self._set_proxy_fields_enabled(self.proxyEnabledBox.isChecked())
+        grid.addWidget(proxy_card, 2, 0, 1, 2)
+        yield "network_proxy_card"
+
         grid.setColumnStretch(0, 1); grid.setColumnStretch(1, 1)
         _settings_profile_mark("launcher_audio")
         yield "server_and_core_settings"
@@ -21577,6 +21634,58 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
         played = self._play_launcher_sound("notify", force=True)
         return played
 
+    def _set_proxy_fields_enabled(self, enabled):
+        enabled = bool(enabled)
+        for name in ("proxyUrlEdit", "proxyUsernameEdit", "proxyPasswordEdit"):
+            widget = getattr(self, name, None)
+            if widget is not None:
+                widget.setEnabled(enabled)
+        if hasattr(self, "proxyTestButton"):
+            self.proxyTestButton.setEnabled(enabled and network_proxy is not None)
+
+    def test_network_proxy(self):
+        if network_proxy is None:
+            self.proxyStatusLabel.setText("Proxy module is unavailable. Check Launcher/modules/network_proxy.py.")
+            return
+        self.proxyTestButton.setEnabled(False)
+        self.proxyStatusLabel.setText("Testing proxy connection...")
+        QtWidgets.QApplication.processEvents()
+        try:
+            ok, message = network_proxy.test_connection(
+                self.proxyUrlEdit.text(),
+                self.proxyUsernameEdit.text(),
+                self.proxyPasswordEdit.text(),
+            )
+            self.proxyStatusLabel.setText(message)
+            self.proxyStatusLabel.setProperty("error", not bool(ok))
+        except Exception as error:
+            self.proxyStatusLabel.setText(f"Proxy test failed: {error}")
+            self.proxyStatusLabel.setProperty("error", True)
+        finally:
+            self.proxyTestButton.setEnabled(self.proxyEnabledBox.isChecked())
+            self.proxyStatusLabel.style().unpolish(self.proxyStatusLabel)
+            self.proxyStatusLabel.style().polish(self.proxyStatusLabel)
+
+    def save_network_proxy(self):
+        if network_proxy is None:
+            self.proxyStatusLabel.setText("Proxy module is unavailable. Check Launcher/modules/network_proxy.py.")
+            return
+        try:
+            network_proxy.save_settings(
+                self.proxyEnabledBox.isChecked(),
+                self.proxyUrlEdit.text(),
+                self.proxyUsernameEdit.text(),
+                self.proxyPasswordEdit.text(),
+            )
+            state = "enabled" if self.proxyEnabledBox.isChecked() else "disabled"
+            self.proxyStatusLabel.setText(f"Proxy settings saved ({state}).")
+            print(f"[proxy] Settings saved; proxy {state}.")
+        except Exception as error:
+            self.proxyStatusLabel.setText(f"Could not save proxy settings: {error}")
+            self.proxyStatusLabel.setProperty("error", True)
+        self.proxyStatusLabel.style().unpolish(self.proxyStatusLabel)
+        self.proxyStatusLabel.style().polish(self.proxyStatusLabel)
+
     def test_matchmaking_sound(self):
         if not self._play_matchmaking_sound():
             self.settingsMessage.setText(
@@ -21594,6 +21703,19 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
         self.addonMessage.style().polish(self.addonMessage)
 
     def load_settings_ui(self):
+        if network_proxy is not None and hasattr(self, "proxyEnabledBox"):
+            try:
+                proxy_state = network_proxy.load_settings()
+                self.proxyEnabledBox.setChecked(bool(proxy_state.get("enabled", False)))
+                self.proxyUrlEdit.setText(str(proxy_state.get("url") or ""))
+                self.proxyUsernameEdit.setText(str(proxy_state.get("username") or ""))
+                self.proxyPasswordEdit.setText(str(proxy_state.get("password") or ""))
+                self.proxyStatusLabel.setText(
+                    "Proxy enabled." if proxy_state.get("enabled") else "Proxy disabled."
+                )
+                self._set_proxy_fields_enabled(bool(proxy_state.get("enabled", False)))
+            except Exception as error:
+                self.proxyStatusLabel.setText(f"Could not load proxy settings: {error}")
         self.autoQ3Box.setChecked(launcher_settings.get("auto_update_q3elite", False))
         self.autoLauncherBox.setChecked(launcher_settings.get("auto_update_launcher", False))
         self.autoOspBox.setChecked(launcher_settings.get("auto_update_osp", True))
