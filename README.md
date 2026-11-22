@@ -3,23 +3,20 @@
 # Quake 3 Elite Launcher
 
 <p align="center">
-  <img src="https://media.moddb.com/images/members/5/4746/4745436/profile/Launcher.png" alt="Quake 3 Elite Launcher" width="640">
+  <img src="https://media.moddb.com/images/members/5/4746/4745436/profile/Launcher.png" alt="Launcher" width="640">
 </p>
 
 <p align="center">
-  <a href="https://raw.githubusercontent.com/Mus1n/Quake-3-Elite-Launcher/main/Q3Elite%20Installer.exe">
-    <strong>⬇️ Quake 3 Elite Launcher — Download Now!</strong>
-  </a>
+  <h2><a href="https://raw.githubusercontent.com/Mus1n/Quake-3-Elite-Launcher/main/Q3Elite%20Installer.exe">⬇️ Quake 3 Elite Launcher — Download Now!</a></h2>
 </p>
+
+No more manual downloads, archive extraction or hunting for updates. Everything you need is managed in one place. A dedicated launcher for Quake 3 Elite, designed to make installing, updating and managing your Q3 experience easier than ever. Forget manually downloading files, unpacking archives and keeping everything up to date. The launcher handles the installation process for you.
 
 <p align="center">
-  <strong>A dedicated launcher for Quake 3 Elite.</strong><br>
-  Install, update and manage your Quake 3 experience from one place.
+  <img src="https://media.moddb.com/images/members/5/4746/4745436/profile/launcher-light.png" alt="Launcher Light" width="600">
+  <br>
+  <strong>❯❯❯ <em>Light Paper Theme</em> ▼</strong>
 </p>
-
-No more manual downloads, archive extraction or hunting for updates. Everything you need is managed in one place.
-
-**Quake 3 Elite Launcher** is designed to make installing, updating and managing your Quake 3 experience easier than ever. Forget manually downloading files, unpacking archives and keeping everything up to date. The launcher handles the installation process for you.
 
 ## ✨ Main Features
 
@@ -37,7 +34,7 @@ No more manual downloads, archive extraction or hunting for updates. Everything 
 
 > **04 / Player Content Management**
 >
-> → Access your demos, screenshots, configuration files and custom maps directly from the launcher. 📂
+> → Access your demos, screenshots and configuration files directly from the launcher. 📂
 
 > **05 / Integrated Q3Elite Experience**
 >
@@ -47,47 +44,45 @@ No more manual downloads, archive extraction or hunting for updates. Everything 
 >
 > → Choose between two visual themes: Light Paper and Dark Steel. 🎨
 
-## 🎨 Interface & Themes
-
 <p align="center">
-  <img src="https://media.moddb.com/images/members/5/4746/4745436/profile/launcher-light.png" alt="Light Paper Theme" width="600">
+  <img src="https://media.moddb.com/images/members/5/4746/4745436/profile/launcher-dark.png" alt="Launcher Dark" width="600">
   <br>
-  <strong>❯❯❯ Light Paper Theme ▼</strong>
-</p>
-
-<p align="center">
-  <img src="https://media.moddb.com/images/members/5/4746/4745436/profile/launcher-dark.png" alt="Dark Steel Theme" width="600">
-  <br>
-  <strong>❯❯❯ Dark Steel Theme ▼</strong>
+  <strong>❯❯❯ <em>Dark Steel Theme</em> ▼</strong>
 </p>
 
 ## 🖥️ Recommended System Requirements
 
-| Component | Requirement |
-|---|---|
-| OS | Windows 10 or newer |
-| CPU | Intel Core i5-4440 / AMD A5-1600F |
-| GPU | NVIDIA GTX 1060 (for 2560×1440 at 250 FPS) |
-| RAM | 2 GB |
-| Storage | 10 GB available space |
+- **OS:** Windows 10 or newer
+- **CPU:** Intel Core i5-4440 / AMD A5-1600F
+- **GPU:** NVIDIA GTX 1060 (for 2560×1440 at 250 FPS)
+- **RAM:** 2 GB
+- **Storage:** 10 GB available space
 
 *These are recommended specifications for the complete Q3Elite experience, not minimum requirements for running the launcher.*
 
 ## 🎮 About Quake 3 Elite
 
 <p align="center">
-  <a href="https://mus1n.github.io/">
-    <img src="https://media.moddb.com/images/members/5/4746/4745436/profile/Q3Elite_Logo_rounded.png" alt="Quake 3 Elite Logo" width="300">
-  </a>
+  <h2><a href="https://mus1n.github.io/">❯❯❯ Quake 3 Elite ❮❮❮</a></h2>
 </p>
 
 <p align="center">
-  <strong>❯❯❯ <a href="https://mus1n.github.io/">QUAKE 3 ELITE</a> ❮❮❮</strong>
+  <a href="https://www.youtube.com/watch?v=pRJ54B-83Ik">
+    <img src="https://img.youtube.com/vi/pRJ54B-83Ik/0.jpg" alt="Q3Elite SuperHUD Showcase" width="560">
+  </a>
+  <br>
+  <strong>❯❯❯ <em>New SuperHUD</em> ▼</strong>
 </p>
 
 **Q3Elite** is a modern, ready-to-play Quake 3 compilation combining community-developed engine, gameplay and graphical improvements into one package.
 
 Instead of searching for a client, mod, maps, HUDs, textures and configs separately, Q3Elite brings everything together in a single setup.
+
+<p align="center">
+  <img src="https://media.moddb.com/images/members/5/4746/4745436/profile/Q3Elite_Logo_rounded.png" alt="Q3Elite Logo" width="420">
+  <br>
+  <strong>❯❯❯ <em>Quake 3 Elite Logo</em> ▼</strong>
+</p>
 
 ### ⚙️ What's Included?
 
@@ -98,7 +93,15 @@ Instead of searching for a client, mod, maps, HUDs, textures and configs separat
 - **Updated Maps, Shaders and HQ Liquids**
 - **Optimized Configs** for high-FPS / 144Hz+ setups.
 - **High Graphics & Gaming Graphics** presets.
-- **Preconfigured Server List** with multiple game modes and server categories.
+- **Preconfigured Server List**
+
+<p align="center">
+  <a href="https://www.youtube.com/watch?v=wwqtZM127Qo">
+    <img src="https://img.youtube.com/vi/wwqtZM127Qo/0.jpg" alt="Q3Elite Enemy Models Showcase" width="560">
+  </a>
+  <br>
+  <strong>❯❯❯ <em>Enemy Models</em> ▼</strong>
+</p>
 
 ### ❯❯❯ Why Q3Elite?
 
@@ -116,43 +119,24 @@ An easy way to get into modern Quake 3 without spending hours searching for file
 
 A convenient way to experience what the Quake 3 community has developed over the years.
 
-### Showcase
-
 <p align="center">
-  <a href="https://www.youtube.com/watch?v=pRJ54B-83Ik">
-    <img src="https://img.youtube.com/vi/pRJ54B-83Ik/maxresdefault.jpg" alt="Q3Elite SuperHUD Showcase" width="560">
-  </a>
+  <img src="https://media.moddb.com/images/members/5/4746/4745436/profile/Binds_rounded.png" alt="Default Binds" width="600">
   <br>
-  <strong>❯❯❯ SuperHUD Showcase ▼</strong>
+  <strong>❯❯❯ <em>Default Binds</em> ▼</strong>
 </p>
 
-<p align="center">
-  <a href="https://www.youtube.com/watch?v=wwqtZM127Qo">
-    <img src="https://img.youtube.com/vi/wwqtZM127Qo/maxresdefault.jpg" alt="Q3Elite Enemy Models Showcase" width="560">
-  </a>
-  <br>
-  <strong>❯❯❯ Enemy Models Showcase ▼</strong>
-</p>
-
-<p align="center">
-  <img src="https://media.moddb.com/images/members/5/4746/4745436/profile/Binds_rounded.png" alt="Q3Elite Default Binds" width="600">
-  <br>
-  <strong>❯❯❯ Default Binds ▼</strong>
-</p>
-
-## ⬇️ Ready to Play?
+## 🎮 Ready to Play?
 
 <p align="center">
   <a href="https://raw.githubusercontent.com/Mus1n/Quake-3-Elite-Launcher/main/Q3Elite%20Installer.exe">
-    <strong>⬇️ DOWNLOAD Q3ELITE LAUNCHER</strong>
+    <strong>⬇️ DOWNLOAD Q3ELITE</strong>
   </a>
 </p>
 
 <p align="center">
-  <a href="https://mus1n.github.io/">Website</a> ·
-  <a href="https://www.youtube.com/@xMus1n">YouTube</a> ·
-  <a href="https://t.me/s/Q3News">Q3News on Telegram</a> ·
-  <a href="https://t.me/Mus1nQ3">Author</a>
+  <strong>❚ Video:</strong> <a href="https://www.youtube.com/@xMus1n">YouTube</a><br>
+  <strong>❚ Updates:</strong> <a href="https://t.me/s/Q3News">Q3News on Telegram</a><br>
+  <strong>❚ Author:</strong> <a href="https://t.me/Mus1nQ3">///Mus1n</a>
 </p>
 
 <p align="center">
