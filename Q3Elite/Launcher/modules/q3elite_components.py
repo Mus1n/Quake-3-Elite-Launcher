@@ -19,7 +19,7 @@ functions later. Components can be added/removed after installation.
 
 from __future__ import annotations
 
-import argparse, hashlib, json, os, shutil, subprocess, zipfile
+import argparse, hashlib, json, os, shutil, subprocess, sys, zipfile
 from pathlib import Path, PurePosixPath
 
 import pcloud_q3elite as pcloud
@@ -626,19 +626,72 @@ def _bulk_install_basic_maps(files, control=None, progress_callback=None):
 
 
 def _create_vulkan_cinematic_shortcut():
-    """Create an optional ROOT-level shortcut for the cinematic Vulkan engine."""
+    """Create the ROOT-level cinematic shortcut with detached playtime tracking."""
     engine_bat = ROOT / "Q3Elite" / "Engines" / "Q3Elite (Vulkan) - Cinematic.bat"
     icon_png = ROOT / "Q3Elite" / "Icons" / "b1.png"
     icon_ico = ROOT / "Q3Elite" / "Icons" / "b1.ico"
     shortcut = ROOT / "Q3Elite Vulkan Cinematic.lnk"
+    tracked_bat = ROOT / "Q3Elite" / "Engines" / "Q3Elite (Vulkan) - Cinematic - Tracked.bat"
 
     if not engine_bat.is_file():
         print(f"[shortcut] Cinematic Vulkan batch not found; skipped: {engine_bat}")
         return False
 
+    # Keep the original engine BAT untouched (it is manifest-managed). The
+    # generated wrapper starts the same detached tracker used by Launch.pyw,
+    # then delegates all game arguments to the original BAT.
+    tracker = Path(__file__).resolve().with_name("game_session_tracker.py")
+    tracker_python = Path(sys.executable).resolve()
+    if tracker_python.name.casefold() == "python.exe":
+        pythonw = tracker_python.with_name("pythonw.exe")
+        if pythonw.is_file():
+            tracker_python = pythonw
+
+    target = engine_bat
+    if tracker.is_file() and tracker_python.is_file():
+        appdata = Path(os.environ.get("APPDATA", Path.home()))
+        playtime_db = appdata / "Quake 3 Elite" / "Launcher" / "playtime.sqlite3"
+        wrapper = """@echo off
+setlocal
+set "Q3E_TRACKER_PYTHON=__TRACKER_PYTHON__"
+set "Q3E_TRACKER_SCRIPT=__TRACKER_SCRIPT__"
+set "Q3E_TRACKER_DB=__TRACKER_DB__"
+set "Q3E_ENGINE_BAT=__ENGINE_BAT__"
+set "Q3E_IGNORE_PIDS="
+for /f "usebackq delims=" %%P in (`powershell.exe -NoProfile -Command "$p = Get-Process -ErrorAction SilentlyContinue ^| Where-Object { $_.ProcessName -like '*xq3e*' }; if ($p) { ($p ^| ForEach-Object { $_.Id }) -join ',' }"`) do set "Q3E_IGNORE_PIDS=%%P"
+if exist "%Q3E_TRACKER_PYTHON%" if exist "%Q3E_TRACKER_SCRIPT%" (
+    start "" "%Q3E_TRACKER_PYTHON%" "%Q3E_TRACKER_SCRIPT%" --db "%Q3E_TRACKER_DB%" --ignore-pids "%Q3E_IGNORE_PIDS%" --wait-seconds 35 --heartbeat-seconds 60
+)
+call "%Q3E_ENGINE_BAT%" %*
+endlocal
+"""
+        replacements = {
+            "__TRACKER_PYTHON__": str(tracker_python),
+            "__TRACKER_SCRIPT__": str(tracker),
+            "__TRACKER_DB__": str(playtime_db),
+            "__ENGINE_BAT__": str(engine_bat),
+        }
+        for marker, value in replacements.items():
+            wrapper = wrapper.replace(marker, value.replace('"', '""'))
+        try:
+            tracked_bat.parent.mkdir(parents=True, exist_ok=True)
+            tracked_bat.write_text(wrapper, encoding="utf-8", newline="\r\n")
+            target = tracked_bat
+            print(f"[shortcut] Playtime tracking wrapper created: {tracked_bat}")
+        except OSError as error:
+            print(f"[shortcut] Could not write tracking wrapper; using original BAT: {error}")
+    else:
+        missing = []
+        if not tracker.is_file():
+            missing.append(str(tracker))
+        if not tracker_python.is_file():
+            missing.append(str(tracker_python))
+        print("[shortcut] Detached tracker unavailable; shortcut will launch game without tracking: "
+              + ", ".join(missing))
+
     script = r"""
 $ErrorActionPreference = 'Stop'
-$target = $env:Q3E_VULKAN_BAT
+$target = $env:Q3E_VULKAN_TARGET
 $workdir = Split-Path -Parent $target
 $iconPng = $env:Q3E_VULKAN_ICON_PNG
 $iconIco = $env:Q3E_VULKAN_ICON_ICO
@@ -695,7 +748,7 @@ $link.Save()
 """
     env = os.environ.copy()
     env.update({
-        "Q3E_VULKAN_BAT": str(engine_bat),
+        "Q3E_VULKAN_TARGET": str(target),
         "Q3E_VULKAN_ICON_PNG": str(icon_png),
         "Q3E_VULKAN_ICON_ICO": str(icon_ico),
         "Q3E_VULKAN_LINK": str(shortcut),
@@ -710,7 +763,7 @@ $link.Save()
             detail = (result.stderr or result.stdout or "").strip()
             print(f"[shortcut] Could not create Vulkan Cinematic shortcut: {detail}")
             return False
-        print(f"[shortcut] Created: {shortcut}")
+        print(f"[shortcut] Created: {shortcut} -> {target.name}")
         return True
     except Exception as error:
         print(f"[shortcut] Could not create Vulkan Cinematic shortcut: {error}")
