@@ -7,7 +7,7 @@
 </p>
 
 <p align="center">
-  <h2><a href="https://raw.githubusercontent.com/Mus1n/Quake-3-Elite-Launcher/main/Q3Elite%20Installer.exe">⬇️ Quake 3 Elite Launcher — Download Now!</a></h2>
+  <strong><a href="https://raw.githubusercontent.com/Mus1n/Quake-3-Elite-Launcher/main/Q3Elite%20Installer.exe">⬇️ Quake 3 Elite Launcher — Download Now!</a></strong>
 </p>
 
 No more manual downloads, archive extraction or hunting for updates. Everything you need is managed in one place. A dedicated launcher for Quake 3 Elite, designed to make installing, updating and managing your Q3 experience easier than ever. Forget manually downloading files, unpacking archives and keeping everything up to date. The launcher handles the installation process for you.
@@ -60,10 +60,8 @@ No more manual downloads, archive extraction or hunting for updates. Everything 
 
 *These are recommended specifications for the complete Q3Elite experience, not minimum requirements for running the launcher.*
 
-## 🎮 About Quake 3 Elite
-
 <p align="center">
-  <h2><a href="https://mus1n.github.io/">❯❯❯ Quake 3 Elite ❮❮❮</a></h2>
+  <strong><a href="https://mus1n.github.io/">❯❯❯ Quake 3 Elite ❮❮❮</a></strong>
 </p>
 
 <p align="center">
@@ -127,19 +125,13 @@ A convenient way to experience what the Quake 3 community has developed over the
 
 ## 🎮 Ready to Play?
 
-<p align="center">
-  <a href="https://raw.githubusercontent.com/Mus1n/Quake-3-Elite-Launcher/main/Q3Elite%20Installer.exe">
-    <strong>⬇️ DOWNLOAD Q3ELITE</strong>
-  </a>
-</p>
+**⬇️ [DOWNLOAD Q3ELITE](https://raw.githubusercontent.com/Mus1n/Quake-3-Elite-Launcher/main/Q3Elite%20Installer.exe)**
 
-<p align="center">
-  <strong>❚ Video:</strong> <a href="https://www.youtube.com/@xMus1n">YouTube</a><br>
-  <strong>❚ Updates:</strong> <a href="https://t.me/s/Q3News">Q3News on Telegram</a><br>
-  <strong>❚ Author:</strong> <a href="https://t.me/Mus1nQ3">///Mus1n</a>
-</p>
+**❚ Video:** [YouTube](https://www.youtube.com/@xMus1n)  
+**❚ Updates:** [Q3News on Telegram](https://t.me/s/Q3News)  
+**❚ Author:** [///Mus1n](https://t.me/Mus1nQ3)
 
-<p align="center">
+<p align="left">
   <sub>Developed by ///Mus1n</sub>
 </p>
 
