@@ -4,9 +4,11 @@
   <img src="https://media.moddb.com/images/members/5/4746/4745436/profile/Launcher.png" alt="Quake 3 Elite Launcher" width="640">
 </p>
 
-<h2 align="center">
-  <a href="https://github.com/Mus1n/Quake-3-Elite-Launcher/releases/latest/download/Quake-3-Elite-Launcher-main-v0.21.zip">⬇️ Download Quake 3 Elite Launcher</a>
-</h2>
+<p align="center">
+  <a href="https://github.com/Mus1n/Quake-3-Elite-Launcher/releases/latest/download/Quake-3-Elite-Launcher-main-v0.21.zip">
+    <strong>Download Quake 3 Elite Launcher</strong>
+  </a>
+</p>
 
 <p align="center">
   <strong>A dedicated launcher for Quake 3 Elite.</strong><br>
@@ -15,7 +17,7 @@
 
 ---
 
-## ✨ Overview
+## :sparkles: Overview
 
 No more manual downloads, archive extraction or hunting for updates.
 
@@ -25,7 +27,7 @@ Instead of manually downloading files, unpacking archives and keeping your insta
 
 From installing the game to browsing servers and managing your personal content, everything is accessible through a single interface.
 
-## 🚀 Main Features
+## :rocket: Main Features
 
 ### 01 / One-Click Installation
 
@@ -58,26 +60,24 @@ Choose between two visual themes designed for different preferences.
 
 ---
 
-## 🎨 Interface & Themes
+## :art: Interface & Themes
 
 <p align="center">
-  <img src="https://media.moddb.com/images/members/5/4746/4745436/profile/launcher-light.png" alt="Light Paper Theme" width="600">
-  <br>
+  <img src="https://media.moddb.com/images/members/5/4746/4745436/profile/launcher-light.png" alt="Light Paper Theme" width="600"><br>
   <strong>Light Paper Theme</strong>
 </p>
 
 <p align="center">
-  <img src="https://media.moddb.com/images/members/5/4746/4745436/profile/launcher-dark.png" alt="Dark Steel Theme" width="600">
-  <br>
+  <img src="https://media.moddb.com/images/members/5/4746/4745436/profile/launcher-dark.png" alt="Dark Steel Theme" width="600"><br>
   <strong>Dark Steel Theme</strong>
 </p>
 
 ---
 
-## 🖥️ System Requirements
+## :computer: System Requirements
 
 | Component | Requirement |
-| :-- | :-- |
+| --------- | ----------- |
 | OS | Windows 10 or newer |
 | CPU | Intel Core i5-4440 / AMD A5-1600F |
 | GPU | NVIDIA GTX 1060 (recommended for 1440p / 250 FPS) |
@@ -88,7 +88,7 @@ Choose between two visual themes designed for different preferences.
 
 ---
 
-## 🎮 About Quake 3 Elite
+## :video_game: About Quake 3 Elite
 
 <p align="center">
   <a href="https://mus1n.github.io/">
@@ -96,7 +96,7 @@ Choose between two visual themes designed for different preferences.
   </a>
 </p>
 
-**[Quake 3 Elite](https://mus1n.github.io/)** is a modern Quake 3 project combining a ready-to-play game compilation with a dedicated launcher.
+[**Quake 3 Elite**](https://mus1n.github.io/) is a modern Quake 3 project combining a ready-to-play game compilation with a dedicated launcher.
 
 Visit the official website to explore the Q3Elite compilation, its features, included content and the launcher.
 
@@ -106,11 +106,11 @@ Visit the official website to explore the Q3Elite compilation, its features, inc
 
 ---
 
-## 🎮 Ready to Play?
+## :video_game: Ready to Play?
 
 <p align="center">
   <a href="https://github.com/Mus1n/Quake-3-Elite-Launcher/releases/latest/download/Quake-3-Elite-Launcher-main-v0.21.zip">
-    <strong>⬇️ DOWNLOAD Q3ELITE LAUNCHER</strong>
+    <strong>DOWNLOAD Q3ELITE LAUNCHER</strong>
   </a>
 </p>
 
@@ -122,5 +122,5 @@ Visit the official website to explore the Q3Elite compilation, its features, inc
 </p>
 
 <p align="center">
-  <sub>Developed by ///Mus1n*</sub>
+  <sub>Developed by ///Mus1n</sub>
 </p>
