@@ -7461,6 +7461,7 @@ class TelegramTextView(QWebEngineView if QWebEngineView is not None else QtWidge
                 }
                 .tgme_widget_message_text {
                     display: block !important;
+                    text-align: left !important;
                     width: 100vw !important;
                     min-width: 100vw !important;
                     max-width: 100vw !important;
@@ -7804,8 +7805,8 @@ class TelegramTextView(QWebEngineView if QWebEngineView is not None else QtWidge
             css = (
                 f"html,body{{background-color:{bg.name()}!important;background-image:none!important;color:{fg.name()}!important;margin:0!important;padding:0!important;width:100%!important;min-width:100%!important;max-width:100%!important;box-sizing:border-box!important;}}"
                 f"body{{display:block!important;width:100vw!important;min-width:100vw!important;max-width:100vw!important;}}"
-                f".tgme_widget_message_text{{display:block!important;width:100vw!important;min-width:100vw!important;max-width:100vw!important;min-height:100%!important;flex:none!important;align-self:stretch!important;position:relative!important;isolation:isolate!important;background-color:{bg.name()}!important;background-image:{bg_image}!important;background-size:cover!important;background-position:center!important;color:{fg.name()}!important;margin:0!important;padding:{web_padding}px!important;border:0!important;border-radius:{web_inner_radius}px!important;box-sizing:border-box!important;background-clip:padding-box!important;box-shadow:inset 1px 1px 0 rgba(255,255,255,0.035),inset -1px -1px 0 rgba(0,0,0,0.22)!important;overflow:hidden!important;}}"
-                f".tgme_widget_message_text,.tgme_widget_message_text *{{color:{fg.name()}!important;}}"
+                f".tgme_widget_message_text{{display:block!important;text-align:left!important;width:100vw!important;min-width:100vw!important;max-width:100vw!important;min-height:100%!important;flex:none!important;align-self:stretch!important;position:relative!important;isolation:isolate!important;background-color:{bg.name()}!important;background-image:{bg_image}!important;background-size:cover!important;background-position:center!important;color:{fg.name()}!important;margin:0!important;padding:{web_padding}px!important;border:0!important;border-radius:{web_inner_radius}px!important;box-sizing:border-box!important;background-clip:padding-box!important;box-shadow:inset 1px 1px 0 rgba(255,255,255,0.035),inset -1px -1px 0 rgba(0,0,0,0.22)!important;overflow:hidden!important;}}"
+                f".tgme_widget_message_text,.tgme_widget_message_text *{{color:{fg.name()}!important;text-align:left!important;}}"
                 ".tgme_widget_message_text *{background-color:transparent!important;}"
                 f".tgme_widget_message_text blockquote,.tgme_widget_message_text [class*=quote],.tgme_widget_message_text pre,.tgme_widget_message_text code{{background-color:{quote.name()}!important;background-image:{quote_image}!important;background-size:cover!important;background-position:center!important;color:{fg.name()}!important;border:1px solid {quote_border}!important;border-radius:{quote_radius}px!important;box-sizing:border-box!important;box-shadow:inset 1px 1px 0 rgba(255,255,255,0.12),inset -1px -1px 0 rgba(0,0,0,0.48)!important;}}"
                 f".tgme_widget_message_text blockquote *,.tgme_widget_message_text [class*=quote] *,.tgme_widget_message_text pre *,.tgme_widget_message_text code *{{color:{fg.name()}!important;background-color:transparent!important;}}"
@@ -8917,6 +8918,10 @@ class ChangelogCard(SurfaceCard):
         explicit_text = str(release.get("text", "") or "")
         use_telegram_text = bool(source_url and not explicit_text and TELEGRAM_WEBENGINE_AVAILABLE)
         self._native_uses_telegram = bool(source_url and not explicit_text and not self._telegram_web_only)
+        # Telegram-backed release cards use the same centered content column as
+        # Q3News. Keep this separate from _is_q3news_post: ordinary changelog
+        # entries can also be sourced entirely from Telegram.
+        self._center_telegram_content = bool(source_url and not explicit_text)
         self._native_explicit_text = explicit_text
 
         self.telegramView = None
@@ -8987,7 +8992,7 @@ class ChangelogCard(SurfaceCard):
         if native_parts or self._native_uses_telegram or self._telegram_web_only:
             native = QtWidgets.QTextBrowser()
             native.setObjectName("changelogSelectableText")
-            if self._is_q3news_post:
+            if self._is_q3news_post or self._center_telegram_content:
                 native.setFixedWidth(900)
             else:
                 native.setMaximumWidth(720)
@@ -8995,7 +9000,7 @@ class ChangelogCard(SurfaceCard):
             native.setFrameShape(QtWidgets.QFrame.Shape.NoFrame)
             native.setVerticalScrollBarPolicy(QtCore.Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
             native.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-            if self._is_q3news_post:
+            if self._is_q3news_post or self._center_telegram_content:
                 native.setSizePolicy(
                     QtWidgets.QSizePolicy.Policy.Fixed,
                     QtWidgets.QSizePolicy.Policy.Fixed,
@@ -9005,14 +9010,18 @@ class ChangelogCard(SurfaceCard):
                     QtWidgets.QSizePolicy.Policy.Expanding,
                     QtWidgets.QSizePolicy.Policy.Fixed,
                 )
-            native.document().setDefaultStyleSheet("""
-                body { color:#ded9d3; font-size:13px; margin:0; padding:0; }
-                .body { margin:0 0 7px 0; line-height:1.45; }
-                ul { margin:0; padding-left:17px; }
-                li { margin:3px 0; }
-                .plainList { margin:0; }
-                .plainLine { margin:3px 0; }
-                a { color:#d79a28; text-decoration:none; }
+            # Center the Changelog Telegram column, not its text. Q3News
+            # keeps its original centered typography; ordinary Changelog text
+            # retains its previous alignment.
+            native_text_align = "text-align:center;" if self._is_q3news_post else ""
+            native.document().setDefaultStyleSheet(f"""
+                body {{ color:#ded9d3; font-size:13px; margin:0; padding:0; {native_text_align} }}
+                .body {{ margin:0 0 7px 0; line-height:1.45; {native_text_align} }}
+                ul {{ margin:0; padding-left:17px; }}
+                li {{ margin:3px 0; }}
+                .plainList {{ margin:0; }}
+                .plainLine {{ margin:3px 0; }}
+                a {{ color:#d79a28; text-decoration:none; }}
             """)
             initial_html = "".join(native_parts)
             if not initial_html and (self._native_uses_telegram or self._telegram_web_only):
@@ -9023,7 +9032,7 @@ class ChangelogCard(SurfaceCard):
             )
             native.setFixedHeight(max(28, int(native.document().size().height()) + 8))
             self.nativeTextView = native
-            if self._is_q3news_post:
+            if self._is_q3news_post or self._center_telegram_content:
                 lay.addWidget(native, 0, QtCore.Qt.AlignmentFlag.AlignHCenter)
             else:
                 lay.addWidget(native)
@@ -9239,7 +9248,7 @@ class ChangelogCard(SurfaceCard):
             body_layout = self.bodyWidget.layout()
             if body_layout is None:
                 return False
-            if self._is_q3news_post:
+            if self._is_q3news_post or getattr(self, "_center_telegram_content", False):
                 backdrop.setFixedWidth(900)
                 body_layout.insertWidget(
                     0, backdrop, 0, QtCore.Qt.AlignmentFlag.AlignHCenter
@@ -18249,14 +18258,59 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
             min_on.setChecked(bool(rule.get("min_enabled", True)))
             self._register_matchmaking_dirty_control(min_on)
             players_row.addWidget(min_on)
-            minp = QtWidgets.QSpinBox()
-            minp.setRange(0, 128); minp.setValue(int(rule.get("min_players", 3))); minp.setButtonSymbols(QtWidgets.QAbstractSpinBox.ButtonSymbols.NoButtons); minp.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter); minp.setFixedWidth(74); self._register_matchmaking_dirty_control(minp); players_row.addWidget(minp)
+            def make_player_count_input(value):
+                # A plain QLineEdit avoids QSpinBox's native arrow-button
+                # subcontrols entirely. Some Material styles keep hit-testable
+                # button regions above the editor even with ButtonSymbols.NoButtons.
+                edit = QtWidgets.QLineEdit(str(max(0, min(128, int(value)))))
+                edit.setObjectName("matchmakingPlayerCount")
+                edit.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
+                edit.setFixedSize(74, 34)
+                edit.setMaxLength(3)
+                edit.setValidator(QtGui.QIntValidator(0, 128, edit))
+                # Derive the editor palette from the active theme instead of
+                # hard-coding a generic near-black fill for Steel. This keeps
+                # the input visually integrated with each theme's surfaces.
+                text_color = theme_value("colors.text.primary", "#F3F3F3")
+                background_color = theme_value("colors.surface.raised", "#171B22")
+                border_color = theme_value("colors.border.normal", "rgba(255,255,255,42)")
+                focus_color = theme_value("colors.brand.primary", "#D79A28")
+                text_color = str(text_color)
+                background_color = str(background_color)
+                border_color = str(border_color)
+                focus_color = str(focus_color)
+                edit.setAutoFillBackground(True)
+                edit.setAttribute(QtCore.Qt.WidgetAttribute.WA_StyledBackground, True)
+                palette = edit.palette()
+                palette.setColor(QtGui.QPalette.ColorRole.Base, QtGui.QColor(background_color))
+                palette.setColor(QtGui.QPalette.ColorRole.Text, QtGui.QColor(text_color))
+                palette.setColor(QtGui.QPalette.ColorRole.Highlight, QtGui.QColor(focus_color))
+                palette.setColor(QtGui.QPalette.ColorRole.HighlightedText, QtGui.QColor("#FFFFFF"))
+                edit.setPalette(palette)
+                edit.setStyleSheet(
+                    "QLineEdit#matchmakingPlayerCount {"
+                    f" color: {text_color};"
+                    f" border: 1px solid {border_color};"
+                    " border-radius: 5px;"
+                    f" background-color: {background_color};"
+                    " padding: 2px 5px;"
+                    f" selection-background-color: {focus_color};"
+                    "}"
+                    "QLineEdit#matchmakingPlayerCount:focus {"
+                    f" border: 1px solid {focus_color};"
+                    "}"
+                )
+                self._register_matchmaking_dirty_control(edit)
+                return edit
+
+            minp = make_player_count_input(rule.get("min_players", 3))
+            players_row.addWidget(minp)
             max_on = MaterialCheckBox("Less than")
             max_on.setChecked(bool(rule.get("max_enabled", True)))
             self._register_matchmaking_dirty_control(max_on)
             players_row.addWidget(max_on)
-            maxp = QtWidgets.QSpinBox()
-            maxp.setRange(0, 128); maxp.setValue(int(rule.get("max_players", 6))); maxp.setButtonSymbols(QtWidgets.QAbstractSpinBox.ButtonSymbols.NoButtons); maxp.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter); maxp.setFixedWidth(74); self._register_matchmaking_dirty_control(maxp); players_row.addWidget(maxp)
+            maxp = make_player_count_input(rule.get("max_players", 6))
+            players_row.addWidget(maxp)
             players_row.addStretch(1)
             conditions_box.addLayout(players_row)
 
@@ -18524,9 +18578,9 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
             "servers": selected_servers,
             "server_mode": e["server_mode"].currentData(),
             "min_enabled": e["min_on"].isChecked(),
-            "min_players": e["min"].value(),
+            "min_players": max(0, min(128, int(e["min"].text() or 0))),
             "max_enabled": e["max_on"].isChecked(),
-            "max_players": e["max"].value(),
+            "max_players": max(0, min(128, int(e["max"].text() or 0))),
             "map_conditions": [
                 {"enabled": r["enabled"].isChecked(),
                  "operator": r["op"].currentData(),
