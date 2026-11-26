@@ -7,6 +7,8 @@ import re
 import time
 import urllib.request
 import zipfile
+
+import network_proxy
 from pathlib import Path
 
 import download_tools as dt
@@ -37,7 +39,7 @@ def _read_text(url: str, timeout: int = 12) -> str:
         url,
         headers={"User-Agent": "Q3Elite-Launcher", "Cache-Control": "no-cache"},
     )
-    with urllib.request.urlopen(request, timeout=timeout) as response:
+    with network_proxy.open_url(request, timeout=timeout) as response:
         return response.read().decode("utf-8-sig", errors="replace").strip()
 
 

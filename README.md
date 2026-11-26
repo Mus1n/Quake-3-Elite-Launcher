@@ -1,0 +1,137 @@
+
+
+# Quake 3 Elite Launcher
+
+<p align="center">
+  <img src="https://media.moddb.com/images/members/5/4746/4745436/profile/Launcher.png" alt="Launcher" width="640">
+</p>
+
+<p align="center">
+  <strong><a href="https://raw.githubusercontent.com/Mus1n/Quake-3-Elite-Launcher/main/Q3Elite%20Installer.exe">⬇️ Quake 3 Elite Launcher — Download Now!</a></strong>
+</p>
+
+No more manual downloads, archive extraction or hunting for updates. Everything you need is managed in one place. A dedicated launcher for Quake 3 Elite, designed to make installing, updating and managing your Q3 experience easier than ever. Forget manually downloading files, unpacking archives and keeping everything up to date. The launcher handles the installation process for you.
+
+<p align="center">
+  <img src="https://media.moddb.com/images/members/5/4746/4745436/profile/launcher-light.png" alt="Launcher Light" width="600">
+  <br>
+  <strong>❯❯❯ <em>Light Paper Theme</em> ▼</strong>
+</p>
+
+## ✨ Main Features
+
+> **01 / One-Click Installation**
+>
+> → Install the Q3Elite core with a single click. You can also choose optional components, including External Maps and Music Playlist. ⚡
+
+> **02 / Easy Updates**
+>
+> → Keep your installation up to date without manually searching for and replacing files. 🔄
+
+> **03 / Server Browser**
+>
+> → Browse available Quake 3 servers and check their status and player activity. ✔️
+
+> **04 / Player Content Management**
+>
+> → Access your demos, screenshots and configuration files directly from the launcher. 📂
+
+> **05 / Integrated Q3Elite Experience**
+>
+> → Get everything in one place: the XQ3E engine, OSP2-BE mod, enhanced textures, updated maps, models, skins and HUDs. 🎮
+
+> **06 / Customizable Interface**
+>
+> → Choose between two visual themes: Light Paper and Dark Steel. 🎨
+
+<p align="center">
+  <img src="https://media.moddb.com/images/members/5/4746/4745436/profile/launcher-dark.png" alt="Launcher Dark" width="600">
+  <br>
+  <strong>❯❯❯ <em>Dark Steel Theme</em> ▼</strong>
+</p>
+
+## 🖥️ Recommended System Requirements
+
+- **OS:** Windows 10 or newer
+- **CPU:** Intel Core i5-4440 / AMD A5-1600F
+- **GPU:** NVIDIA GTX 1060 (for 2560×1440 at 250 FPS)
+- **RAM:** 2 GB
+- **Storage:** 10 GB available space
+
+*These are recommended specifications for the complete Q3Elite experience, not minimum requirements for running the launcher.*
+
+<p align="center">
+  <strong><a href="https://mus1n.github.io/">❯❯❯ Quake 3 Elite ❮❮❮</a></strong>
+</p>
+
+<p align="center">
+  <a href="https://www.youtube.com/watch?v=pRJ54B-83Ik">
+    <img src="https://img.youtube.com/vi/pRJ54B-83Ik/0.jpg" alt="Q3Elite SuperHUD Showcase" width="560">
+  </a>
+  <br>
+  <strong>❯❯❯ <em>New SuperHUD</em> ▼</strong>
+</p>
+
+**Q3Elite** is a modern, ready-to-play Quake 3 compilation combining community-developed engine, gameplay and graphical improvements into one package.
+
+Instead of searching for a client, mod, maps, HUDs, textures and configs separately, Q3Elite brings everything together in a single setup.
+
+<p align="center">
+  <img src="https://media.moddb.com/images/members/5/4746/4745436/profile/Q3Elite_Logo_rounded.png" alt="Q3Elite Logo" width="420">
+  <br>
+  <strong>❯❯❯ <em>Quake 3 Elite Logo</em> ▼</strong>
+</p>
+
+### ⚙️ What's Included?
+
+- **XQ3E** — modern Quake 3 engine/client with Vulkan renderer.
+- **OSP2-BE** — extended OSP with modern HUD and gameplay features.
+- **HQ Textures, Improved Models & Skins**
+- **Modern HUDs and Visual Improvements**
+- **Updated Maps, Shaders and HQ Liquids**
+- **Optimized Configs** for high-FPS / 144Hz+ setups.
+- **High Graphics & Gaming Graphics** presets.
+- **Preconfigured Server List**
+
+<p align="center">
+  <a href="https://www.youtube.com/watch?v=wwqtZM127Qo">
+    <img src="https://img.youtube.com/vi/wwqtZM127Qo/0.jpg" alt="Q3Elite Enemy Models Showcase" width="560">
+  </a>
+  <br>
+  <strong>❯❯❯ <em>Enemy Models</em> ▼</strong>
+</p>
+
+### ❯❯❯ Why Q3Elite?
+
+The problem with modern Quake 3 isn't a lack of improvements — **it's that they're scattered across dozens of projects.**
+
+Q3Elite brings them together into a single, ready-to-play experience, while keeping the original Quake 3 gameplay intact.
+
+**One package → modern client → optimized configs → servers → play.**
+
+**For new players**
+
+An easy way to get into modern Quake 3 without spending hours searching for files and configuring everything manually.
+
+**For veterans**
+
+A convenient way to experience what the Quake 3 community has developed over the years.
+
+<p align="center">
+  <img src="https://media.moddb.com/images/members/5/4746/4745436/profile/Binds_rounded.png" alt="Default Binds" width="600">
+  <br>
+  <strong>❯❯❯ <em>Default Binds</em> ▼</strong>
+</p>
+
+## 🎮 Ready to Play?
+
+**⬇️ [DOWNLOAD Q3ELITE](https://raw.githubusercontent.com/Mus1n/Quake-3-Elite-Launcher/main/Q3Elite%20Installer.exe)**
+
+**❚ Video:** [YouTube](https://www.youtube.com/@xMus1n)  
+**❚ Updates:** [Q3News on Telegram](https://t.me/s/Q3News)  
+**❚ Author:** [///Mus1n](https://t.me/Mus1nQ3)
+
+<p align="left">
+  <sub>Developed by ///Mus1n</sub>
+</p>
+

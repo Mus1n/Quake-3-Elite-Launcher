@@ -5,8 +5,8 @@ import network_proxy
 
 API="https://eapi.pcloud.com"
 CORE="Quake 3 Arena/Quake 3 Elite"
-MAPS="Quake 3 Arena/Maps"
-MUSIC="Quake 3 Arena/z-Music-Playlist-by-Mus1n.pk3dir"
+MAPS="Quake 3 Arena/Addons/maps"
+MUSIC="Quake 3 Arena/Addons/z-Music-Playlist-by-Mus1n.pk3dir"
 LOCAL_MUSIC_PREFIX="baseq3/mods/osp/z-Music-Playlist-by-Mus1n.pk3dir/"
 AUTOEXEC="baseq3/mods/OSP/autoexec.cfg"
 UA="Q3Elite-Launcher-Step14"

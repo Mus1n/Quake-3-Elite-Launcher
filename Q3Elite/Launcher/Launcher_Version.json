@@ -1,22 +1,15 @@
 {
-    "version": "0.2",
-    "date": "2026-11-17",
+    "version": "0.21",
+    "date": "2026-11-22",
     "changelog": [
-        "Q3Elite Launcher v0.2 — Performance & Feature Update",
-        "This release focuses on performance improvements, stability, and expanding the launcher's functionality.",
-        "Optimized UI rendering and reduced unnecessary widget updates.",
-        "Improved loading times when opening sections with large amounts of data.",
-        "Implemented image caching to avoid repeatedly downloading and decoding assets.",
-        "Optimized levelshot loading for Servers, Maps, and Demos.",
-        "Improved table construction and data processing.",
-        "Enhanced screenshot browsing with native 16:9 image presentation.",
-        "Added smoother navigation and improved interaction responsiveness.",
-        "Improved Home section image carousel with automatic scrolling and transitions.",
-        "Enhanced Telegram changelog rendering and custom emoji support.",
-        "Refined audio handling to reduce unnecessary processing during rapid navigation.",
-        "Improved account management and backend configuration recovery.",
-        "Enhanced Repair functionality to detect and restore missing or corrupted launcher files.",
-        "Various UI refinements, bug fixes, and stability improvements.",
-        "A more responsive, polished, and reliable Q3Elite Launcher experience."
+        "HUGE Optimization — Major performance improvements across the Launcher, reducing CPU usage, memory overhead and loading times.",
+        "GPU Acceleration — Improved GPU utilization for smoother rendering and reduced CPU workload.",
+        "Telegram Post Optimizations — Improved rendering performance.",
+        "QWebEngineView Lifecycle Management — Improved browser instance creation, reuse and cleanup to prevent unnecessary background processes and CPU usage.",
+        "Autoscroll Mode — Added automatic scrolling for Home section images, with smoother transitions and improved manual navigation.",
+        "Maps Section — Double-click to switch between map tabs.",
+        "Standalone BAT Playtime Tracking — Added playtime tracking when launching Quake 3 directly through the Vulkan Cinematic shortcut, without starting the Launcher.",
+        "Startup Behavior Fixes — Fixed an issue where Start with Windows and Start minimized could send the Launcher to the system tray even when Minimize to tray was disabled.",
+        "General UI & Stability Improvements — Various fixes and refinements to navigation, rendering and Launcher behavior."
     ]
 }

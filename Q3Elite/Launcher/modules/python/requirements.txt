@@ -3,3 +3,5 @@ PyQt6-WebEngine
 vulkan
 qtawesome
 pywinstyles
+psutil>=5.9
+truststore>=0.10.0

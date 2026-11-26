@@ -19,11 +19,12 @@ functions later. Components can be added/removed after installation.
 
 from __future__ import annotations
 
-import argparse, hashlib, json, os, shutil, subprocess, zipfile
+import argparse, hashlib, json, os, shutil, subprocess, sys, zipfile
 from pathlib import Path, PurePosixPath
 
 import pcloud_q3elite as pcloud
 import q3elite_music as music
+import network_proxy
 from download_tools import DownloadControl, downloader
 
 ROOT = pcloud.ROOT
@@ -103,6 +104,7 @@ def default_state():
         "music_playlist": False,
         "autoexec_update": False,
         "music_hashes": {},
+        "external_maps_hashes": {},
     }
 
 
@@ -115,6 +117,8 @@ def load_state():
         base.update(data if isinstance(data, dict) else {})
         if not isinstance(base.get("music_hashes"), dict):
             base["music_hashes"] = {}
+        if not isinstance(base.get("external_maps_hashes"), dict):
+            base["external_maps_hashes"] = {}
         return base
     except Exception:
         return default_state()
@@ -128,7 +132,7 @@ def fetch_json(remote):
     info = pcloud.resolve(pcloud.remote_for(remote))
     import urllib.request
     req = urllib.request.Request(info["url"], headers={"User-Agent": "Q3Elite-18B"})
-    with urllib.request.urlopen(req, timeout=30) as r:
+    with network_proxy.open_url(req, timeout=30) as r:
         return json.loads(r.read().decode("utf-8-sig"))
 
 
@@ -623,19 +627,72 @@ def _bulk_install_basic_maps(files, control=None, progress_callback=None):
 
 
 def _create_vulkan_cinematic_shortcut():
-    """Create an optional ROOT-level shortcut for the cinematic Vulkan engine."""
+    """Create the ROOT-level cinematic shortcut with detached playtime tracking."""
     engine_bat = ROOT / "Q3Elite" / "Engines" / "Q3Elite (Vulkan) - Cinematic.bat"
     icon_png = ROOT / "Q3Elite" / "Icons" / "b1.png"
     icon_ico = ROOT / "Q3Elite" / "Icons" / "b1.ico"
     shortcut = ROOT / "Q3Elite Vulkan Cinematic.lnk"
+    tracked_bat = ROOT / "Q3Elite" / "Engines" / "Q3Elite (Vulkan) - Cinematic - Tracked.bat"
 
     if not engine_bat.is_file():
         print(f"[shortcut] Cinematic Vulkan batch not found; skipped: {engine_bat}")
         return False
 
+    # Keep the original engine BAT untouched (it is manifest-managed). The
+    # generated wrapper starts the same detached tracker used by Launch.pyw,
+    # then delegates all game arguments to the original BAT.
+    tracker = Path(__file__).resolve().with_name("game_session_tracker.py")
+    tracker_python = Path(sys.executable).resolve()
+    if tracker_python.name.casefold() == "python.exe":
+        pythonw = tracker_python.with_name("pythonw.exe")
+        if pythonw.is_file():
+            tracker_python = pythonw
+
+    target = engine_bat
+    if tracker.is_file() and tracker_python.is_file():
+        appdata = Path(os.environ.get("APPDATA", Path.home()))
+        playtime_db = appdata / "Quake 3 Elite" / "Launcher" / "playtime.sqlite3"
+        wrapper = """@echo off
+setlocal
+set "Q3E_TRACKER_PYTHON=__TRACKER_PYTHON__"
+set "Q3E_TRACKER_SCRIPT=__TRACKER_SCRIPT__"
+set "Q3E_TRACKER_DB=__TRACKER_DB__"
+set "Q3E_ENGINE_BAT=__ENGINE_BAT__"
+set "Q3E_IGNORE_PIDS="
+for /f "usebackq delims=" %%P in (`powershell.exe -NoProfile -Command "$p = Get-Process -ErrorAction SilentlyContinue ^| Where-Object { $_.ProcessName -like '*xq3e*' }; if ($p) { ($p ^| ForEach-Object { $_.Id }) -join ',' }"`) do set "Q3E_IGNORE_PIDS=%%P"
+if exist "%Q3E_TRACKER_PYTHON%" if exist "%Q3E_TRACKER_SCRIPT%" (
+    start "" "%Q3E_TRACKER_PYTHON%" "%Q3E_TRACKER_SCRIPT%" --db "%Q3E_TRACKER_DB%" --ignore-pids "%Q3E_IGNORE_PIDS%" --wait-seconds 35 --heartbeat-seconds 60
+)
+call "%Q3E_ENGINE_BAT%" %*
+endlocal
+"""
+        replacements = {
+            "__TRACKER_PYTHON__": str(tracker_python),
+            "__TRACKER_SCRIPT__": str(tracker),
+            "__TRACKER_DB__": str(playtime_db),
+            "__ENGINE_BAT__": str(engine_bat),
+        }
+        for marker, value in replacements.items():
+            wrapper = wrapper.replace(marker, value.replace('"', '""'))
+        try:
+            tracked_bat.parent.mkdir(parents=True, exist_ok=True)
+            tracked_bat.write_text(wrapper, encoding="utf-8", newline="\r\n")
+            target = tracked_bat
+            print(f"[shortcut] Playtime tracking wrapper created: {tracked_bat}")
+        except OSError as error:
+            print(f"[shortcut] Could not write tracking wrapper; using original BAT: {error}")
+    else:
+        missing = []
+        if not tracker.is_file():
+            missing.append(str(tracker))
+        if not tracker_python.is_file():
+            missing.append(str(tracker_python))
+        print("[shortcut] Detached tracker unavailable; shortcut will launch game without tracking: "
+              + ", ".join(missing))
+
     script = r"""
 $ErrorActionPreference = 'Stop'
-$target = $env:Q3E_VULKAN_BAT
+$target = $env:Q3E_VULKAN_TARGET
 $workdir = Split-Path -Parent $target
 $iconPng = $env:Q3E_VULKAN_ICON_PNG
 $iconIco = $env:Q3E_VULKAN_ICON_ICO
@@ -692,7 +749,7 @@ $link.Save()
 """
     env = os.environ.copy()
     env.update({
-        "Q3E_VULKAN_BAT": str(engine_bat),
+        "Q3E_VULKAN_TARGET": str(target),
         "Q3E_VULKAN_ICON_PNG": str(icon_png),
         "Q3E_VULKAN_ICON_ICO": str(icon_ico),
         "Q3E_VULKAN_LINK": str(shortcut),
@@ -707,7 +764,7 @@ $link.Save()
             detail = (result.stderr or result.stdout or "").strip()
             print(f"[shortcut] Could not create Vulkan Cinematic shortcut: {detail}")
             return False
-        print(f"[shortcut] Created: {shortcut}")
+        print(f"[shortcut] Created: {shortcut} -> {target.name}")
         return True
     except Exception as error:
         print(f"[shortcut] Could not create Vulkan Cinematic shortcut: {error}")
@@ -820,154 +877,222 @@ def install_basic(external_maps=False, music_playlist=False, autoexec_update=Fal
 
 
 
-def _zip_member_to_map(member_name, wanted_cf):
-    raw = norm(member_name)
+def _external_map_catalog():
+    """Live pCloud catalog for the independent External Maps addon.
+
+    This intentionally does NOT read Manifest.json. The 26 Basic maps are
+    owned by the Basic installer and are excluded by filename below.
+    """
+    items = pcloud.list_folder(pcloud.MAPS, recursive=True)
+    result = []
+    seen = set()
+    for item in items:
+        rel = norm(item.get("relative", ""))
+        parts = PurePosixPath(rel).parts
+        if not parts or any(part in ("", ".", "..") for part in parts):
+            continue
+        if ":" in rel or PurePosixPath(rel).suffix.casefold() != ".pk3":
+            continue
+        # The archive also contains the 26 Basic maps. They remain exclusively
+        # managed by Manifest.json / Q3Elite_Basic_Maps.zip.
+        if PurePosixPath(rel).name.casefold() in BASIC_QL_MAP_NAMES:
+            continue
+        key = rel.casefold()
+        if key in seen:
+            raise RuntimeError(f"Duplicate path in External Maps catalog: {rel}")
+        seen.add(key)
+        result.append({**item, "relative": rel})
+    if not result:
+        raise RuntimeError(
+            f"No optional .pk3 maps found in pCloud addon folder: {pcloud.MAPS}"
+        )
+    return result
+
+
+def _external_map_zip_relative(member_name, wanted):
+    """Resolve a ZIP member to the exact pCloud-relative map path."""
+    raw = str(member_name).replace("\\", "/").lstrip("/")
     parts = PurePosixPath(raw).parts
-    if not parts:
+    if not parts or any(part in ("", ".", "..") for part in parts) or ":" in raw:
         return None
-
-    # getpubzip(folderid=Maps) normally puts the contents of Maps at ZIP root.
-    # Accept both root-relative names (CustomMaps/x.pk3) and archives that
-    # happen to include a Maps/ or baseq3/maps/ prefix.
-    candidates = [raw]
+    candidates = [norm(raw)]
     for i, part in enumerate(parts):
-        if part.casefold() == "maps":
-            suffix = norm(str(PurePosixPath(*parts[i + 1:])))
-            if suffix:
-                candidates.append(suffix)
-        if part.casefold() == "baseq3" and i + 1 < len(parts) and parts[i + 1].casefold() == "maps":
-            suffix = norm(str(PurePosixPath(*parts[i + 2:])))
-            if suffix:
-                candidates.append(suffix)
-
-    for suffix in candidates:
-        rel = norm("baseq3/maps/" + suffix)
-        found = wanted_cf.get(rel.casefold())
+        if part.casefold() in ("maps", "baseq3"):
+            suffix_parts = parts[i + 1:]
+            if suffix_parts and suffix_parts[0].casefold() == "maps":
+                suffix_parts = suffix_parts[1:]
+            if suffix_parts:
+                candidates.append(norm(str(PurePosixPath(*suffix_parts))))
+    for candidate in candidates:
+        found = wanted.get(candidate.casefold())
         if found:
             return found
     return None
 
 
-def _extract_maps_zip(zip_path, group):
-    wanted_cf = {norm(rel).casefold(): norm(rel) for rel in group}
-    extracted = set()
-
+def _extract_external_maps_zip(zip_path, items, previously_owned=None, control=None):
+    """Extract optional maps only; never touch the 26 Basic maps or user files."""
+    wanted = {item["relative"].casefold(): item for item in items}
+    previous = {norm(k).casefold() for k in (previously_owned or {})}
+    extracted_hashes = {}
+    root_resolved = ROOT.resolve()
     with zipfile.ZipFile(zip_path, "r") as zf:
+        bad_member = zf.testzip()
+        if bad_member:
+            raise RuntimeError(f"Corrupt member in Q3Elite_Maps.zip: {bad_member}")
         for info in zf.infolist():
             if info.is_dir():
                 continue
-            rel = _zip_member_to_map(info.filename, wanted_cf)
-            if not rel:
+            item = _external_map_zip_relative(info.filename, wanted)
+            if not item:
                 continue
-
-            dest = ROOT / Path(rel)
+            rel = item["relative"]
+            dest = ROOT / "baseq3" / "maps" / Path(*PurePosixPath(rel).parts)
+            try:
+                dest.resolve().relative_to(root_resolved)
+            except (ValueError, OSError):
+                raise RuntimeError(f"Unsafe path in Q3Elite_Maps.zip: {info.filename}")
+            if dest.exists() and rel.casefold() not in previous:
+                # Do not overwrite a map the user already had before enabling addon.
+                print(f"[preserved existing] baseq3/maps/{rel}")
+                continue
             dest.parent.mkdir(parents=True, exist_ok=True)
             tmp = dest.with_name(dest.name + ".maps.tmp")
-            h = hashlib.sha256()
+            digest = hashlib.sha256()
             try:
                 with zf.open(info, "r") as srcf, tmp.open("wb") as dstf:
                     while True:
+                        if control is not None and not control.wait_if_paused():
+                            raise RuntimeError("External Maps extraction cancelled.")
                         block = srcf.read(4 * 1024 * 1024)
                         if not block:
                             break
                         dstf.write(block)
-                        h.update(block)
-                if h.hexdigest().lower() != group[rel].lower():
-                    raise RuntimeError(f"SHA-256 verification failed in Maps ZIP: {rel}")
+                        digest.update(block)
+                expected_size = int(item.get("size", 0) or 0)
+                if expected_size and tmp.stat().st_size != expected_size:
+                    raise RuntimeError(
+                        f"External map size verification failed: {rel} "
+                        f"({tmp.stat().st_size} != {expected_size})"
+                    )
                 os.replace(tmp, dest)
-                extracted.add(rel.casefold())
+                extracted_hashes[rel] = digest.hexdigest()
             finally:
                 tmp.unlink(missing_ok=True)
+    if not extracted_hashes and not any(
+        (ROOT / "baseq3" / "maps" / Path(*PurePosixPath(item["relative"]).parts)).is_file()
+        for item in items
+    ):
+        raise RuntimeError("Q3Elite_Maps.zip contained no installable External Maps.")
+    print(f"[maps bulk] Installed/verified optional maps: {len(extracted_hashes)}")
+    return extracted_hashes
 
-    print(f"[maps bulk] Extracted and SHA-256 verified: {len(extracted)} / {len(group)}")
-    return extracted
 
-
-def _bulk_install_maps(group, control=None, progress_callback=None):
-    if not group:
-        return set()
-
+def _bulk_install_maps(items, control=None, progress_callback=None, previously_owned=None):
+    if not items:
+        raise RuntimeError("External Maps catalog is empty; nothing was installed.")
     CACHE_DIR.mkdir(parents=True, exist_ok=True)
-
     stale_part = MAPS_ZIP.with_name(MAPS_ZIP.name + ".part")
     if stale_part.exists():
         stale_size = stale_part.stat().st_size
         stale_part.unlink()
-        print(
-            f"[maps bulk] Previous dynamic ZIP partial found "
-            f"({human(stale_size)}). Restarting from 0."
-        )
+        print(f"[maps bulk] Removed stale partial ZIP ({human(stale_size)}).")
 
     reuse = MAPS_ZIP.is_file() and zipfile.is_zipfile(MAPS_ZIP)
     if reuse:
-        print(f"[maps bulk] Complete cached Maps ZIP found ({human(MAPS_ZIP.stat().st_size)}). Reusing it.")
+        with zipfile.ZipFile(MAPS_ZIP, "r") as zf:
+            bad_member = zf.testzip()
+        if bad_member:
+            reuse = False
+    if reuse:
+        print(f"[maps bulk] Reusing valid cache: {MAPS_ZIP} ({human(MAPS_ZIP.stat().st_size)})")
     elif MAPS_ZIP.exists():
         print("[maps bulk] Cached Maps ZIP is invalid; removing it.")
         MAPS_ZIP.unlink()
 
-    print("\nDownloading External Maps as one pCloud ZIP...")
-    print("Pause/Resume works in this launcher session; after launcher restart")
-    print("the dynamic ZIP download starts from 0.")
-
-    if reuse:
-        result = str(MAPS_ZIP)
-    else:
+    if not reuse:
+        print("\\nDownloading External Maps as one pCloud ZIP...")
+        if progress_callback:
+            progress_callback(0, None, 0.0, "Preparing Q3Elite_Maps.zip...")
         url = pcloud.pubzip_url(pcloud.MAPS, MAPS_ZIP.name)
         result = downloader(
-            url,
-            str(CACHE_DIR),
-            MAPS_ZIP.name,
-            skip=True,
-            control=control,
-            progress_callback=progress_callback,
-            expected_size=None,
-            use_part_file=True,
-            timeout_value=60,
+            url, str(CACHE_DIR), MAPS_ZIP.name, skip=True,
+            control=control, progress_callback=progress_callback,
+            expected_size=None, use_part_file=True, timeout_value=60,
         )
         if not result:
             raise RuntimeError("External Maps bulk ZIP download failed/cancelled.")
+        archive = Path(result)
+    else:
+        archive = MAPS_ZIP
 
-    archive = Path(result)
     if not zipfile.is_zipfile(archive):
-        raise RuntimeError("pCloud getpubzip did not return a valid Maps ZIP.")
+        raise RuntimeError("pCloud did not return a valid Q3Elite_Maps.zip.")
+    return _extract_external_maps_zip(archive, items, previously_owned, control)
 
-    extracted = _extract_maps_zip(archive, group)
-    return extracted
 
 def install_maps(control=None, progress_callback=None):
-    _, _, files = remote_release()
-    group = selected_map_files(files)
+    """Install the optional pCloud Maps addon independently from the manifest."""
     ctl = control or DownloadControl()
+    state = load_state()
+    previous = state.get("external_maps_hashes", {})
+    if not isinstance(previous, dict):
+        previous = {}
 
-    print(f"\nExternal Maps: {len(group)} files")
-    try:
-        extracted = _bulk_install_maps(group, ctl, progress_callback)
-        print("\n[maps bulk] Running SHA-256 repair pass...")
-        count = _install_group(group, ctl, progress_callback)
-        print(f"[maps cache] Kept: {MAPS_ZIP}")
-    except Exception as exc:
-        print(f"\n[maps bulk] Bulk install unavailable: {exc}")
-        print("[maps bulk] Falling back to individual SHA-256 repair...")
-        count = _install_group(group, ctl, progress_callback)
+    items = _external_map_catalog()
+    print(f"\\nExternal Maps: {len(items)} optional PK3 files")
+    hashes = _bulk_install_maps(items, ctl, progress_callback, previous)
 
-    state=load_state(); state["external_maps"]=True; save_state(state)
-    print(f"\n[OK] External Maps installed. Individual downloads/repairs: {count}")
+    # Include files that were already installed by an earlier successful run,
+    # but only while their current bytes still match the recorded addon hash.
+    combined = {}
+    for rel, digest in previous.items():
+        path = ROOT / "baseq3" / "maps" / Path(*PurePosixPath(norm(rel)).parts)
+        if path.is_file() and sha256_file(path, control=ctl).lower() == str(digest).lower():
+            combined[norm(rel)] = str(digest).lower()
+    combined.update(hashes)
+    if not combined:
+        raise RuntimeError("External Maps installation produced no verified addon files.")
+
+    state["external_maps_hashes"] = combined
+    state["external_maps"] = True
+    save_state(state)
+    print(f"\\n[OK] External Maps installed. Managed addon maps: {len(combined)}")
 
 
 def uninstall_maps():
-    _, _, files = remote_release()
-    group=selected_map_files(files)
-    removed=modified=missing=0
-    for rel,digest in group.items():
-        path=ROOT/Path(rel)
+    """Remove only unchanged files previously installed by the External Maps addon."""
+    state = load_state()
+    known = state.get("external_maps_hashes", {})
+    if not isinstance(known, dict):
+        known = {}
+    removed = modified = missing = 0
+    for rel, digest in known.items():
+        rel = norm(rel)
+        parts = PurePosixPath(rel).parts
+        if not parts or any(part in ("", ".", "..") for part in parts) or ":" in rel:
+            print(f"[preserved unsafe state path] {rel}")
+            modified += 1
+            continue
+        # Defensive guard: Basic maps are never addon-owned, even if old state is bad.
+        if PurePosixPath(rel).name.casefold() in BASIC_QL_MAP_NAMES:
+            print(f"[preserved Basic map] {rel}")
+            modified += 1
+            continue
+        path = ROOT / "baseq3" / "maps" / Path(*parts)
         if not path.exists():
-            missing+=1; continue
-        # SHA protects user-modified/replaced maps from deletion.
-        if path.is_file() and sha256_file(path).lower()==digest.lower():
-            path.unlink(); removed+=1; print(f"[removed] {rel}")
+            missing += 1
+            continue
+        if path.is_file() and sha256_file(path).lower() == str(digest).lower():
+            path.unlink()
+            removed += 1
+            print(f"[removed] baseq3/maps/{rel}")
         else:
-            modified+=1; print(f"[preserved modified] {rel}")
-    state=load_state(); state["external_maps"]=False; save_state(state)
+            modified += 1
+            print(f"[preserved modified] baseq3/maps/{rel}")
+    state["external_maps"] = False
+    state["external_maps_hashes"] = {}
+    save_state(state)
     print(f"[OK] Maps removal: removed={removed}, preserved_modified={modified}, missing={missing}")
 
 

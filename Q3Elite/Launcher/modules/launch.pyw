@@ -7,6 +7,50 @@ import sys
 # Profiling is opt-in only through Q3Elite_Launch_Debug.bat.
 # --ui-dev remains responsible for UI/theme development, not profiling.
 _Q3_PROFILE_ENABLED = os.environ.get("Q3ELITE_PROFILE", "").strip() == "1"
+_Q3_TELEGRAM_CAPTURE_STATS = {"count": 0, "total_ms": 0.0, "max_ms": 0.0, "last_interval_ms": 0.0, "last_stamp": 0.0}
+
+
+def _q3_profile_write_gpu_environment():
+    """Record the QtWebEngine/GPU startup configuration without changing it."""
+    if not _Q3_PROFILE_ENABLED:
+        return
+    try:
+        import importlib.metadata as _metadata
+        try:
+            _pyqt_version = _metadata.version("PyQt6")
+        except Exception:
+            _pyqt_version = "unknown"
+        try:
+            _webengine_version = _metadata.version("PyQt6-WebEngine")
+        except Exception:
+            _webengine_version = "unknown"
+        flags = os.environ.get("QTWEBENGINE_CHROMIUM_FLAGS", "")
+        _q3_runtime_profile_event(
+            "webengine_environment "
+            f"python={platform.python_version()} pyqt6={_pyqt_version} "
+            f"pyqt6_webengine={_webengine_version} "
+            f"qtwebengineprocess_env={os.environ.get('QTWEBENGINEPROCESS_PATH', '')!r} "
+            f"chromium_flags={flags!r} "
+            f"gpu_disabled_flag={int('--disable-gpu' in flags)} "
+            f"gpu_blocklist_override={int('--ignore-gpu-blocklist' in flags)}"
+        )
+    except Exception as _error:
+        _q3_runtime_profile_event(f"webengine_environment_error={type(_error).__name__}:{_error}")
+
+
+def _q3_runtime_profile_event(message):
+    """Append profiler diagnostics to app-data logs without console spam."""
+    if not _Q3_PROFILE_ENABLED:
+        return
+    try:
+        profile_dir = LAUNCHER_DATA_DIR / "logs"
+        profile_dir.mkdir(parents=True, exist_ok=True)
+        profile_file = profile_dir / "runtime_profile.log"
+        stamp = datetime.datetime.now().isoformat(timespec="seconds")
+        with profile_file.open("a", encoding="utf-8") as log:
+            log.write(f"{stamp} event={message}\\n")
+    except Exception:
+        pass
 import traceback
 import shutil
 import json
@@ -35,10 +79,37 @@ from pathlib import Path
 
 from PyQt6 import QtCore, QtGui, QtWidgets, QtNetwork
 
-# Detached Telegram renderers live off-screen. Chromium normally throttles
-# occluded/background windows, which would freeze animated custom emoji between
-# snapshot frames. These flags only affect QtWebEngine and the renderers are
-# explicitly Frozen whenever Changelog is not visible.
+
+# Suppress only the repetitive Qt FFmpeg disconnect warning emitted during
+# multimedia object destruction. Keep every other Qt message visible in the
+# debug console.
+def _q3elite_qt_message_handler(mode, context, message):
+    try:
+        if message.startswith(
+            "QObject::disconnect: wildcard call disconnects from destroyed signal of QFFmpeg::"
+        ):
+            return
+    except Exception:
+        pass
+
+    if _q3elite_previous_qt_message_handler is not None:
+        _q3elite_previous_qt_message_handler(mode, context, message)
+    else:
+        # No previous handler: preserve Qt's normal console output.
+        try:
+            import sys
+            print(message, file=sys.stderr)
+        except Exception:
+            pass
+
+
+_q3elite_previous_qt_message_handler = None
+_q3elite_previous_qt_message_handler = QtCore.qInstallMessageHandler(
+    _q3elite_qt_message_handler
+)
+
+# Match v2: preserve Chromium GPU compositing and animated Telegram renderers
+# while preventing Windows background/occlusion throttling from starving them.
 if os.name == "nt":
     _q3_chromium_flags = os.environ.get("QTWEBENGINE_CHROMIUM_FLAGS", "")
     for _flag in (
@@ -80,6 +151,12 @@ from PyQt6.QtGui import QFontDatabase
 
 from ui_theme import ThemeManager
 from obsidian_material import OBSIDIAN_MATERIAL
+
+try:
+    import network_proxy
+except Exception as _network_proxy_import_error:
+    network_proxy = None
+    print(f"[proxy] Network proxy module unavailable: {_network_proxy_import_error}")
 
 try:
     import qtawesome as qta
@@ -2004,94 +2081,183 @@ def _telegram_public_post_data(url):
 
 
 def _telegram_channel_post_urls(channel="Q3News", before=None, limit=2):
-    """Return public Telegram post URLs newest-window first, no Bot API needed.
+    """Return public Telegram post URLs newest-window first.
 
-    Telegram's public /s/ channel page contains data-post="channel/id" markers.
-    `before` asks that public page for older messages. The launcher only keeps
-    public post URLs and published timestamps here; the existing Telegram renderer/cache loads content.
+    Telegram's public /s/ page can return an overlapping window around the
+    `before` cursor. We therefore request strictly before the oldest loaded ID,
+    filter IDs locally, and retry one ID earlier if Telegram returns only the
+    already-loaded window.
     """
     channel = re.sub(r"[^A-Za-z0-9_]", "", str(channel or "Q3News")) or "Q3News"
-    limit = max(1, min(12, int(limit or 2)))
-    base = f"https://t.me/s/{channel}"
+    limit = max(1, min(15, int(limit or 15)))
+    before_id = None
     if before:
         try:
             before_id = max(1, int(before))
-            base += "?" + urllib.parse.urlencode({"before": before_id})
         except (TypeError, ValueError):
-            pass
-    request = urllib.request.Request(
-        base,
-        headers={
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/136.0 Safari/537.36",
-            "Accept": "text/html,application/xhtml+xml",
-        },
-    )
-    with urllib.request.urlopen(request, timeout=14) as response:
-        html_text = response.read().decode("utf-8", errors="replace")
-    escaped = re.escape(channel)
-    post_matches = list(re.finditer(rf"""data-post=["']{escaped}/(\d+)["']""", html_text, flags=re.I))
-    if not post_matches:
-        post_matches = list(re.finditer(rf"https?://t\.me/{escaped}/(\d+)", html_text, flags=re.I))
-    post_dates = {}
-    for index, match in enumerate(post_matches):
-        post_id = int(match.group(1))
-        segment_end = post_matches[index + 1].start() if index + 1 < len(post_matches) else min(len(html_text), match.end() + 12000)
-        segment = html_text[match.start():segment_end]
-        date_match = re.search(r'<time[^>]+datetime=["\']([^"\']+)', segment, flags=re.I)
-        if date_match:
-            post_dates[post_id] = date_match.group(1).strip()
-    ids = sorted({int(match.group(1)) for match in post_matches if str(match.group(1)).isdigit()})
-    if before:
+            before_id = None
+
+    attempts = [before_id] if before_id is not None else [None]
+    if before_id is not None and before_id > 1:
+        attempts.append(before_id - 1)
+
+    last_error = None
+    for cursor in attempts:
+        base = f"https://t.me/s/{channel}"
+        if cursor is not None:
+            base += "?" + urllib.parse.urlencode({"before": cursor})
+        request = urllib.request.Request(
+            base,
+            headers={
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/136.0 Safari/537.36",
+                "Accept": "text/html,application/xhtml+xml",
+                "Cache-Control": "no-cache",
+            },
+        )
         try:
-            ids = [value for value in ids if value < int(before)]
-        except (TypeError, ValueError):
-            pass
-    ids = ids[-limit:]
-    return [{"id": value, "url": f"https://t.me/{channel}/{value}", "date": post_dates.get(value, "")} for value in ids]
+            with urllib.request.urlopen(request, timeout=14) as response:
+                html_text = response.read().decode("utf-8", errors="replace")
+        except Exception as error:
+            last_error = error
+            continue
+
+        escaped = re.escape(channel)
+        post_matches = list(re.finditer(rf"data-post=[\"']{escaped}/(\d+)[\"']", html_text, flags=re.I))
+        if not post_matches:
+            post_matches = list(re.finditer(rf"https?://t\.me/{escaped}/(\d+)", html_text, flags=re.I))
+        post_dates = {}
+        for index, match in enumerate(post_matches):
+            post_id = int(match.group(1))
+            segment_end = post_matches[index + 1].start() if index + 1 < len(post_matches) else min(len(html_text), match.end() + 12000)
+            segment = html_text[match.start():segment_end]
+            date_match = re.search(r"""<time[^>]+datetime=["\']([^"\']+)""", segment, flags=re.I)
+            if date_match:
+                post_dates[post_id] = date_match.group(1).strip()
+
+        ids = sorted({int(match.group(1)) for match in post_matches if str(match.group(1)).isdigit()})
+        if before_id is not None:
+            ids = [value for value in ids if value < before_id]
+        ids = ids[-limit:]
+        if ids:
+            return [{"id": value, "url": f"https://t.me/{channel}/{value}", "date": post_dates.get(value, "")} for value in ids]
+
+    if last_error is not None:
+        raise last_error
+    return []
+
+
+Q3ELITE_VERSION_FILE = GAME_ROOT / "Q3Elite" / "Version.json"
+Q3ELITE_CHANGELOG_HISTORY_FILE = LAUNCHER_DATA_DIR / "q3elite_changelog_history.json"
+
+
+def _release_items_from_metadata(path, default_type):
+    """Read release entries from the Version.json formats used by Q3Elite."""
+    try:
+        raw = json.loads(Path(path).read_text(encoding="utf-8-sig"))
+    except Exception as error:
+        print(f"[changelog] Could not read {Path(path).name}: {error}")
+        return []
+    if not isinstance(raw, dict):
+        return []
+
+    version = str(raw.get("version", raw.get("Version", raw.get("q3elite_version", "—"))) or "—")
+    releases = raw.get("releases", raw.get("changelog", raw.get("history", [])))
+    if isinstance(releases, dict):
+        releases = [dict(value if isinstance(value, dict) else {"changes": value}, version=key)
+                    for key, value in releases.items()]
+    elif isinstance(releases, str):
+        releases = [{"version": version, "changes": [releases]}]
+    elif isinstance(releases, list) and releases and all(not isinstance(x, dict) for x in releases):
+        releases = [{"version": version, "date": raw.get("date", raw.get("release_date", "")),
+                     "changes": [str(x) for x in releases]}]
+    elif not isinstance(releases, list):
+        releases = []
+
+    if not releases:
+        notes = raw.get("changes", raw.get("notes", raw.get("items", raw.get("release_notes", []))))
+        if isinstance(notes, str):
+            notes = [notes]
+        if isinstance(notes, list) and notes:
+            releases = [{"version": version, "date": raw.get("date", raw.get("release_date", "")),
+                         "changes": notes}]
+
+    result = []
+    for release in releases:
+        if not isinstance(release, dict):
+            continue
+        item = dict(release)
+        item.setdefault("type", default_type)
+        item.setdefault("version", version)
+        if not item.get("changelog"):
+            notes = item.get("changes", item.get("notes", item.get("items", [])))
+            if isinstance(notes, str):
+                notes = [notes]
+            item["changelog"] = list(notes) if isinstance(notes, (list, tuple)) else []
+        item.setdefault("text", str(item.get("summary", item.get("description", "")) or ""))
+        result.append(item)
+    return result
+
+
+def _merge_release_entries(target, additions):
+    seen = set()
+    for existing in target:
+        seen.add((str(existing.get("type", "")).casefold(),
+                   str(existing.get("version", "")).casefold(),
+                   str(existing.get("date", existing.get("release_date", "")))))
+    for item in additions:
+        key = (str(item.get("type", "")).casefold(),
+               str(item.get("version", "")).casefold(),
+               str(item.get("date", item.get("release_date", ""))))
+        if key not in seen:
+            target.append(dict(item))
+            seen.add(key)
+
 
 def read_changelog_entries():
-    """Combine the shared changelog feed with local Launcher_Version.json notes.
-
-    Changelog.json remains the primary source for Q3Elite/other release tracks,
-    but must not suppress the launcher updater's own release metadata.
-    """
+    """Combine shared, launcher, and Q3Elite release histories."""
     entries = []
     if CHANGELOG_FILE.is_file():
         try:
-            raw = json.loads(CHANGELOG_FILE.read_text(encoding="utf-8"))
+            raw = json.loads(CHANGELOG_FILE.read_text(encoding="utf-8-sig"))
             if isinstance(raw, dict):
                 raw = raw.get("releases", raw.get("changelog", [raw]))
             if isinstance(raw, list):
-                entries.extend(item for item in raw if isinstance(item, dict))
+                entries.extend(dict(item) for item in raw if isinstance(item, dict))
         except Exception as error:
             print(f"[changelog] Could not read {CHANGELOG_FILE.name}: {error}")
 
-    # Always merge local launcher releases, even when Changelog.json exists.
     launcher_releases = sorted_launcher_releases()
-    for release in launcher_releases:
-        item = dict(release)
+    for item in launcher_releases:
+        item = dict(item)
         item.setdefault("type", "Launcher")
         if not item.get("changelog"):
             notes = item.get("changes", item.get("notes", item.get("items", [])))
             if isinstance(notes, str):
                 notes = [notes]
             item["changelog"] = list(notes) if isinstance(notes, (list, tuple)) else []
-        if not item.get("text"):
-            item["text"] = str(item.get("summary", item.get("description", "")) or "")
-        # Avoid duplicate launcher releases already copied into Changelog.json.
-        key = (str(item.get("type", "")).casefold(), str(item.get("version", "")).casefold(), str(item.get("date", item.get("release_date", ""))))
-        duplicate = any(
-            str(existing.get("type", "")).casefold() == key[0]
-            and str(existing.get("version", "")).casefold() == key[1]
-            and str(existing.get("date", existing.get("release_date", ""))) == key[2]
-            for existing in entries
-        )
-        if not duplicate:
-            entries.append(item)
+        item.setdefault("text", str(item.get("summary", item.get("description", "")) or ""))
+        _merge_release_entries(entries, [item])
 
-    # If neither source provided anything, retain the old metadata fallback.
-    if not entries:
-        entries = [dict(x, type=x.get("type", "Launcher")) for x in launcher_releases]
+    # Q3Elite has its own Version.json under the game root, not Launcher/.
+    # Preserve prior versions in AppData so updates do not erase old entries.
+    q3elite_history = []
+    try:
+        if Q3ELITE_CHANGELOG_HISTORY_FILE.is_file():
+            cached = json.loads(Q3ELITE_CHANGELOG_HISTORY_FILE.read_text(encoding="utf-8-sig"))
+            if isinstance(cached, list):
+                q3elite_history = [dict(x) for x in cached if isinstance(x, dict)]
+    except Exception as error:
+        print(f"[changelog] Could not read Q3Elite history cache: {error}")
+    current_q3elite = _release_items_from_metadata(Q3ELITE_VERSION_FILE, "Q3Elite")
+    _merge_release_entries(q3elite_history, current_q3elite)
+    try:
+        Q3ELITE_CHANGELOG_HISTORY_FILE.parent.mkdir(parents=True, exist_ok=True)
+        Q3ELITE_CHANGELOG_HISTORY_FILE.write_text(
+            json.dumps(q3elite_history, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+        )
+    except Exception as error:
+        print(f"[changelog] Could not save Q3Elite history cache: {error}")
+    _merge_release_entries(entries, q3elite_history)
     return entries
 
 
@@ -2370,8 +2536,8 @@ DEFAULT_SETTINGS = {
     "server_preset_ids": [],
     "server_hybrid_default_migrated": True,
     "show_changelog_media": True,
-    "cleanup_screenshots_days": 14,
-    "cleanup_demos_days": 14,
+    "cleanup_screenshots_days": 7,
+    "cleanup_demos_days": 7,
     "pause_server_refresh_unfocused": False,
     "pause_matchmaking_when_game_launched": False,
     "screenshot_source": "reshade",
@@ -2661,8 +2827,8 @@ def load_launcher_settings():
             "starting_section": "home",
             "game_launch_behavior": "keep",
             "show_changelog_media": False,
-            "cleanup_screenshots_days": 0,
-            "cleanup_demos_days": 0,
+            "cleanup_screenshots_days": 7,
+            "cleanup_demos_days": 7,
             "screenshot_source": "both",
             "launcher_sounds_enabled": False,
             "launcher_sound_volume": 30,
@@ -5281,11 +5447,11 @@ class FullRowHoverDelegate(QtWidgets.QStyledItemDelegate):
         painter.restore()
 
     def paint(self, painter, option, index):
-        # Keep the original table appearance: column 0 owns the continuous row
-        # surface for standard columns. The custom action delegate paints its
-        # own clipped slice explicitly.
-        if index.column() == 0:
-            self._paint_row_surface(painter, option, index)
+        # Every column paints its own clipped slice of the shared row surface.
+        # Painting only column 0 leaves the rest of the row without a visible
+        # selection because native Qt selection is cleared below. The clip in
+        # _paint_row_surface prevents overlapping/doubled material.
+        self._paint_row_surface(painter, option, index)
         clean = QtWidgets.QStyleOptionViewItem(option)
         # The delegate owns whole-row hover/selection painting.  Removing both
         # native focus and selected flags prevents Qt/Windows from drawing
@@ -5779,6 +5945,9 @@ class AnimatedEmoji(QtWidgets.QLabel):
             if not path.is_file(): continue
             if ext in ('.webp','.gif'):
                 movie=QtGui.QMovie(str(path)); movie.setScaledSize(QtCore.QSize(size,size))
+                # Keep decoded frames in memory: Qt can reuse them instead of
+                # repeatedly decoding GIF/WebP frames on the GUI thread.
+                movie.setCacheMode(QtGui.QMovie.CacheMode.CacheAll)
                 if movie.isValid(): self._movie=movie; self.setMovie(movie); movie.start(); return
             pm=_load_pixmap_file(path)
             if not pm.isNull(): self.setPixmap(pm.scaled(size,size,QtCore.Qt.AspectRatioMode.KeepAspectRatio,QtCore.Qt.TransformationMode.SmoothTransformation)); return
@@ -6167,10 +6336,10 @@ class AccountAuthDialog(MaterialDialog):
     @staticmethod
     def _repolish(widget):
         try:
-            if polish:
-                widget.style().unpolish(widget)
-                widget.style().polish(widget)
-                widget.update()
+            style = widget.style()
+            style.unpolish(widget)
+            style.polish(widget)
+            widget.update()
         except RuntimeError:
             pass
 
@@ -6330,7 +6499,7 @@ class Q3NewsWorker(QtCore.QThread):
     def __init__(self, before=None, limit=2, parent=None):
         super().__init__(parent)
         self.before = before
-        self.limit = max(1, min(8, int(limit or 2)))
+        self.limit = max(1, min(15, int(limit or 15)))
 
     def run(self):
         try:
@@ -7292,6 +7461,7 @@ class TelegramTextView(QWebEngineView if QWebEngineView is not None else QtWidge
                 }
                 .tgme_widget_message_text {
                     display: block !important;
+                    text-align: left !important;
                     width: 100vw !important;
                     min-width: 100vw !important;
                     max-width: 100vw !important;
@@ -7436,6 +7606,109 @@ class TelegramTextView(QWebEngineView if QWebEngineView is not None else QtWidge
                 .replace("__Q3_WEB_SPECULAR_LOW__", tg_specular_low_css)
                 .replace("__Q3_QUOTE_RADIUS__", str(quote_radius)))
         self.page().runJavaScript(js, self._apply_loaded_height)
+
+        # Q3News does not need animated custom emoji. Freeze only Telegram's
+        # animated emoji/media layer to avoid continuous Chromium repaint work.
+        # Keep ordinary photos, layout, and text untouched.
+        freeze_motion_js = r"""
+        (() => {
+            const root = document.querySelector('.tgme_widget_message_text') || document;
+            const styleId = 'q3elite-static-emoji';
+            if (!document.getElementById(styleId)) {
+                const style = document.createElement('style');
+                style.id = styleId;
+                style.textContent = `
+                    .tgme_widget_message_text *,
+                    .tgme_widget_message_text *::before,
+                    .tgme_widget_message_text *::after {
+                        animation-play-state: paused !important;
+                        transition: none !important;
+                        caret-color: transparent !important;
+                    }
+                    .tgme_widget_message_text video,
+                    .tgme_widget_message_text [class*="emoji"] video,
+                    .tgme_widget_message_text tg-emoji video {
+                        visibility: visible !important;
+                    }
+                `;
+                (document.head || document.documentElement).appendChild(style);
+            }
+
+            const freezeVideo = video => {
+                try {
+                    video.autoplay = false;
+                    video.loop = false;
+                    video.removeAttribute('autoplay');
+                    video.removeAttribute('loop');
+                    video.muted = true;
+                    video.pause();
+                    const poster = video.getAttribute('poster') || '';
+                    if (poster) {
+                        const img = document.createElement('img');
+                        img.src = poster;
+                        img.alt = '';
+                        img.className = video.className || 'emoji';
+                        img.style.cssText = video.getAttribute('style') || '';
+                        img.style.objectFit = 'contain';
+                        img.style.verticalAlign = 'middle';
+                        img.width = video.clientWidth || video.width || 24;
+                        img.height = video.clientHeight || video.height || 24;
+                        video.replaceWith(img);
+                        return;
+                    }
+                    const freezeAtStart = () => {
+                        try {
+                            video.pause();
+                            if (Number.isFinite(video.duration) && video.duration > 0 && video.currentTime > 0.04) {
+                                video.currentTime = 0;
+                            }
+                        } catch (e) {}
+                    };
+                    if (video.readyState >= 2) freezeAtStart();
+                    else video.addEventListener('loadeddata', freezeAtStart, {once:true});
+                    video.addEventListener('play', () => { try { video.pause(); } catch(e) {} });
+                } catch (e) {}
+            };
+
+            root.querySelectorAll(
+                '.emoji video, tg-emoji video, [class*="custom-emoji"] video, [data-document-id] video'
+            ).forEach(freezeVideo);
+            root.querySelectorAll('svg').forEach(svg => {
+                try { if (typeof svg.pauseAnimations === 'function') svg.pauseAnimations(); } catch(e) {}
+            });
+            try {
+                document.getAnimations().forEach(animation => {
+                    const target = animation.effect && animation.effect.target;
+                    if (target && target.closest && target.closest('.tgme_widget_message_text')) {
+                        try { animation.pause(); animation.currentTime = 0; } catch(e) {}
+                    }
+                });
+            } catch (e) {}
+
+            if (!window.__q3eliteStaticEmojiObserver) {
+                const observer = new MutationObserver(records => {
+                    for (const record of records) {
+                        for (const node of record.addedNodes || []) {
+                            if (node.nodeType !== 1) continue;
+                            if (node.matches && node.matches('video') &&
+                                node.closest('.emoji, tg-emoji, [class*="custom-emoji"], [data-document-id]')) {
+                                freezeVideo(node);
+                            }
+                            if (node.querySelectorAll) {
+                                node.querySelectorAll(
+                                    '.emoji video, tg-emoji video, [class*="custom-emoji"] video, [data-document-id] video'
+                                ).forEach(freezeVideo);
+                            }
+                        }
+                    }
+                });
+                observer.observe(root, {childList:true, subtree:true});
+                window.__q3eliteStaticEmojiObserver = observer;
+            }
+            return true;
+        })();
+        """
+        self.page().runJavaScript(freeze_motion_js)
         # Animated/custom emoji and web fonts can settle after loadFinished.
         # Re-measure the retained text shortly afterwards so first load has the
         # same compact geometry as a manual Reload.
@@ -7532,8 +7805,8 @@ class TelegramTextView(QWebEngineView if QWebEngineView is not None else QtWidge
             css = (
                 f"html,body{{background-color:{bg.name()}!important;background-image:none!important;color:{fg.name()}!important;margin:0!important;padding:0!important;width:100%!important;min-width:100%!important;max-width:100%!important;box-sizing:border-box!important;}}"
                 f"body{{display:block!important;width:100vw!important;min-width:100vw!important;max-width:100vw!important;}}"
-                f".tgme_widget_message_text{{display:block!important;width:100vw!important;min-width:100vw!important;max-width:100vw!important;min-height:100%!important;flex:none!important;align-self:stretch!important;position:relative!important;isolation:isolate!important;background-color:{bg.name()}!important;background-image:{bg_image}!important;background-size:cover!important;background-position:center!important;color:{fg.name()}!important;margin:0!important;padding:{web_padding}px!important;border:0!important;border-radius:{web_inner_radius}px!important;box-sizing:border-box!important;background-clip:padding-box!important;box-shadow:inset 1px 1px 0 rgba(255,255,255,0.035),inset -1px -1px 0 rgba(0,0,0,0.22)!important;overflow:hidden!important;}}"
-                f".tgme_widget_message_text,.tgme_widget_message_text *{{color:{fg.name()}!important;}}"
+                f".tgme_widget_message_text{{display:block!important;text-align:left!important;width:100vw!important;min-width:100vw!important;max-width:100vw!important;min-height:100%!important;flex:none!important;align-self:stretch!important;position:relative!important;isolation:isolate!important;background-color:{bg.name()}!important;background-image:{bg_image}!important;background-size:cover!important;background-position:center!important;color:{fg.name()}!important;margin:0!important;padding:{web_padding}px!important;border:0!important;border-radius:{web_inner_radius}px!important;box-sizing:border-box!important;background-clip:padding-box!important;box-shadow:inset 1px 1px 0 rgba(255,255,255,0.035),inset -1px -1px 0 rgba(0,0,0,0.22)!important;overflow:hidden!important;}}"
+                f".tgme_widget_message_text,.tgme_widget_message_text *{{color:{fg.name()}!important;text-align:left!important;}}"
                 ".tgme_widget_message_text *{background-color:transparent!important;}"
                 f".tgme_widget_message_text blockquote,.tgme_widget_message_text [class*=quote],.tgme_widget_message_text pre,.tgme_widget_message_text code{{background-color:{quote.name()}!important;background-image:{quote_image}!important;background-size:cover!important;background-position:center!important;color:{fg.name()}!important;border:1px solid {quote_border}!important;border-radius:{quote_radius}px!important;box-sizing:border-box!important;box-shadow:inset 1px 1px 0 rgba(255,255,255,0.12),inset -1px -1px 0 rgba(0,0,0,0.48)!important;}}"
                 f".tgme_widget_message_text blockquote *,.tgme_widget_message_text [class*=quote] *,.tgme_widget_message_text pre *,.tgme_widget_message_text code *{{color:{fg.name()}!important;background-color:transparent!important;}}"
@@ -7690,25 +7963,62 @@ class TelegramTextView(QWebEngineView if QWebEngineView is not None else QtWidge
 
 
 
+# Immutable Telegram post snapshots are retained for the current launcher
+# session. This avoids re-rendering posts when cards are rebuilt or revisited.
+_Q3_TELEGRAM_SNAPSHOT_CACHE = OrderedDict()
+_Q3_TELEGRAM_SNAPSHOT_CACHE_MAX_ITEMS = 15
+_Q3_TELEGRAM_SNAPSHOT_CACHE_MAX_BYTES = 96 * 1024 * 1024
+
+
+def _q3_telegram_snapshot_cache_get(url):
+    key = str(url or "").strip()
+    if not key:
+        return None
+    pixmap = _Q3_TELEGRAM_SNAPSHOT_CACHE.get(key)
+    if pixmap is None or pixmap.isNull():
+        return None
+    _Q3_TELEGRAM_SNAPSHOT_CACHE.move_to_end(key)
+    return QtGui.QPixmap(pixmap)
+
+
+def _q3_telegram_snapshot_cache_put(url, pixmap):
+    key = str(url or "").strip()
+    if not key or pixmap is None or pixmap.isNull():
+        return
+    _Q3_TELEGRAM_SNAPSHOT_CACHE[key] = QtGui.QPixmap(pixmap)
+    _Q3_TELEGRAM_SNAPSHOT_CACHE.move_to_end(key)
+    total = sum(
+        max(0, int(value.sizeInBytes()))
+        for value in _Q3_TELEGRAM_SNAPSHOT_CACHE.values()
+        if value is not None and not value.isNull()
+    )
+    while _Q3_TELEGRAM_SNAPSHOT_CACHE and (
+        len(_Q3_TELEGRAM_SNAPSHOT_CACHE) > _Q3_TELEGRAM_SNAPSHOT_CACHE_MAX_ITEMS
+        or total > _Q3_TELEGRAM_SNAPSHOT_CACHE_MAX_BYTES
+    ):
+        _old_key, old_pixmap = _Q3_TELEGRAM_SNAPSHOT_CACHE.popitem(last=False)
+        if old_pixmap is not None and not old_pixmap.isNull():
+            total -= max(0, int(old_pixmap.sizeInBytes()))
+
+
 class TelegramSnapshotView(QtWidgets.QLabel):
     """Qt-only presentation of a detached Telegram Chromium renderer.
 
-    Chromium never becomes a child of the translucent launcher HWND.  A
-    top-level off-screen TelegramTextView owns Telegram's real DOM/custom emoji
-    animation; this label periodically grabs that renderer into a normal QPixmap.
-    The launcher therefore never gains/removes a Chromium child surface when the
-    Changelog page is selected, avoiding the Windows DWM full-window flash.
+    Chromium renders a Telegram post once in a detached top-level view. After
+    layout settles, one immutable QPixmap is retained and the renderer is
+    destroyed. No continuous frame capture or post-refresh is performed.
     """
     ready = QtCore.pyqtSignal()
     failed = QtCore.pyqtSignal(str)
 
-    def __init__(self, url, renderer, parent=None):
+    def __init__(self, url, renderer, parent=None, cached_pixmap=None):
         super().__init__(parent)
         self._source_url = str(url or "").strip()
         self._renderer = renderer
         self._ready_emitted = False
         self._last_width = 0
-        self._frame_pixmap = QtGui.QPixmap()
+        self._frame_pixmap = QtGui.QPixmap(cached_pixmap) if cached_pixmap is not None else QtGui.QPixmap()
+        self._is_cached_static = not self._frame_pixmap.isNull()
         self._loading_text = "Loading Telegram post…"
         self.setObjectName("telegramSnapshotView")
         self.setAlignment(QtCore.Qt.AlignmentFlag.AlignLeft | QtCore.Qt.AlignmentFlag.AlignTop)
@@ -7727,9 +8037,17 @@ class TelegramSnapshotView(QtWidgets.QLabel):
         self.setAutoFillBackground(False)
 
         self._frame_timer = QtCore.QTimer(self)
-        self._frame_timer.setTimerType(QtCore.Qt.TimerType.CoarseTimer)
-        self._frame_timer.setInterval(max(90, theme_int("performance.telegram_snapshot_interval_ms", 120)))
+        # Compatibility timer; static snapshots stop it after final capture.
+        self._frame_timer.setTimerType(QtCore.Qt.TimerType.PreciseTimer)
+        self._frame_timer.setInterval(16)
         self._frame_timer.timeout.connect(self._capture_frame)
+
+        if self._is_cached_static:
+            self._loading_text = ""
+            self.setFixedHeight(max(40, min(int(self._frame_pixmap.height()), 900)))
+            self._ready_emitted = True
+            QtCore.QTimer.singleShot(0, self.ready.emit)
+            return
 
         if self._renderer is None:
             QtCore.QTimer.singleShot(0, lambda: self.failed.emit("Telegram renderer unavailable"))
@@ -7754,11 +8072,17 @@ class TelegramSnapshotView(QtWidgets.QLabel):
         if renderer is None or QWebEnginePage is None:
             return
         try:
-            state = (
-                QWebEnginePage.LifecycleState.Active
-                if active else QWebEnginePage.LifecycleState.Frozen
-            )
-            renderer.page().setLifecycleState(state)
+            page = renderer.page()
+            if active:
+                # Restore page visibility before resuming script/animation work.
+                page.setVisible(True)
+                page.setLifecycleState(QWebEnginePage.LifecycleState.Active)
+            else:
+                # A top-level renderer may remain a visible Qt window even when
+                # parked off-screen. Chromium refuses Frozen while its page is
+                # visible, so hide the WebEngine page explicitly first.
+                page.setVisible(False)
+                page.setLifecycleState(QWebEnginePage.LifecycleState.Frozen)
         except Exception:
             pass
 
@@ -7766,25 +8090,63 @@ class TelegramSnapshotView(QtWidgets.QLabel):
         if self._renderer is None:
             return
         self._sync_renderer_width(force=True)
-        self._capture_frame()
         self._loading_text = ""
         self.setFixedHeight(max(40, min(int(self._renderer.height()), 900)))
-        # Run once more after the card's layouts have consumed the new height.
-        # This catches the final available width instead of retaining the small
-        # off-screen/prewarm width as the visible snapshot width.
+        # Wait for Telegram images/fonts and final wrapping, then keep one
+        # immutable pixmap and release the Chromium renderer.
         QtCore.QTimer.singleShot(0, lambda: self._sync_renderer_width(force=True))
-        QtCore.QTimer.singleShot(90, lambda: self._sync_renderer_width(force=True))
-        if self.isVisible():
-            self._set_renderer_lifecycle(active=True)
-            if not self._frame_timer.isActive():
-                self._frame_timer.start()
-        else:
-            # One frame is enough while the Changelog is hidden. Preserve the
-            # loaded DOM but stop animation/CPU work until the page is exposed.
-            self._set_renderer_lifecycle(active=False)
+        QtCore.QTimer.singleShot(1600, self._freeze_static_snapshot)
         if not self._ready_emitted:
             self._ready_emitted = True
             self.ready.emit()
+
+    def _freeze_static_snapshot(self):
+        renderer = self._renderer
+        if renderer is None:
+            return
+        try:
+            self._sync_renderer_width(force=True)
+            self._capture_frame()
+            self._frame_timer.stop()
+            _q3_telegram_snapshot_cache_put(self._source_url, self._frame_pixmap)
+            root = self.window()
+            try:
+                page = renderer.page()
+                if page is not None:
+                    page.setVisible(False)
+            except (AttributeError, RuntimeError):
+                pass
+            try:
+                renderer.stop()
+                renderer.close()
+                renderer.deleteLater()
+            except (AttributeError, RuntimeError):
+                pass
+            items = getattr(root, "_telegramDetachedRenderers", None)
+            if isinstance(items, list):
+                try:
+                    items.remove(renderer)
+                except ValueError:
+                    pass
+            preloaded = getattr(root, "_telegramPreloadedRenderers", None)
+            if isinstance(preloaded, dict):
+                for key, value in list(preloaded.items()):
+                    if value is renderer:
+                        preloaded.pop(key, None)
+            owners = getattr(root, "_telegram_renderer_owners", None)
+            if isinstance(owners, list):
+                try:
+                    owners.remove(self)
+                except ValueError:
+                    pass
+            self._renderer = None
+            self._loading_text = ""
+            if not self._frame_pixmap.isNull():
+                self.setFixedHeight(max(40, min(int(self._frame_pixmap.height()), 900)))
+            self.updateGeometry()
+            self.update()
+        except (RuntimeError, AttributeError):
+            self._frame_timer.stop()
 
     def _target_renderer_width(self):
         """Return the real card content width, independent of snapshot sizeHint."""
@@ -7820,8 +8182,6 @@ class TelegramSnapshotView(QtWidgets.QLabel):
             # Width changes alter Telegram line wrapping. Re-measure after
             # Chromium has laid out the retained DOM at the new width.
             QtCore.QTimer.singleShot(35, renderer._remeasure_height)
-            QtCore.QTimer.singleShot(110, self._capture_frame)
-            QtCore.QTimer.singleShot(240, self._capture_frame)
         except RuntimeError:
             pass
 
@@ -7837,7 +8197,20 @@ class TelegramSnapshotView(QtWidgets.QLabel):
             if abs(int(renderer.width()) - target_width) >= 3:
                 self._sync_renderer_width(force=True)
                 return
+            _q3_grab_started = time.perf_counter() if _Q3_PROFILE_ENABLED else 0.0
             pm = renderer.grab()
+            if _Q3_PROFILE_ENABLED:
+                _q3_grab_elapsed = (time.perf_counter() - _q3_grab_started) * 1000.0
+                _q3_capture_stats = _Q3_TELEGRAM_CAPTURE_STATS
+                _q3_capture_stats["count"] += 1
+                _q3_capture_stats["total_ms"] += _q3_grab_elapsed
+                _q3_capture_stats["max_ms"] = max(_q3_capture_stats["max_ms"], _q3_grab_elapsed)
+                _q3_capture_now = time.perf_counter()
+                if _q3_capture_stats["last_stamp"]:
+                    _q3_capture_stats["last_interval_ms"] = (
+                        _q3_capture_now - _q3_capture_stats["last_stamp"]
+                    ) * 1000.0
+                _q3_capture_stats["last_stamp"] = _q3_capture_now
             if pm.isNull():
                 return
             self._frame_pixmap = pm
@@ -7887,43 +8260,8 @@ class TelegramSnapshotView(QtWidgets.QLabel):
         painter.end()
 
     def mousePressEvent(self, event):
-        if (event.button() == QtCore.Qt.MouseButton.LeftButton
-                and self._renderer is not None
-                and getattr(self._renderer, "_ready_emitted", False)):
-            # The visible Telegram card is a QLabel snapshot of a detached
-            # WebEngine renderer. Forward clicks by hit-testing the underlying
-            # post's anchor rectangles in the same CSS viewport coordinates.
-            x = float(event.position().x())
-            y = float(event.position().y())
-            width = max(1, int(self.width()))
-            height = max(1, int(self.height()))
-            script = f"""(() => {{
-                const x = {x!r} * (window.innerWidth / {width});
-                const y = {y!r} * (window.innerHeight / {height});
-                for (const a of document.querySelectorAll('.tgme_widget_message_text a[href]')) {{
-                    for (const r of Array.from(a.getClientRects())) {{
-                        if (x >= r.left && x <= r.right && y >= r.top && y <= r.bottom)
-                            return a.href || a.getAttribute('href') || '';
-                    }}
-                }}
-                return '';
-            }})()"""
-            try:
-                self._renderer.page().runJavaScript(script, self._open_clicked_link)
-            except RuntimeError:
-                pass
-            event.accept()
-            return
-        super().mousePressEvent(event)
-
-    @staticmethod
-    def _open_clicked_link(value):
-        raw = str(value or "").strip()
-        if not raw:
-            return
-        url = QtCore.QUrl(raw)
-        if url.isValid() and url.scheme().lower() in {"http", "https", "mailto", "tg"}:
-            QtGui.QDesktopServices.openUrl(url)
+        # Static Q3News snapshots intentionally do not forward link clicks.
+        event.accept()
 
     def showEvent(self, event):
         super().showEvent(event)
@@ -8580,6 +8918,10 @@ class ChangelogCard(SurfaceCard):
         explicit_text = str(release.get("text", "") or "")
         use_telegram_text = bool(source_url and not explicit_text and TELEGRAM_WEBENGINE_AVAILABLE)
         self._native_uses_telegram = bool(source_url and not explicit_text and not self._telegram_web_only)
+        # Telegram-backed release cards use the same centered content column as
+        # Q3News. Keep this separate from _is_q3news_post: ordinary changelog
+        # entries can also be sourced entirely from Telegram.
+        self._center_telegram_content = bool(source_url and not explicit_text)
         self._native_explicit_text = explicit_text
 
         self.telegramView = None
@@ -8650,7 +8992,7 @@ class ChangelogCard(SurfaceCard):
         if native_parts or self._native_uses_telegram or self._telegram_web_only:
             native = QtWidgets.QTextBrowser()
             native.setObjectName("changelogSelectableText")
-            if self._is_q3news_post:
+            if self._is_q3news_post or self._center_telegram_content:
                 native.setFixedWidth(900)
             else:
                 native.setMaximumWidth(720)
@@ -8658,7 +9000,7 @@ class ChangelogCard(SurfaceCard):
             native.setFrameShape(QtWidgets.QFrame.Shape.NoFrame)
             native.setVerticalScrollBarPolicy(QtCore.Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
             native.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-            if self._is_q3news_post:
+            if self._is_q3news_post or self._center_telegram_content:
                 native.setSizePolicy(
                     QtWidgets.QSizePolicy.Policy.Fixed,
                     QtWidgets.QSizePolicy.Policy.Fixed,
@@ -8668,14 +9010,18 @@ class ChangelogCard(SurfaceCard):
                     QtWidgets.QSizePolicy.Policy.Expanding,
                     QtWidgets.QSizePolicy.Policy.Fixed,
                 )
-            native.document().setDefaultStyleSheet("""
-                body { color:#ded9d3; font-size:13px; margin:0; padding:0; }
-                .body { margin:0 0 7px 0; line-height:1.45; }
-                ul { margin:0; padding-left:17px; }
-                li { margin:3px 0; }
-                .plainList { margin:0; }
-                .plainLine { margin:3px 0; }
-                a { color:#d79a28; text-decoration:none; }
+            # Center the Changelog Telegram column, not its text. Q3News
+            # keeps its original centered typography; ordinary Changelog text
+            # retains its previous alignment.
+            native_text_align = "text-align:center;" if self._is_q3news_post else ""
+            native.document().setDefaultStyleSheet(f"""
+                body {{ color:#ded9d3; font-size:13px; margin:0; padding:0; {native_text_align} }}
+                .body {{ margin:0 0 7px 0; line-height:1.45; {native_text_align} }}
+                ul {{ margin:0; padding-left:17px; }}
+                li {{ margin:3px 0; }}
+                .plainList {{ margin:0; }}
+                .plainLine {{ margin:3px 0; }}
+                a {{ color:#d79a28; text-decoration:none; }}
             """)
             initial_html = "".join(native_parts)
             if not initial_html and (self._native_uses_telegram or self._telegram_web_only):
@@ -8686,7 +9032,7 @@ class ChangelogCard(SurfaceCard):
             )
             native.setFixedHeight(max(28, int(native.document().size().height()) + 8))
             self.nativeTextView = native
-            if self._is_q3news_post:
+            if self._is_q3news_post or self._center_telegram_content:
                 lay.addWidget(native, 0, QtCore.Qt.AlignmentFlag.AlignHCenter)
             else:
                 lay.addWidget(native)
@@ -8848,6 +9194,7 @@ class ChangelogCard(SurfaceCard):
             return
         try:
             _telegram_forget_cached_post(url)
+            _Q3_TELEGRAM_SNAPSHOT_CACHE.pop(url, None)
         except Exception as error:
             print(f"[changelog] Could not clear Telegram cache: {error}")
         self._set_native_telegram_text("Reloading Telegram post…")
@@ -8901,7 +9248,7 @@ class ChangelogCard(SurfaceCard):
             body_layout = self.bodyWidget.layout()
             if body_layout is None:
                 return False
-            if self._is_q3news_post:
+            if self._is_q3news_post or getattr(self, "_center_telegram_content", False):
                 backdrop.setFixedWidth(900)
                 body_layout.insertWidget(
                     0, backdrop, 0, QtCore.Qt.AlignmentFlag.AlignHCenter
@@ -8914,6 +9261,90 @@ class ChangelogCard(SurfaceCard):
         except Exception as error:
             print(f"[changelog] Telegram backdrop activation failed: {error}")
             return False
+
+    def release_telegram_renderer(self):
+        """Release this card's Chromium renderer instead of keeping it Frozen."""
+        view = getattr(self, "telegramView", None)
+        if view is None:
+            return
+
+        renderer = getattr(view, "_renderer", None)
+        root = self.window()
+
+        # Stop periodic snapshots before detaching the view.
+        timer = getattr(view, "_frame_timer", None)
+        if timer is not None:
+            try:
+                timer.stop()
+            except RuntimeError:
+                pass
+
+        try:
+            if self._telegram_layout is not None:
+                self._telegram_layout.removeWidget(view)
+            view.hide()
+            view.setParent(None)
+            view.deleteLater()
+        except RuntimeError:
+            pass
+        self.telegramView = None
+
+        if renderer is not None:
+            try:
+                page = renderer.page()
+                if page is not None:
+                    page.setVisible(False)
+            except (AttributeError, RuntimeError):
+                pass
+            try:
+                renderer.stop()
+            except (AttributeError, RuntimeError):
+                pass
+            try:
+                renderer.close()
+            except (AttributeError, RuntimeError):
+                pass
+            try:
+                renderer.deleteLater()
+            except (AttributeError, RuntimeError):
+                pass
+
+            # Drop every launcher-owned reference so Qt can destroy the view.
+            for attr in ("_telegramDetachedRenderers",):
+                items = getattr(root, attr, None)
+                if isinstance(items, list):
+                    try:
+                        items.remove(renderer)
+                    except ValueError:
+                        pass
+            preloaded = getattr(root, "_telegramPreloadedRenderers", None)
+            if isinstance(preloaded, dict):
+                for key, value in list(preloaded.items()):
+                    if value is renderer:
+                        preloaded.pop(key, None)
+            current = getattr(root, "_telegramPrewarmCurrent", None)
+            if isinstance(current, dict) and current.get("renderer") is renderer:
+                root._telegramPrewarmCurrent = None
+
+        owners = getattr(root, "_telegram_renderer_owners", None)
+        if isinstance(owners, list):
+            try:
+                while self in owners:
+                    owners.remove(self)
+            except RuntimeError:
+                pass
+        if getattr(root, "_telegram_renderer_owner", None) is self:
+            remaining = getattr(root, "_telegram_renderer_owners", None) or []
+            root._telegram_renderer_owner = remaining[-1] if remaining else None
+
+        # Restore the lightweight native QTextBrowser fallback.
+        native = getattr(self, "nativeTextView", None)
+        if native is not None:
+            native.show()
+        backdrop = getattr(self, "telegramBackdrop", None)
+        if backdrop is not None:
+            backdrop.setMinimumHeight(40)
+            backdrop.updateGeometry()
 
     def activate_telegram_renderer(self):
         """Attach a Qt snapshot fed by a detached Telegram Chromium renderer.
@@ -8928,6 +9359,58 @@ class ChangelogCard(SurfaceCard):
             return None
         if not self._ensure_telegram_backdrop():
             return None
+
+        # Reuse the exact in-memory snapshot when this post has already been
+        # rendered in this session. No network, Chromium, or emoji fallback.
+        cached_snapshot = _q3_telegram_snapshot_cache_get(self._telegram_source_url)
+        if cached_snapshot is not None:
+            view = TelegramSnapshotView(
+                self._telegram_source_url,
+                None,
+                self.telegramBackdrop,
+                cached_pixmap=cached_snapshot,
+            )
+            view.ready.connect(self._telegram_web_ready)
+            self._telegram_layout.addWidget(view)
+            self.telegramView = view
+            self.telegramBackdrop.setMinimumHeight(0)
+            self.telegramBackdrop.updateGeometry()
+            if self._telegram_live_button is not None:
+                self._telegram_live_button.setText("CACHED")
+                self._telegram_live_button.setEnabled(False)
+            self.bodyWidget.updateGeometry()
+            return view
+
+        root = self.window()
+        # Keep a small LRU-like pool of live Telegram renderers. Four posts
+        # are enough for the visible Changelog area without allowing Chromium
+        # processes to grow with the total number of cards.
+        owners = getattr(root, "_telegram_renderer_owners", None)
+        if not isinstance(owners, list):
+            owners = []
+            root._telegram_renderer_owners = owners
+        owners[:] = [card for card in owners if card is not None and getattr(card, "telegramView", None) is not None]
+        # Do not evict an older Q3News renderer merely because another batch
+        # was added. Its body is not safely disposable until its immutable
+        # snapshot has been captured. The snapshot callback closes each
+        # renderer independently, so this is a temporary in-flight allowance,
+        # not a permanent pool of live Chromium views.
+        max_live = 15
+        while len(owners) >= max_live:
+            oldest = owners[0]
+            oldest_view = getattr(oldest, "telegramView", None)
+            oldest_snapshot = getattr(oldest_view, "_frame_pixmap", QtGui.QPixmap())
+            if oldest_snapshot is not None and not oldest_snapshot.isNull():
+                owners.pop(0)
+                if oldest is not self:
+                    try:
+                        oldest.release_telegram_renderer()
+                    except (AttributeError, RuntimeError):
+                        pass
+            else:
+                # Keep an unfinished renderer alive; snapshot completion will
+                # remove it from the owners list in _freeze_static_snapshot().
+                break
         try:
             renderer = None
             provider = getattr(self, "_telegram_page_provider", None)
@@ -8961,6 +9444,11 @@ class ChangelogCard(SurfaceCard):
             view.failed.connect(self._telegram_web_failed)
             self._telegram_layout.addWidget(view)
             self.telegramView = view
+            if self not in owners:
+                owners.append(self)
+            # Retain the legacy pointer for shutdown/diagnostic code, but the
+            # owners list is authoritative when up to four posts are live.
+            root._telegram_renderer_owner = self
             self.telegramBackdrop.setMinimumHeight(0)
             self.telegramBackdrop.updateGeometry()
 
@@ -9160,6 +9648,10 @@ class ChangelogCard(SurfaceCard):
         self._expanded = not self._expanded
         self.bodyWidget.setVisible(self._expanded)
         self._update_toggle_icon()
+
+        if not self._expanded:
+            self.release_telegram_renderer()
+            return
 
         if self._expanded:
             # Only the newest Changelog cards are prewarmed at startup. Older
@@ -12125,37 +12617,51 @@ class LocalMapsActionsDelegate(LocalMapsThumbnailDelegate):
         return False
 
     def eventFilter(self, watched, event):
-        # LocalMapsActionsDelegate overrides the inherited eventFilter and is
-        # installed after FullRowHoverDelegate on the same viewport. Therefore
-        # Qt dispatches mouse events here instead of to the base implementation.
-        # Forward them explicitly so the shared row delegate updates hover_row
-        # for every column, including PLAY/DELETE.
+        # This delegate is installed after FullRowHoverDelegate on the same
+        # viewport, so forward events to keep shared row-hover state updated.
         FullRowHoverDelegate.eventFilter(self, watched, event)
-        if watched is self._table.viewport():
-            if event.type() == QtCore.QEvent.Type.MouseMove:
-                point = event.position().toPoint()
-                index = self._table.indexAt(point)
-                action = self._map_action_at(index, point)
-                current = (index.row(), action) if action else None
-                if current != self._hovered:
+
+        # A queued event can arrive while the parent QTableWidget is being
+        # destroyed during launcher shutdown. Its Python wrapper may survive,
+        # but accessing the deleted C++ viewport raises RuntimeError.
+        try:
+            table = self._table
+            viewport = table.viewport()
+        except RuntimeError:
+            return False
+
+        if watched is viewport:
+            try:
+                if event.type() == QtCore.QEvent.Type.MouseMove:
+                    point = event.position().toPoint()
+                    index = table.indexAt(point)
+                    action = self._map_action_at(index, point)
+                    current = (index.row(), action) if action else None
+                    if current != self._hovered:
+                        old = self._hovered
+                        self._hovered = current
+                        if old:
+                            old_index = table.model().index(old[0], 5)
+                            viewport.update(table.visualRect(old_index))
+                        if current:
+                            viewport.update(table.visualRect(index))
+                        viewport.setCursor(
+                            QtCore.Qt.CursorShape.PointingHandCursor if current
+                            else QtCore.Qt.CursorShape.ArrowCursor
+                        )
+                elif event.type() == QtCore.QEvent.Type.Leave:
                     old = self._hovered
-                    self._hovered = current
-                    if old:
-                        self._table.viewport().update(self._table.visualRect(self._table.model().index(old[0], 5)))
-                    if current:
-                        self._table.viewport().update(self._table.visualRect(index))
-                    self._table.viewport().setCursor(
-                        QtCore.Qt.CursorShape.PointingHandCursor if current
-                        else QtCore.Qt.CursorShape.ArrowCursor
-                    )
-            elif event.type() == QtCore.QEvent.Type.Leave:
-                old = self._hovered
-                self._hovered = None
-                self._pressed = None
-                self._table.viewport().setCursor(QtCore.Qt.CursorShape.ArrowCursor)
-                if old and 0 <= old[0] < self._table.model().rowCount():
-                    self._table.viewport().update(self._table.visualRect(self._table.model().index(old[0], 5)))
+                    self._hovered = None
+                    self._pressed = None
+                    viewport.setCursor(QtCore.Qt.CursorShape.ArrowCursor)
+                    if old and 0 <= old[0] < table.model().rowCount():
+                        old_index = table.model().index(old[0], 5)
+                        viewport.update(table.visualRect(old_index))
+            except RuntimeError:
+                # The table/viewport may be deleted between dispatch and repaint.
+                return False
         return False
+
 
 
 def _q3_is_paper_theme():
@@ -12223,11 +12729,166 @@ class Q3DonationButton(GlowButton):
         super().leaveEvent(event)
 
 
+class MiddleClickAutoScrollIndicator(QtWidgets.QWidget):
+    """Transparent circular marker painted with the active launcher theme."""
+    def __init__(self, steel=True):
+        super().__init__(None, QtCore.Qt.WindowType.ToolTip | QtCore.Qt.WindowType.FramelessWindowHint)
+        self._steel = bool(steel)
+        self.setFixedSize(38, 38)
+        self.setAttribute(QtCore.Qt.WidgetAttribute.WA_TranslucentBackground, True)
+        self.setAttribute(QtCore.Qt.WidgetAttribute.WA_ShowWithoutActivating, True)
+        self.setAttribute(QtCore.Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+
+    def paintEvent(self, event):
+        p = QtGui.QPainter(self)
+        p.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing, True)
+        bg = QtGui.QColor("#000000" if self._steel else "#FFFFFF")
+        edge = QtGui.QColor("#D7E0EC" if self._steel else "#52657C")
+        fg = QtGui.QColor("#FFFFFF" if self._steel else "#263241")
+        p.setPen(QtGui.QPen(edge, 1.8))
+        p.setBrush(bg)
+        p.drawEllipse(QtCore.QRectF(2, 2, 34, 34))
+        p.setPen(QtGui.QPen(fg, 2.0, QtCore.Qt.PenStyle.SolidLine, QtCore.Qt.PenCapStyle.RoundCap, QtCore.Qt.PenJoinStyle.RoundJoin))
+        cx = 19.0
+        p.drawLine(QtCore.QPointF(cx, 10), QtCore.QPointF(cx, 28))
+        p.drawLine(QtCore.QPointF(cx, 10), QtCore.QPointF(14.5, 14.5))
+        p.drawLine(QtCore.QPointF(cx, 10), QtCore.QPointF(23.5, 14.5))
+        p.drawLine(QtCore.QPointF(cx, 28), QtCore.QPointF(14.5, 23.5))
+        p.drawLine(QtCore.QPointF(cx, 28), QtCore.QPointF(23.5, 23.5))
+        p.end()
+
+
+class MiddleClickAutoScrollFilter(QtCore.QObject):
+    """Classic middle-click autoscroll; slower in dense config editors."""
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._area = None
+        self._anchor = None
+        self._indicator = None
+        self._maps_scroll_remainder = 0.0
+        self._timer = QtCore.QTimer(self)
+        self._timer.setInterval(16)
+        self._timer.timeout.connect(self._autoscroll_tick)
+
+    def _find_area(self, obj):
+        widget = obj if isinstance(obj, QtWidgets.QWidget) else None
+        while widget is not None:
+            if isinstance(widget, QtWidgets.QAbstractScrollArea):
+                if widget.objectName() == "serversScroll" or widget.property("q3_no_middle_autoscroll"):
+                    return None
+                return widget
+            widget = widget.parentWidget()
+        return None
+
+    def _stop(self):
+        self._timer.stop()
+        self._area = None
+        self._anchor = None
+        self._maps_scroll_remainder = 0.0
+        if self._indicator is not None:
+            self._indicator.close()
+            self._indicator.deleteLater()
+            self._indicator = None
+
+    def _start(self, area, pos):
+        bar = area.verticalScrollBar()
+        if bar is None or bar.maximum() <= bar.minimum():
+            return False
+        self._stop()
+        self._area = area
+        self._anchor = QtCore.QPoint(pos)
+        theme = str(launcher_settings.get("theme", "steel")).strip().lower()
+        self._indicator = MiddleClickAutoScrollIndicator(theme not in ("paper", "light", "white"))
+        self._indicator.move(pos.x() - 19, pos.y() - 19)
+        self._indicator.show()
+        self._indicator.raise_()
+        self._timer.start()
+        return True
+
+    def _factor(self, area):
+        # The cursor-distance model is intentionally gentler in dense panes:
+        # a small movement should not fling long tables or config text.
+        names = []
+        classes = []
+        widget = area
+        while widget is not None:
+            try:
+                names.append((widget.objectName() or "").casefold())
+                classes.append(type(widget).__name__.casefold())
+                widget = widget.parentWidget()
+            except RuntimeError:
+                break
+        joined = " ".join(names + classes)
+        # Relative to the current v2 performance-restore settings:
+        # Config Editor: 10% slower; Maps and Screenshots & Demos: 30% faster.
+        if any(token in joined for token in ("config", "editor", "textedit", "codeview")):
+            return 0.135  # 10% slower than the current 0.15 setting.
+        if any(token in joined for token in ("maps", "mapstable", "onlinemaps")):
+            return 4.55  # 30% faster than the current 3.5 setting.
+        if any(token in joined for token in ("screenshots", "demos", "screenshot", "demoview")):
+            return 4.55  # 30% faster than the current 3.5 setting.
+        return 1.0
+
+    def _autoscroll_tick(self):
+        if self._area is None or self._anchor is None:
+            self._stop()
+            return
+        try:
+            bar = self._area.verticalScrollBar()
+            dy = QtGui.QCursor.pos().y() - self._anchor.y()
+            if abs(dy) <= 14:
+                return
+            # QTableWidget/QTableView scrollbars are row-indexed rather than
+            # pixel-indexed. Apply a fractional rows-per-tick rate and accumulate
+            # it, otherwise even a tiny nonzero speed jumps whole rows at 60 Hz.
+            if isinstance(self._area, QtWidgets.QAbstractItemView):
+                # Item views use pixel-based scrolling here. Apply the same
+                # per-section multiplier as other scroll areas so Maps and
+                # Screenshots & Demos receive the requested speed increase.
+                pixels_per_second = min(150.0, max(10.0, (abs(dy) - 14) * 0.72))
+                pixels_per_second *= self._factor(self._area)
+                pixels_per_second = min(683.0, pixels_per_second)
+                pixels_per_tick = pixels_per_second * (self._timer.interval() / 1000.0)
+                self._maps_scroll_remainder += pixels_per_tick
+                step = int(self._maps_scroll_remainder)
+                if step:
+                    self._maps_scroll_remainder -= step
+                    bar.setValue(bar.value() + (step if dy > 0 else -step))
+            else:
+                speed = min(21.0, max(1.0, (abs(dy) - 14) * 0.1125))
+                speed *= self._factor(self._area)
+                step = int(round(speed if dy > 0 else -speed))
+                if step:
+                    bar.setValue(bar.value() + step)
+        except RuntimeError:
+            self._stop()
+
+    def eventFilter(self, watched, event):
+        if event.type() == QtCore.QEvent.Type.MouseButtonPress and event.button() == QtCore.Qt.MouseButton.MiddleButton:
+            if self._area is not None:
+                self._stop()
+                return True
+            area = self._find_area(watched)
+            return bool(area is not None and self._start(area, event.globalPosition().toPoint()))
+        if self._area is not None:
+            if event.type() == QtCore.QEvent.Type.MouseButtonPress and event.button() in (
+                QtCore.Qt.MouseButton.LeftButton, QtCore.Qt.MouseButton.RightButton
+            ):
+                self._stop()
+            elif event.type() == QtCore.QEvent.Type.KeyPress and event.key() == QtCore.Qt.Key.Key_Escape:
+                self._stop()
+                return True
+        return False
+
 class ModernLauncherWindow(QtWidgets.QMainWindow):
     """Responsive 1366x768+ Q3Elite launcher — V15 White Paper / Obsidian."""
 
     def __init__(self):
         QtWidgets.QMainWindow.__init__(self)
+        self._middle_click_scroll_filter = MiddleClickAutoScrollFilter(self)
+        _q3_app = QtWidgets.QApplication.instance()
+        if _q3_app is not None:
+            _q3_app.installEventFilter(self._middle_click_scroll_filter)
         self._startup_component_timings = []
 
         # Diagnostic-only Qt event counter. It records event volume during
@@ -12821,7 +13482,10 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
         self.mediaFindShortcut.activated.connect(lambda: self._play_launcher_sound("click"))
         _q3_profile_mark("window_shortcuts_filters")
 
-        requested_start = str(launcher_settings.get("starting_section", "home") or "home").lower()
+        if os.environ.pop("Q3ELITE_FIRST_RUN", "") == "1":
+            requested_start = "home"
+        else:
+            requested_start = str(launcher_settings.get("starting_section", "home") or "home").lower()
         if requested_start == "last":
             requested_start = str(launcher_settings.get("last_section", "home") or "home").lower()
         if requested_start not in NAV_PAGE_ORDER:
@@ -13299,9 +13963,22 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
         b.setFixedSize(nav_size, nav_size)
         if page == "changelog":
             b.clicked.connect(lambda checked=False: self._handle_changelog_nav_click())
+        elif page == "maps":
+            b.clicked.connect(lambda checked=False: self._handle_maps_nav_click())
         else:
             b.clicked.connect(lambda checked=False, p=page: self.show_page(p))
         return b
+
+    def _handle_maps_nav_click(self):
+        """Open Maps on first entry; repeated sidebar clicks toggle Local/Online."""
+        page_host = getattr(self, self._page_attr_names.get("maps", "mapsPage"), None)
+        current = self.pages.currentWidget() if hasattr(self, "pages") else None
+        if current is not page_host:
+            self.show_page("maps")
+            self.mapsNav.setChecked(True)
+            return
+        self.set_maps_mode("online" if getattr(self, "mapsMode", "local") == "local" else "local")
+        self.mapsNav.setChecked(True)
 
     def _handle_changelog_nav_click(self):
         """Open Q3News on first entry; subsequent sidebar clicks toggle the feeds."""
@@ -14679,6 +15356,57 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
         svl.addStretch(1)
         grid.addWidget(servers, 1, 1)
 
+        # Network proxy -----------------------------------------------------
+        proxy_card, proxy_l = make_card(
+            "PROXY",
+            "Optional HTTP/HTTPS proxy for Q3Elite network downloads. Credentials are stored encrypted with Windows DPAPI.",
+        )
+        self.proxyEnabledBox = ToggleSwitch("Enable proxy")
+        self.proxyEnabledBox.setObjectName("settingsToggle")
+        proxy_l.addWidget(self.proxyEnabledBox)
+
+        def _proxy_field_row(label_text, widget):
+            row = QtWidgets.QHBoxLayout(); row.setSpacing(10)
+            label = QtWidgets.QLabel(label_text); label.setObjectName("settingsHint")
+            label.setMinimumWidth(105)
+            row.addWidget(label)
+            row.addWidget(widget, 1)
+            proxy_l.addLayout(row)
+
+        self.proxyUrlEdit = QtWidgets.QLineEdit()
+        self.proxyUrlEdit.setObjectName("settingsLineEdit")
+        self.proxyUrlEdit.setPlaceholderText("http://127.0.0.1:8080")
+        _proxy_field_row("Proxy address", self.proxyUrlEdit)
+        self.proxyUsernameEdit = QtWidgets.QLineEdit()
+        self.proxyUsernameEdit.setObjectName("settingsLineEdit")
+        self.proxyUsernameEdit.setPlaceholderText("Optional")
+        _proxy_field_row("Username", self.proxyUsernameEdit)
+        self.proxyPasswordEdit = QtWidgets.QLineEdit()
+        self.proxyPasswordEdit.setObjectName("settingsLineEdit")
+        self.proxyPasswordEdit.setEchoMode(QtWidgets.QLineEdit.EchoMode.Password)
+        self.proxyPasswordEdit.setPlaceholderText("Optional")
+        _proxy_field_row("Password", self.proxyPasswordEdit)
+
+        proxy_actions = QtWidgets.QHBoxLayout(); proxy_actions.setSpacing(8)
+        self.proxyTestButton = MaterialPushButton("TEST CONNECTION")
+        self.proxyTestButton.setObjectName("secondaryButton")
+        self.proxyTestButton.clicked.connect(self.test_network_proxy)
+        proxy_actions.addWidget(self.proxyTestButton)
+        self.proxySaveButton = MaterialPushButton("SAVE PROXY")
+        self.proxySaveButton.setObjectName("secondaryButton")
+        self.proxySaveButton.clicked.connect(self.save_network_proxy)
+        proxy_actions.addWidget(self.proxySaveButton)
+        proxy_actions.addStretch(1)
+        proxy_l.addLayout(proxy_actions)
+        self.proxyStatusLabel = QtWidgets.QLabel("Proxy disabled.")
+        self.proxyStatusLabel.setObjectName("muted")
+        self.proxyStatusLabel.setWordWrap(True)
+        proxy_l.addWidget(self.proxyStatusLabel)
+        self.proxyEnabledBox.toggled.connect(self._set_proxy_fields_enabled)
+        self._set_proxy_fields_enabled(self.proxyEnabledBox.isChecked())
+        grid.addWidget(proxy_card, 2, 0, 1, 2)
+        yield "network_proxy_card"
+
         grid.setColumnStretch(0, 1); grid.setColumnStretch(1, 1)
         _settings_profile_mark("launcher_audio")
         yield "server_and_core_settings"
@@ -14792,7 +15520,7 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
             combo = QtWidgets.QComboBox(); combo.setObjectName(combo_name)
             combo.addItem("older than 1 day", 1); combo.addItem("older than 3 days", 3); combo.addItem("older than 7 days", 7); combo.addItem("older than 14 days", 14); combo.addItem("older than 30 days", 30); combo.addItem("Custom", -1)
             combo.setFixedWidth(theme_int("settings.cleanup_combo_width", 190)); combo.setEnabled(False)
-            custom = QtWidgets.QSpinBox(); custom.setObjectName(spin_name); custom.setRange(1,3650); custom.setSuffix(" days"); custom.setValue(14); custom.setFixedWidth(110); custom.setVisible(False); custom.setEnabled(False)
+            custom = QtWidgets.QSpinBox(); custom.setObjectName(spin_name); custom.setRange(1,3650); custom.setSuffix(" days"); custom.setValue(7); custom.setFixedWidth(110); custom.setVisible(False); custom.setEnabled(False)
             def refresh():
                 enabled = checkbox.isChecked(); combo.setEnabled(enabled); custom.setEnabled(enabled); custom.setVisible(enabled and combo.currentData() == -1)
             checkbox.toggled.connect(refresh); combo.currentIndexChanged.connect(refresh)
@@ -14985,7 +15713,7 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
         identity_actions = QtWidgets.QVBoxLayout(); identity_actions.setSpacing(8)
         self.accountPageSignIn = GlowButton("SIGN IN / REGISTER")
         self.accountPageSignIn.setObjectName("applyButton")
-        self.accountPageSignIn.clicked.connect(self.open_account_dialog)
+        self.accountPageSignIn.clicked.connect(lambda checked=False: self.open_account_dialog())
         identity_actions.addWidget(self.accountPageSignIn)
         self.accountEditProfileButton = MaterialPushButton("EDIT PROFILE")
         self.accountEditProfileButton.setObjectName("secondaryButton")
@@ -16976,6 +17704,8 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
         except OSError as error:
             print(f"[demos] Could not scan demo folder {folder}: {error}")
 
+        _demo_scan_ms = (time.perf_counter() - _demo_scan_started) * 1000.0
+
         reverse = mode.endswith("↓")
         if mode.startswith("Name"):
             rows.sort(key=lambda row: row[0].name.casefold(), reverse=reverse)
@@ -17528,14 +18258,59 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
             min_on.setChecked(bool(rule.get("min_enabled", True)))
             self._register_matchmaking_dirty_control(min_on)
             players_row.addWidget(min_on)
-            minp = QtWidgets.QSpinBox()
-            minp.setRange(0, 128); minp.setValue(int(rule.get("min_players", 3))); minp.setButtonSymbols(QtWidgets.QAbstractSpinBox.ButtonSymbols.NoButtons); minp.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter); minp.setFixedWidth(74); self._register_matchmaking_dirty_control(minp); players_row.addWidget(minp)
+            def make_player_count_input(value):
+                # A plain QLineEdit avoids QSpinBox's native arrow-button
+                # subcontrols entirely. Some Material styles keep hit-testable
+                # button regions above the editor even with ButtonSymbols.NoButtons.
+                edit = QtWidgets.QLineEdit(str(max(0, min(128, int(value)))))
+                edit.setObjectName("matchmakingPlayerCount")
+                edit.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
+                edit.setFixedSize(74, 34)
+                edit.setMaxLength(3)
+                edit.setValidator(QtGui.QIntValidator(0, 128, edit))
+                # Derive the editor palette from the active theme instead of
+                # hard-coding a generic near-black fill for Steel. This keeps
+                # the input visually integrated with each theme's surfaces.
+                text_color = theme_value("colors.text.primary", "#F3F3F3")
+                background_color = theme_value("colors.surface.raised", "#171B22")
+                border_color = theme_value("colors.border.normal", "rgba(255,255,255,42)")
+                focus_color = theme_value("colors.brand.primary", "#D79A28")
+                text_color = str(text_color)
+                background_color = str(background_color)
+                border_color = str(border_color)
+                focus_color = str(focus_color)
+                edit.setAutoFillBackground(True)
+                edit.setAttribute(QtCore.Qt.WidgetAttribute.WA_StyledBackground, True)
+                palette = edit.palette()
+                palette.setColor(QtGui.QPalette.ColorRole.Base, QtGui.QColor(background_color))
+                palette.setColor(QtGui.QPalette.ColorRole.Text, QtGui.QColor(text_color))
+                palette.setColor(QtGui.QPalette.ColorRole.Highlight, QtGui.QColor(focus_color))
+                palette.setColor(QtGui.QPalette.ColorRole.HighlightedText, QtGui.QColor("#FFFFFF"))
+                edit.setPalette(palette)
+                edit.setStyleSheet(
+                    "QLineEdit#matchmakingPlayerCount {"
+                    f" color: {text_color};"
+                    f" border: 1px solid {border_color};"
+                    " border-radius: 5px;"
+                    f" background-color: {background_color};"
+                    " padding: 2px 5px;"
+                    f" selection-background-color: {focus_color};"
+                    "}"
+                    "QLineEdit#matchmakingPlayerCount:focus {"
+                    f" border: 1px solid {focus_color};"
+                    "}"
+                )
+                self._register_matchmaking_dirty_control(edit)
+                return edit
+
+            minp = make_player_count_input(rule.get("min_players", 3))
+            players_row.addWidget(minp)
             max_on = MaterialCheckBox("Less than")
             max_on.setChecked(bool(rule.get("max_enabled", True)))
             self._register_matchmaking_dirty_control(max_on)
             players_row.addWidget(max_on)
-            maxp = QtWidgets.QSpinBox()
-            maxp.setRange(0, 128); maxp.setValue(int(rule.get("max_players", 6))); maxp.setButtonSymbols(QtWidgets.QAbstractSpinBox.ButtonSymbols.NoButtons); maxp.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter); maxp.setFixedWidth(74); self._register_matchmaking_dirty_control(maxp); players_row.addWidget(maxp)
+            maxp = make_player_count_input(rule.get("max_players", 6))
+            players_row.addWidget(maxp)
             players_row.addStretch(1)
             conditions_box.addLayout(players_row)
 
@@ -17803,9 +18578,9 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
             "servers": selected_servers,
             "server_mode": e["server_mode"].currentData(),
             "min_enabled": e["min_on"].isChecked(),
-            "min_players": e["min"].value(),
+            "min_players": max(0, min(128, int(e["min"].text() or 0))),
             "max_enabled": e["max_on"].isChecked(),
-            "max_players": e["max"].value(),
+            "max_players": max(0, min(128, int(e["max"].text() or 0))),
             "map_conditions": [
                 {"enabled": r["enabled"].isChecked(),
                  "operator": r["op"].currentData(),
@@ -18046,7 +18821,8 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
         title=MetallicLabel("MAPS"); title.setObjectName("pageTitle"); header.addWidget(title)
         self.mapsLocalTab=GlowButton("LOCAL"); self.mapsLocalTab.setObjectName("mapModeButton"); self.mapsLocalTab.setProperty("active",True)
         self.mapsOnlineTab=GlowButton("ONLINE"); self.mapsOnlineTab.setObjectName("mapModeButton"); self.mapsOnlineTab.setProperty("active",False)
-        self.mapsLocalTab.clicked.connect(lambda:self.set_maps_mode("local")); self.mapsOnlineTab.clicked.connect(lambda:self.set_maps_mode("online"))
+        self.mapsLocalTab.clicked.connect(lambda _checked=False: self.set_maps_mode("local"))
+        self.mapsOnlineTab.clicked.connect(lambda _checked=False: self.set_maps_mode("online"))
         header.addWidget(self.mapsLocalTab); header.addWidget(self.mapsOnlineTab); header.addStretch(1)
         self.mapsStatus=QtWidgets.QLabel("Local map catalog"); self.mapsStatus.setObjectName("muted"); header.addWidget(self.mapsStatus)
         self.mapsRefreshButton=GlowButton("↻  REFRESH MAPS"); self.mapsRefreshButton.setObjectName("mapToolbarButton")
@@ -18062,7 +18838,7 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
         self.mapsHint=QtWidgets.QLabel("F1 Shortcuts   ↑↓ Select   O Select PAK   Ctrl+F Search   Enter Play   Del Delete"); self.mapsHint.setObjectName("mapsHint"); ll.addWidget(self.mapsHint)
         self.mapsKeys=QtWidgets.QLabel("KEY BINDS\n↑ / ↓ : Navigation\nEnter : Play\nO : Select PAK\nDel : Delete PAK\nCtrl+F : Search\nF3 : Sort\nF4 : Location\nF5 : Refresh\nF1 : Show/Hide"); self.mapsKeys.setObjectName("keyBindsLegend"); self.mapsKeys.hide(); ll.addWidget(self.mapsKeys)
         self.mapsTable=QtWidgets.QTableWidget(0,6); self.mapsTable.setObjectName("mapsTable"); self.mapsTable.setHorizontalHeader(MaterialHeaderView(QtCore.Qt.Orientation.Horizontal, self.mapsTable)); self.mapsTable.setHorizontalHeaderLabels(["LEVELSHOT","MAP","PAK","SIZE","GAMETYPE",""])
-        self.mapsTable.verticalHeader().setVisible(False); self.mapsTable.verticalHeader().setDefaultSectionSize(92); self.mapsTable.setShowGrid(False); self.mapsTable.setStyleSheet("QTableWidget#mapsTable::item:selected { background: transparent; border: none; } QTableWidget#mapsTable::item:focus { outline: none; border: none; }"); self.mapsTable.setSelectionBehavior(QtWidgets.QAbstractItemView.SelectionBehavior.SelectRows); self.mapsTable.setSelectionMode(QtWidgets.QAbstractItemView.SelectionMode.SingleSelection); self.mapsTable.clicked.connect(self._on_local_map_clicked); self.mapsTable.setEditTriggers(QtWidgets.QAbstractItemView.EditTrigger.NoEditTriggers); self.mapsTable.setIconSize(QtCore.QSize(144,81)); self.mapsTable.setMouseTracking(True); self.mapsTable.viewport().setMouseTracking(True); self.mapsTable.setWordWrap(False); self.mapsTable.setItemDelegate(MapRowHoverDelegate(self.mapsTable)); self.mapsTable.setItemDelegateForColumn(0, LocalMapsThumbnailDelegate(self.mapsTable)); self._localMapsActionsDelegate = LocalMapsActionsDelegate(self.mapsTable, self); self.mapsTable.setItemDelegateForColumn(5, self._localMapsActionsDelegate)
+        self.mapsTable.verticalHeader().setVisible(False); self.mapsTable.verticalHeader().setDefaultSectionSize(92); self.mapsTable.setShowGrid(False); self.mapsTable.setStyleSheet("QTableWidget#mapsTable::item:selected { background: transparent; border: none; } QTableWidget#mapsTable::item:focus { outline: none; border: none; }"); self.mapsTable.setSelectionBehavior(QtWidgets.QAbstractItemView.SelectionBehavior.SelectRows); self.mapsTable.setSelectionMode(QtWidgets.QAbstractItemView.SelectionMode.SingleSelection); self.mapsTable.setVerticalScrollMode(QtWidgets.QAbstractItemView.ScrollMode.ScrollPerPixel); self.mapsTable.clicked.connect(self._on_local_map_clicked); self.mapsTable.setEditTriggers(QtWidgets.QAbstractItemView.EditTrigger.NoEditTriggers); self.mapsTable.setIconSize(QtCore.QSize(144,81)); self.mapsTable.setMouseTracking(True); self.mapsTable.viewport().setMouseTracking(True); self.mapsTable.setWordWrap(False); self.mapsTable.setItemDelegate(MapRowHoverDelegate(self.mapsTable)); self.mapsTable.setItemDelegateForColumn(0, LocalMapsThumbnailDelegate(self.mapsTable)); self._localMapsActionsDelegate = LocalMapsActionsDelegate(self.mapsTable, self); self.mapsTable.setItemDelegateForColumn(5, self._localMapsActionsDelegate)
         self._map_thumbnail_load_pending = False
         self._map_thumbnail_prefetch_pending = False
         self._map_thumbnail_prefetch_cursor = 0
@@ -18078,8 +18854,15 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
         online=QtWidgets.QWidget(); ol=QtWidgets.QVBoxLayout(online); ol.setContentsMargins(0,0,0,0); ol.setSpacing(8)
         self.onlineMapsSearch=QtWidgets.QLineEdit(); self.onlineMapsSearch.setObjectName("mapsSearch"); self.onlineMapsSearch.setPlaceholderText("Search LvLWorld + Worldspawn maps…   Ctrl+F"); self.onlineMapsSearch.setClearButtonEnabled(True); ol.addWidget(self.onlineMapsSearch)
         self.onlineMapsHeading=QtWidgets.QLabel("LATEST MAPS — LvLWorld"); self.onlineMapsHeading.setObjectName("onlineMapsHeading"); ol.addWidget(self.onlineMapsHeading)
+        self.onlineMapsKeys = QtWidgets.QLabel(
+            "KEY BINDS\n↑ / ↓ : Navigation\nEnter : Open Map\nO : Open Download Location\n"
+            "Del : Delete Download\nCtrl+F : Search\nF1 : Show/Hide"
+        )
+        self.onlineMapsKeys.setObjectName("keyBindsLegend")
+        self.onlineMapsKeys.hide()
+        ol.addWidget(self.onlineMapsKeys)
         self.onlineMapsTable=QtWidgets.QTableWidget(0,7); self.onlineMapsTable.setObjectName("mapsTable"); self.onlineMapsTable.setHorizontalHeader(MaterialHeaderView(QtCore.Qt.Orientation.Horizontal, self.onlineMapsTable)); self.onlineMapsTable.setHorizontalHeaderLabels(["LEVELSHOT","MAP","PAKNAME","SIZE","RELEASED","SOURCE",""])
-        self.onlineMapsTable.verticalHeader().setVisible(False); self.onlineMapsTable.verticalHeader().setDefaultSectionSize(92); self.onlineMapsTable.setShowGrid(False); self.onlineMapsTable.setSelectionBehavior(QtWidgets.QAbstractItemView.SelectionBehavior.SelectRows); self.onlineMapsTable.setSelectionMode(QtWidgets.QAbstractItemView.SelectionMode.SingleSelection); self.onlineMapsTable.setEditTriggers(QtWidgets.QAbstractItemView.EditTrigger.NoEditTriggers); self.onlineMapsTable.setIconSize(QtCore.QSize(144,81)); self.onlineMapsTable.setMouseTracking(True); self.onlineMapsTable.viewport().setMouseTracking(True); self.onlineMapsTable.setWordWrap(False); self.onlineMapsTable.setItemDelegate(MapRowHoverDelegate(self.onlineMapsTable)); self.onlineMapsTable.setItemDelegateForColumn(0, LocalMapsThumbnailDelegate(self.onlineMapsTable))
+        self.onlineMapsTable.verticalHeader().setVisible(False); self.onlineMapsTable.verticalHeader().setDefaultSectionSize(92); self.onlineMapsTable.setShowGrid(False); self.onlineMapsTable.setSelectionBehavior(QtWidgets.QAbstractItemView.SelectionBehavior.SelectRows); self.onlineMapsTable.setSelectionMode(QtWidgets.QAbstractItemView.SelectionMode.SingleSelection); self.onlineMapsTable.setVerticalScrollMode(QtWidgets.QAbstractItemView.ScrollMode.ScrollPerPixel); self.onlineMapsTable.setEditTriggers(QtWidgets.QAbstractItemView.EditTrigger.NoEditTriggers); self.onlineMapsTable.setIconSize(QtCore.QSize(144,81)); self.onlineMapsTable.setMouseTracking(True); self.onlineMapsTable.viewport().setMouseTracking(True); self.onlineMapsTable.setWordWrap(False); self.onlineMapsTable.setItemDelegate(MapRowHoverDelegate(self.onlineMapsTable)); self.onlineMapsTable.setItemDelegateForColumn(0, LocalMapsThumbnailDelegate(self.onlineMapsTable))
         h=self.onlineMapsTable.horizontalHeader(); h.setSectionResizeMode(0,QtWidgets.QHeaderView.ResizeMode.Fixed); h.resizeSection(0,164); h.setSectionResizeMode(1,QtWidgets.QHeaderView.ResizeMode.Stretch); h.setSectionResizeMode(2,QtWidgets.QHeaderView.ResizeMode.Stretch); h.setSectionResizeMode(3,QtWidgets.QHeaderView.ResizeMode.Fixed); h.resizeSection(3,theme_int("maps.size_column",100)); h.setSectionResizeMode(4,QtWidgets.QHeaderView.ResizeMode.Fixed); h.resizeSection(4,110); h.setSectionResizeMode(5,QtWidgets.QHeaderView.ResizeMode.Fixed); h.resizeSection(5,78); h.setSectionResizeMode(6,QtWidgets.QHeaderView.ResizeMode.Fixed); h.resizeSection(6,theme_int("maps.online_actions_column",194))
         ol.addWidget(self.onlineMapsTable,1)
         self.onlineLoadMore=GlowButton("LOAD MORE"); self.onlineLoadMore.setObjectName("mapToolbarButton"); self.onlineLoadMore.clicked.connect(self._load_more_online_maps); ol.addWidget(self.onlineLoadMore,0,QtCore.Qt.AlignmentFlag.AlignHCenter)
@@ -18115,9 +18898,15 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
                 self._play_launcher_sound("click")
                 action()
             return run
-        shortcut("F1", map_action_shortcut(lambda: self.mapsKeys.setVisible(not self.mapsKeys.isVisible()), local_only=True)); shortcut("Up",lambda:self._step_map(-1) if self.mapsMode=="local" else self._step_online_map(-1)); shortcut("Down",lambda:self._step_map(1) if self.mapsMode=="local" else self._step_online_map(1)); shortcut("Return",lambda:self.play_selected_map() if self.mapsMode=="local" else self.activate_selected_online_map()); shortcut("O",map_action_shortcut(lambda:self.open_selected_map_location() if self.mapsMode=="local" else self.open_selected_online_map_location())); shortcut("Delete",map_action_shortcut(lambda:self.delete_selected_map_pak() if self.mapsMode=="local" else self.delete_selected_online_map())); shortcut("F3",map_action_shortcut(self.cycle_maps_gametype_sort, local_only=True)); shortcut("F4",map_action_shortcut(self.cycle_maps_location_filter, local_only=True))
+        shortcut("F1", map_action_shortcut(self._toggle_maps_key_legend)); shortcut("Up",lambda:self._step_map(-1) if self.mapsMode=="local" else self._step_online_map(-1)); shortcut("Down",lambda:self._step_map(1) if self.mapsMode=="local" else self._step_online_map(1)); shortcut("Return",lambda:self.play_selected_map() if self.mapsMode=="local" else self.activate_selected_online_map()); shortcut("O",map_action_shortcut(lambda:self.open_selected_map_location() if self.mapsMode=="local" else self.open_selected_online_map_location())); shortcut("Delete",map_action_shortcut(lambda:self.delete_selected_map_pak() if self.mapsMode=="local" else self.delete_selected_online_map())); shortcut("F3",map_action_shortcut(self.cycle_maps_gametype_sort, local_only=True)); shortcut("F4",map_action_shortcut(self.cycle_maps_location_filter, local_only=True))
         self.mapsTable.doubleClicked.connect(lambda index: self.play_selected_map() if index.column() != 5 else None)
         return page
+
+    def _toggle_maps_key_legend(self):
+        visible = not bool(getattr(self, "_maps_key_legend_visible", False))
+        self._maps_key_legend_visible = visible
+        self.mapsKeys.setVisible(visible)
+        self.onlineMapsKeys.setVisible(visible)
 
     def set_maps_mode(self,mode):
         self.mapsMode="online" if mode=="online" else "local"; online=self.mapsMode=="online"; self.mapsStack.setCurrentIndex(1 if online else 0); self.mapsRefreshButton.setVisible(not online)
@@ -19892,9 +20681,9 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
         than children of the launcher. Their Chromium surfaces therefore never
         enter/leave the launcher's translucent HWND when CHANGELOG is selected.
         """
-        if (not TELEGRAM_WEBENGINE_AVAILABLE or QWebEngineView is None
-                or not theme_bool("performance.telegram_webengine_prewarm", True)):
-            return
+        # Prewarming keeps Chromium renderers alive without user interaction.
+        # Deliberately disabled: create a renderer only for the currently opened card.
+        return
         if getattr(self, "_telegramPrewarmActive", False):
             return
         urls = self._latest_telegram_sources()
@@ -20292,7 +21081,7 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
                         pass
                 return datetime.min
             sorted_entries = sorted(entries, key=_key, reverse=True)
-            latest_limit = max(1, min(6, theme_int("performance.changelog_latest_posts", 3)))
+            latest_limit = max(1, min(6, theme_int("performance.changelog_latest_posts", 4)))
             auto_telegram_urls = []
             for release in sorted_entries:
                 source = str(release.get("telegram", release.get("text_source", "")) or "").strip()
@@ -20303,21 +21092,20 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
             auto_telegram_urls = set(auto_telegram_urls)
             changelog_cards = []
             page._changelog_cards = changelog_cards
-            initial_cards = max(1, theme_int("performance.changelog_initial_cards", 3))
+            initial_cards = max(1, theme_int("performance.changelog_initial_cards", 4))
             batch_size = max(1, theme_int("performance.changelog_card_batch", 3))
             step_ms = max(8, theme_int("performance.changelog_card_step_ms", 24))
 
             def append_card(index):
                 release = sorted_entries[index]
                 source = str(release.get("telegram", release.get("text_source", "")) or "").strip()
-                auto_web = bool(
-                    source and source in auto_telegram_urls
-                    and TELEGRAM_WEBENGINE_AVAILABLE
-                    and theme_bool("performance.changelog_auto_webengine", True)
-                )
-                auto_fetch = bool(source and source in auto_telegram_urls and not auto_web)
+                # Prefer the lightweight native Telegram parser for Changelog.
+                # Full Chromium rendering is available only on explicit user action;
+                # loading a release card must not start a heavy WebEngine page.
+                auto_web = False
+                auto_fetch = bool(source and source in auto_telegram_urls)
                 card = ChangelogCard(
-                    release, content, expanded=(index < 3), defer_telegram=True,
+                    release, content, expanded=(index < 4), defer_telegram=True,
                     telegram_fetcher=self._queue_telegram_fetch,
                     auto_fetch_telegram=auto_fetch,
                     telegram_web_only=auto_web,
@@ -20437,6 +21225,14 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
                     self._mark_q3news_read()
                 if not page._q3news_ids and not page._q3news_loading:
                     self._load_q3news_page(page, initial=True)
+                else:
+                    # The first batch may have been created while Changelog
+                    # was not the active launcher section. Re-attempt renderer
+                    # activation now that the Q3News tab is actually selected.
+                    for _card in list(getattr(page, "_q3news_cards", []) or []):
+                        QtCore.QTimer.singleShot(
+                            80, lambda c=_card, p=page: self._activate_q3news_card(c, p)
+                        )
             elif index == 1:
                 self._mark_changelog_read()
 
@@ -20444,6 +21240,33 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
             set_tab(1 if stack.currentIndex() == 0 else 0, mark_read=True)
 
         page._changelog_toggle_tab = toggle_tab
+
+        def _on_changelog_section_shown(_index):
+            if self.pages.currentWidget() is getattr(self, "changelogPage", None):
+                if stack.currentIndex() == 0:
+                    # The initial worker may have completed while Changelog was
+                    # still hidden. Re-check on real section activation so an
+                    # empty feed never remains stuck without an automatic fetch.
+                    if (
+                        not getattr(page, "_q3news_ids", [])
+                        and not getattr(page, "_q3news_loading", False)
+                        and not getattr(page, "_q3news_exhausted", False)
+                    ):
+                        QtCore.QTimer.singleShot(
+                            120, lambda p=page: self._load_q3news_page(p, initial=True)
+                            if not getattr(p, "_q3news_ids", [])
+                            and not getattr(p, "_q3news_loading", False)
+                            and not getattr(p, "_q3news_exhausted", False)
+                            else None
+                        )
+                    for _card in list(getattr(page, "_q3news_cards", []) or []):
+                        QtCore.QTimer.singleShot(
+                            100, lambda c=_card, p=page: self._activate_q3news_card(c, p)
+                        )
+                elif stack.currentIndex() == 1:
+                    QtCore.QTimer.singleShot(100, self._activate_changelog_renderers)
+        self.pages.currentChanged.connect(_on_changelog_section_shown)
+
         if getattr(self, "_changelog_sidebar_toggle_pending", False):
             self._changelog_sidebar_toggle_pending = False
             QtCore.QTimer.singleShot(0, toggle_tab)
@@ -20458,8 +21281,20 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
 
         def news_scroll_changed(value):
             bar = news_scroll.verticalScrollBar()
-            if value <= 10 and bar.maximum() > 30 and page._q3news_ids and not page._q3news_loading:
-                self._load_q3news_page(page, initial=False)
+            if (
+                value <= 10
+                and bar.maximum() > 0
+                and page._q3news_ids
+                and not page._q3news_loading
+                and not getattr(page, "_q3news_top_refresh_armed", False)
+            ):
+                page._q3news_top_refresh_armed = True
+                page._q3news_loading_latest = True
+                # Do not let the follow-tail handler undo the user's move to top.
+                page._q3news_follow_latest = False
+                self._load_q3news_page(page, initial=True)
+            elif value > 40:
+                page._q3news_top_refresh_armed = False
         news_scroll.verticalScrollBar().valueChanged.connect(news_scroll_changed)
 
         def follow_q3news_tail():
@@ -20495,7 +21330,12 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
         return page
 
     def _load_q3news_page(self, page, initial=False):
-        if page is None or getattr(page, "_q3news_loading", False) or getattr(page, "_q3news_exhausted", False):
+        latest_refresh = bool(getattr(page, "_q3news_loading_latest", False))
+        if (
+            page is None
+            or getattr(page, "_q3news_loading", False)
+            or (getattr(page, "_q3news_exhausted", False) and not latest_refresh)
+        ):
             return
         ids = list(getattr(page, "_q3news_ids", []) or [])
         before = min(ids) if ids and not initial else None
@@ -20506,7 +21346,7 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
             button.setEnabled(False); button.setText("LOADING…")
         if status is not None:
             status.setText("Loading latest Q3News…" if initial else "Loading older Q3News…")
-        worker = Q3NewsWorker(before=before, limit=(2 if initial else 3), parent=self)
+        worker = Q3NewsWorker(before=before, limit=2, parent=self)
         page._q3news_worker = worker
         worker.result_ready.connect(lambda ok, data, p=page, first=initial: self._q3news_page_ready(p, first, ok, data))
         worker.finished.connect(worker.deleteLater)
@@ -20519,26 +21359,57 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
             status = page._q3news_status
             button.setEnabled(True); button.setText("LOAD MORE")
             if not success:
-                status.setText(f"Q3News unavailable: {result}")
+                latest_refresh = bool(getattr(page, "_q3news_loading_latest", False))
+                page._q3news_loading_latest = False
+                status.setText(f"Could not load Q3News. Retrying automatically… ({result})")
+                if initial and not getattr(page, "_q3news_initial_retry_done", False):
+                    page._q3news_initial_retry_done = True
+                    QtCore.QTimer.singleShot(
+                        1800,
+                        lambda p=page: self._load_q3news_page(p, initial=True)
+                        if not getattr(p, "_q3news_ids", [])
+                        and not getattr(p, "_q3news_loading", False)
+                        and not getattr(p, "_q3news_exhausted", False)
+                        else None
+                    )
+                else:
+                    status.setText(f"Could not load Q3News. Click LOAD MORE to retry. ({result})")
                 return
             rows = [dict(x) for x in (result or []) if isinstance(x, dict) and int(x.get("id") or 0) > 0]
             if initial:
                 self._refresh_q3news_notification(rows, success=True)
             existing = set(int(x) for x in page._q3news_ids)
+            latest_refresh = bool(getattr(page, "_q3news_loading_latest", False))
+            page._q3news_loading_latest = False
             rows = [x for x in rows if int(x["id"]) not in existing]
             rows.sort(key=lambda x: int(x["id"]))
             if not rows:
-                page._q3news_exhausted = True
-                button.setEnabled(False); button.setText("NO MORE NEWS")
-                status.setText("")
+                # A transient/overlapping Telegram public-page response is not
+                # proof that the channel has no older posts. Keep the button
+                # usable so the user can retry instead of permanently locking it.
+                if latest_refresh:
+                    button.setEnabled(True); button.setText("LOAD MORE")
+                    status.setText("No newer posts found.")
+                    return
+                page._q3news_empty_retries = int(getattr(page, "_q3news_empty_retries", 0)) + 1
+                if page._q3news_empty_retries >= 3:
+                    page._q3news_exhausted = True
+                    button.setEnabled(False); button.setText("NO MORE NEWS")
+                    status.setText("No older posts were found.")
+                else:
+                    button.setEnabled(True); button.setText("LOAD MORE")
+                    status.setText("No new posts returned. Click LOAD MORE to retry.")
                 return
+            page._q3news_empty_retries = 0
 
             bar = page._q3news_scroll.verticalScrollBar()
             old_max = bar.maximum()
             old_value = bar.value()
             insert_at = 3  # LOAD MORE + status + timeline spacer.
-            # Keep a stretch between toolbar and cards so a short feed sits at
-            # the bottom like a chat timeline. Older rows are prepended.
+            # Older batches are prepended. A top-edge refresh fetches the newest
+            # two posts and appends them to the chronological timeline.
+            if latest_refresh:
+                insert_at = page._q3news_feed.count()
             for offset, row in enumerate(rows):
                 post_id = int(row["id"])
                 url = str(row.get("url") or f"https://t.me/Q3News/{post_id}")
@@ -20550,34 +21421,64 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
                 card = ChangelogCard(
                     release, page, expanded=True, defer_telegram=True,
                     telegram_fetcher=self._queue_telegram_fetch,
-                    auto_fetch_telegram=True,
-                    telegram_web_only=False,
+                    auto_fetch_telegram=False,
+                    telegram_web_only=True,
                     telegram_page_provider=self._take_prewarmed_telegram_renderer,
                 )
+                card._q3news_post_id = post_id
                 page._q3news_feed.insertWidget(insert_at + offset, card)
-                page._q3news_cards.insert(offset, card)
-                self._queue_telegram_fetch(url)
-                # Q3News cards are created after the Changelog page's normal
-                # renderer prewarm pass. Activate their detached Telegram
-                # renderer explicitly, otherwise the native placeholder can
-                # remain visible forever even though the post IDs loaded.
+                if latest_refresh:
+                    page._q3news_cards.append(card)
+                else:
+                    page._q3news_cards.insert(offset, card)
+                # Use Telegram's own DOM renderer so custom emoji assets are
+                # preserved. Its animated video/SVG layers are frozen on load.
                 QtCore.QTimer.singleShot(
-                    100,
-                    lambda c=card, p=page: self._activate_changelog_card(
-                        c, p, allow_hidden=True
-                    ),
+                    120 + offset * 1900,
+                    lambda c=card, p=page: self._activate_q3news_card(c, p),
                 )
             page._q3news_ids = sorted(existing | {int(x["id"]) for x in rows})
+
+            # Keep at most 15 rendered posts in memory. Their immutable
+            # snapshots remain available in the session cache independently.
+            while len(page._q3news_cards) > 15:
+                stale_card = page._q3news_cards.pop(0)
+                try:
+                    page._q3news_feed.removeWidget(stale_card)
+                    stale_card.setParent(None)
+                    stale_card.deleteLater()
+                except RuntimeError:
+                    pass
+            page._q3news_ids = sorted(
+                int(getattr(card, "_q3news_post_id", 0) or 0)
+                for card in page._q3news_cards
+                if int(getattr(card, "_q3news_post_id", 0) or 0) > 0
+            ) or sorted(existing | {int(x["id"]) for x in rows})
             status.setText("")
 
             def settle_scroll():
                 new_bar = page._q3news_scroll.verticalScrollBar()
-                if initial:
+                if latest_refresh:
+                    # Keep the user at the top after checking for new posts.
+                    new_bar.setValue(0)
+                elif initial:
                     new_bar.setValue(new_bar.maximum())
                 else:
                     # Preserve the exact post under the cursor after prepending.
                     new_bar.setValue(old_value + max(0, new_bar.maximum() - old_max))
             QtCore.QTimer.singleShot(80, settle_scroll)
+        except RuntimeError:
+            pass
+
+    def _activate_q3news_card(self, card, page):
+        try:
+            if self.pages.currentWidget() is not page:
+                # Q3News is the first tab inside the Changelog section. The
+                # parent page can be mounted through a host wrapper.
+                current = self.pages.currentWidget()
+                if current is not getattr(self, "changelogPage", None):
+                    return
+            card.activate_telegram_renderer()
         except RuntimeError:
             pass
 
@@ -20605,10 +21506,13 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
             return
         real_page = getattr(page, "_q3_real_page", page)
         cards = list(getattr(real_page, "_changelog_cards", []) or [])
+        # Keep at most four Telegram Chromium views live, independent of the
+        # total number of native changelog cards displayed.
+        max_live = 1
         visible = [
             card for card in cards
             if getattr(card, "_expanded", False) and getattr(card, "_telegram_auto_web", False)
-        ][:max(1, min(3, theme_int("performance.changelog_latest_posts", 3)))]
+        ][:max_live]
         step = 0 if allow_hidden else max(80, theme_int("performance.changelog_webengine_step_ms", 180))
         initial = 0 if allow_hidden else max(20, theme_int("performance.changelog_webengine_delay_ms", 60))
         for index, card in enumerate(visible):
@@ -21029,6 +21933,20 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
     def show_page(self, page):
         _q3_nav_started = time.perf_counter()
         page = str(page)
+        # Chromium must not remain alive after leaving Changelog. Native cached
+        # QTextBrowser content remains visible on the other launcher sections.
+        if page != "changelog":
+            owners = list(getattr(self, "_telegram_renderer_owners", []) or [])
+            legacy_owner = getattr(self, "_telegram_renderer_owner", None)
+            if legacy_owner is not None and legacy_owner not in owners:
+                owners.append(legacy_owner)
+            for owner in owners:
+                try:
+                    owner.release_telegram_renderer()
+                except (AttributeError, RuntimeError) as error:
+                    print(f"[changelog] Could not release Telegram renderer on navigation: {error}")
+            self._telegram_renderer_owners = []
+            self._telegram_renderer_owner = None
         current_is_matchmaking = (
             "matchmaking" in getattr(self, "_built_pages", set())
             and self.pages.currentWidget() is getattr(self, "matchmakingPage", None)
@@ -21460,6 +22378,58 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
         played = self._play_launcher_sound("notify", force=True)
         return played
 
+    def _set_proxy_fields_enabled(self, enabled):
+        enabled = bool(enabled)
+        for name in ("proxyUrlEdit", "proxyUsernameEdit", "proxyPasswordEdit"):
+            widget = getattr(self, name, None)
+            if widget is not None:
+                widget.setEnabled(enabled)
+        if hasattr(self, "proxyTestButton"):
+            self.proxyTestButton.setEnabled(enabled and network_proxy is not None)
+
+    def test_network_proxy(self):
+        if network_proxy is None:
+            self.proxyStatusLabel.setText("Proxy module is unavailable. Check Launcher/modules/network_proxy.py.")
+            return
+        self.proxyTestButton.setEnabled(False)
+        self.proxyStatusLabel.setText("Testing proxy connection...")
+        QtWidgets.QApplication.processEvents()
+        try:
+            ok, message = network_proxy.test_connection(
+                self.proxyUrlEdit.text(),
+                self.proxyUsernameEdit.text(),
+                self.proxyPasswordEdit.text(),
+            )
+            self.proxyStatusLabel.setText(message)
+            self.proxyStatusLabel.setProperty("error", not bool(ok))
+        except Exception as error:
+            self.proxyStatusLabel.setText(f"Proxy test failed: {error}")
+            self.proxyStatusLabel.setProperty("error", True)
+        finally:
+            self.proxyTestButton.setEnabled(self.proxyEnabledBox.isChecked())
+            self.proxyStatusLabel.style().unpolish(self.proxyStatusLabel)
+            self.proxyStatusLabel.style().polish(self.proxyStatusLabel)
+
+    def save_network_proxy(self):
+        if network_proxy is None:
+            self.proxyStatusLabel.setText("Proxy module is unavailable. Check Launcher/modules/network_proxy.py.")
+            return
+        try:
+            network_proxy.save_settings(
+                self.proxyEnabledBox.isChecked(),
+                self.proxyUrlEdit.text(),
+                self.proxyUsernameEdit.text(),
+                self.proxyPasswordEdit.text(),
+            )
+            state = "enabled" if self.proxyEnabledBox.isChecked() else "disabled"
+            self.proxyStatusLabel.setText(f"Proxy settings saved ({state}).")
+            print(f"[proxy] Settings saved; proxy {state}.")
+        except Exception as error:
+            self.proxyStatusLabel.setText(f"Could not save proxy settings: {error}")
+            self.proxyStatusLabel.setProperty("error", True)
+        self.proxyStatusLabel.style().unpolish(self.proxyStatusLabel)
+        self.proxyStatusLabel.style().polish(self.proxyStatusLabel)
+
     def test_matchmaking_sound(self):
         if not self._play_matchmaking_sound():
             self.settingsMessage.setText(
@@ -21477,6 +22447,19 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
         self.addonMessage.style().polish(self.addonMessage)
 
     def load_settings_ui(self):
+        if network_proxy is not None and hasattr(self, "proxyEnabledBox"):
+            try:
+                proxy_state = network_proxy.load_settings()
+                self.proxyEnabledBox.setChecked(bool(proxy_state.get("enabled", False)))
+                self.proxyUrlEdit.setText(str(proxy_state.get("url") or ""))
+                self.proxyUsernameEdit.setText(str(proxy_state.get("username") or ""))
+                self.proxyPasswordEdit.setText(str(proxy_state.get("password") or ""))
+                self.proxyStatusLabel.setText(
+                    "Proxy enabled." if proxy_state.get("enabled") else "Proxy disabled."
+                )
+                self._set_proxy_fields_enabled(bool(proxy_state.get("enabled", False)))
+            except Exception as error:
+                self.proxyStatusLabel.setText(f"Could not load proxy settings: {error}")
         self.autoQ3Box.setChecked(launcher_settings.get("auto_update_q3elite", False))
         self.autoLauncherBox.setChecked(launcher_settings.get("auto_update_launcher", False))
         self.autoOspBox.setChecked(launcher_settings.get("auto_update_osp", True))
@@ -21755,7 +22738,9 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
         self._populate_account_page()
         busy = self.accountWorker is not None and self.accountWorker.isRunning()
         if hasattr(self, "accountPageSignIn"):
-            self.accountPageSignIn.setEnabled(configured and not busy)
+            # Keep the entry point available even if backend.json was removed;
+            # open_account_dialog attempts to restore the public client config.
+            self.accountPageSignIn.setEnabled(not busy)
 
     def _set_account_busy(self, busy, text=""):
         if text:
@@ -21980,12 +22965,49 @@ class ModernLauncherWindow(QtWidgets.QMainWindow):
             self._account_sync_after_worker = False
             QtCore.QTimer.singleShot(80, self.sync_account_now)
 
+    def _restore_account_backend_config(self):
+        """Restore the public Supabase client config if it is missing locally."""
+        manager = self.accountManager
+        if manager.configured:
+            return True
+        backend_file = Path(manager.backend_file)
+        url = (
+            "https://raw.githubusercontent.com/Mus1n/Quake-3-Elite-Launcher/"
+            "main/Q3Elite/Launcher/settings/backend.json"
+        )
+        try:
+            request = urllib.request.Request(
+                url,
+                headers={"User-Agent": "Q3Elite-Launcher/1.0", "Cache-Control": "no-cache"},
+            )
+            with urllib.request.urlopen(request, timeout=8) as response:
+                raw = json.loads(response.read().decode("utf-8-sig"))
+            if not isinstance(raw, dict):
+                raise ValueError("backend.json must contain a JSON object")
+            project_url = str(raw.get("url") or "").strip()
+            publishable_key = str(raw.get("publishable_key") or raw.get("anon_key") or "").strip()
+            if not project_url.startswith("https://") or not publishable_key:
+                raise ValueError("Downloaded backend.json is missing the Supabase URL or publishable key")
+            backend_file.parent.mkdir(parents=True, exist_ok=True)
+            temporary = backend_file.with_name(backend_file.name + ".tmp")
+            temporary.write_text(json.dumps(raw, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+            os.replace(temporary, backend_file)
+            manager._config = raw
+            manager._client = None
+            print("[account] Restored missing backend.json from the official Q3Elite repository.")
+            return bool(manager.configured)
+        except Exception as error:
+            print(f"[account] Could not restore backend.json: {error}")
+            return False
+
     def open_account_dialog(self, *, initial_email="", initial_mode="login"):
-        if not self.accountManager.configured:
+        if not self.accountManager.configured and not self._restore_account_backend_config():
             self._refresh_account_ui(
-                "Q3Elite Cloud is not configured yet. Add Launcher/settings/backend.json first."
+                "Q3Elite Cloud is unavailable: backend configuration could not be restored. "
+                "Check your connection or restore Launcher/settings/backend.json."
             )
             return
+        self._refresh_account_ui("")
         dialog = AccountAuthDialog(self, initial_email=initial_email, initial_mode=initial_mode)
         if dialog.exec() != QtWidgets.QDialog.DialogCode.Accepted:
             return
@@ -24007,6 +25029,482 @@ def _start_instance_activation_server():
     return server
 
 
+
+def _q3_start_runtime_profiler(window, interval_ms=2000):
+    """Log launcher-tree CPU/RAM and Telegram activity without extra dependencies.
+
+    Uses psutil when available; otherwise uses Windows Toolhelp/PSAPI APIs.
+    Enabled only by Q3ELITE_PROFILE=1.
+    """
+    if not _Q3_PROFILE_ENABLED or window is None:
+        return None
+
+    try:
+        import psutil as _psutil
+        _process = _psutil.Process(os.getpid())
+        _process.cpu_percent(None)
+        for _child in _process.children(recursive=True):
+            try:
+                _child.cpu_percent(None)
+            except Exception:
+                pass
+        _cpu_count = max(1, _psutil.cpu_count(logical=True) or 1)
+        _sampler = "psutil"
+        _psutil_error = ""
+    except Exception as _error:
+        _psutil = None
+        _process = None
+        _cpu_count = max(1, os.cpu_count() or 1)
+        _sampler = "unavailable"
+        _psutil_error = str(_error)
+
+    # Native Windows fallback: no pip dependency and no network installation.
+    _native = None
+    if _psutil is None and os.name == "nt":
+        try:
+            import ctypes
+            from ctypes import wintypes
+
+            class _FILETIME(ctypes.Structure):
+                _fields_ = [
+                    ("dwLowDateTime", wintypes.DWORD),
+                    ("dwHighDateTime", wintypes.DWORD),
+                ]
+
+            class _PROCESSENTRY32W(ctypes.Structure):
+                _fields_ = [
+                    ("dwSize", wintypes.DWORD),
+                    ("cntUsage", wintypes.DWORD),
+                    ("th32ProcessID", wintypes.DWORD),
+                    ("th32DefaultHeapID", ctypes.c_size_t),
+                    ("th32ModuleID", wintypes.DWORD),
+                    ("cntThreads", wintypes.DWORD),
+                    ("th32ParentProcessID", wintypes.DWORD),
+                    ("pcPriClassBase", wintypes.LONG),
+                    ("dwFlags", wintypes.DWORD),
+                    ("szExeFile", wintypes.WCHAR * 260),
+                ]
+
+            class _PROCESS_MEMORY_COUNTERS(ctypes.Structure):
+                _fields_ = [
+                    ("cb", wintypes.DWORD),
+                    ("PageFaultCount", wintypes.DWORD),
+                    ("PeakWorkingSetSize", ctypes.c_size_t),
+                    ("WorkingSetSize", ctypes.c_size_t),
+                    ("QuotaPeakPagedPoolUsage", ctypes.c_size_t),
+                    ("QuotaPagedPoolUsage", ctypes.c_size_t),
+                    ("QuotaPeakNonPagedPoolUsage", ctypes.c_size_t),
+                    ("QuotaNonPagedPoolUsage", ctypes.c_size_t),
+                    ("PagefileUsage", ctypes.c_size_t),
+                    ("PeakPagefileUsage", ctypes.c_size_t),
+                ]
+
+            _kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+            _psapi_dll = ctypes.WinDLL("psapi", use_last_error=True)
+            _kernel32.CreateToolhelp32Snapshot.restype = wintypes.HANDLE
+            _kernel32.CreateToolhelp32Snapshot.argtypes = [wintypes.DWORD, wintypes.DWORD]
+            _kernel32.Process32FirstW.argtypes = [wintypes.HANDLE, ctypes.POINTER(_PROCESSENTRY32W)]
+            _kernel32.Process32NextW.argtypes = [wintypes.HANDLE, ctypes.POINTER(_PROCESSENTRY32W)]
+            _kernel32.OpenProcess.restype = wintypes.HANDLE
+            _kernel32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+            _kernel32.GetProcessTimes.argtypes = [
+                wintypes.HANDLE, ctypes.POINTER(_FILETIME), ctypes.POINTER(_FILETIME),
+                ctypes.POINTER(_FILETIME), ctypes.POINTER(_FILETIME),
+            ]
+            _kernel32.GetSystemTimes.argtypes = [
+                ctypes.POINTER(_FILETIME), ctypes.POINTER(_FILETIME), ctypes.POINTER(_FILETIME)
+            ]
+            _kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+            _psapi_dll.GetProcessMemoryInfo.argtypes = [
+                wintypes.HANDLE, ctypes.POINTER(_PROCESS_MEMORY_COUNTERS), wintypes.DWORD
+            ]
+
+            _TH32CS_SNAPPROCESS = 0x00000002
+            _PROCESS_QUERY_INFORMATION = 0x0400
+            _PROCESS_VM_READ = 0x0010
+            _native_prev_times = {}
+            _native_prev_system = None
+            _native_prev_stamp = None
+
+            def _ft_value(ft):
+                return (int(ft.dwHighDateTime) << 32) | int(ft.dwLowDateTime)
+
+            def _native_capture(prime=False):
+                nonlocal _native_prev_system, _native_prev_stamp, _native_prev_times
+                now = time.perf_counter()
+                elapsed = max(0.001, now - _native_prev_stamp) if _native_prev_stamp else 0.001
+
+                idle_ft, kernel_ft, user_ft = _FILETIME(), _FILETIME(), _FILETIME()
+                system_ok = bool(_kernel32.GetSystemTimes(
+                    ctypes.byref(idle_ft), ctypes.byref(kernel_ft), ctypes.byref(user_ft)
+                ))
+                system_now = (
+                    _ft_value(idle_ft), _ft_value(kernel_ft), _ft_value(user_ft)
+                ) if system_ok else None
+                system_cpu = 0.0
+                if system_now and _native_prev_system and not prime:
+                    di = system_now[0] - _native_prev_system[0]
+                    dk = system_now[1] - _native_prev_system[1]
+                    du = system_now[2] - _native_prev_system[2]
+                    total = dk + du
+                    if total > 0:
+                        system_cpu = max(0.0, min(100.0, (total - di) * 100.0 / total))
+
+                snap = _kernel32.CreateToolhelp32Snapshot(_TH32CS_SNAPPROCESS, 0)
+                if snap == wintypes.HANDLE(-1).value:
+                    raise OSError(ctypes.get_last_error(), "CreateToolhelp32Snapshot failed")
+                entries = {}
+                try:
+                    entry = _PROCESSENTRY32W()
+                    entry.dwSize = ctypes.sizeof(_PROCESSENTRY32W)
+                    ok = _kernel32.Process32FirstW(snap, ctypes.byref(entry))
+                    while ok:
+                        pid = int(entry.th32ProcessID)
+                        entries[pid] = (int(entry.th32ParentProcessID), str(entry.szExeFile))
+                        ok = _kernel32.Process32NextW(snap, ctypes.byref(entry))
+                finally:
+                    _kernel32.CloseHandle(snap)
+
+                root_pid = os.getpid()
+                tree_pids = {root_pid}
+                changed = True
+                while changed:
+                    changed = False
+                    for pid, (ppid, _name) in entries.items():
+                        if ppid in tree_pids and pid not in tree_pids:
+                            tree_pids.add(pid)
+                            changed = True
+
+                result = {
+                    "main_cpu": 0.0, "tree_cpu": 0.0, "web_cpu": 0.0,
+                    "rss_main": 0.0, "rss_children": 0.0, "rss_web": 0.0,
+                    "children": 0, "web_count": 0, "top": "-", "system_cpu": system_cpu,
+                }
+                current_times = {}
+                child_rows = []
+                for pid in tree_pids:
+                    row = entries.get(pid)
+                    if pid != root_pid and row is None:
+                        continue
+                    name = row[1] if row else Path(sys.executable).name
+                    handle = _kernel32.OpenProcess(
+                        _PROCESS_QUERY_INFORMATION | _PROCESS_VM_READ, False, pid
+                    )
+                    if not handle:
+                        continue
+                    try:
+                        creation, exit_time = _FILETIME(), _FILETIME()
+                        kernel_time, user_time = _FILETIME(), _FILETIME()
+                        if not _kernel32.GetProcessTimes(
+                            handle, ctypes.byref(creation), ctypes.byref(exit_time),
+                            ctypes.byref(kernel_time), ctypes.byref(user_time)
+                        ):
+                            continue
+                        cpu_ticks = _ft_value(kernel_time) + _ft_value(user_time)
+                        current_times[pid] = cpu_ticks
+                        delta_ticks = cpu_ticks - _native_prev_times.get(pid, cpu_ticks)
+                        cpu_pct = (
+                            max(0.0, delta_ticks / 10_000_000.0 / elapsed * 100.0 / _cpu_count)
+                            if _native_prev_stamp and not prime else 0.0
+                        )
+
+                        mem = _PROCESS_MEMORY_COUNTERS()
+                        mem.cb = ctypes.sizeof(_PROCESS_MEMORY_COUNTERS)
+                        mem_mb = 0.0
+                        if _psapi_dll.GetProcessMemoryInfo(
+                            handle, ctypes.byref(mem), mem.cb
+                        ):
+                            mem_mb = float(mem.WorkingSetSize) / (1024.0 * 1024.0)
+
+                        result["tree_cpu"] += cpu_pct
+                        if pid == root_pid:
+                            result["main_cpu"] = cpu_pct
+                            result["rss_main"] = mem_mb
+                        else:
+                            result["children"] += 1
+                            result["rss_children"] += mem_mb
+                            if "qtwebengine" in name.casefold():
+                                result["web_count"] += 1
+                                result["web_cpu"] += cpu_pct
+                                result["rss_web"] += mem_mb
+                            if cpu_pct >= 0.2:
+                                child_rows.append((cpu_pct, name, pid, mem_mb))
+                    finally:
+                        _kernel32.CloseHandle(handle)
+
+                child_rows.sort(reverse=True)
+                result["top"] = ",".join(
+                    f"{name}:{cpu:.1f}%/{mem:.0f}MB(pid={pid})"
+                    for cpu, name, pid, mem in child_rows[:4]
+                ) or "-"
+                _native_prev_times = current_times
+                _native_prev_system = system_now
+                _native_prev_stamp = now
+                return result
+
+            _native_capture(prime=True)
+            _sampler = "winapi"
+            _psutil_error = ""
+        except Exception as _native_error:
+            _native = None
+            _sampler = "unavailable"
+            _psutil_error = f"{_psutil_error}; WinAPI fallback failed: {_native_error}"
+        else:
+            _native = _native_capture
+
+    _profile_dir = LAUNCHER_DATA_DIR / "logs"
+    _profile_file = _profile_dir / "runtime_profile.log"
+    _q3_profile_write_gpu_environment()
+    _profile_dir.mkdir(parents=True, exist_ok=True)
+    _last_tick = [time.perf_counter()]
+    _sample_index = [0]
+
+    def _renderer_snapshot():
+        renderers = {}
+        for renderer in (getattr(window, "_telegramDetachedRenderers", None) or []):
+            if renderer is not None:
+                renderers[id(renderer)] = renderer
+        for renderer in (getattr(window, "_telegramPreloadedRenderers", None) or {}).values():
+            if renderer is not None:
+                renderers[id(renderer)] = renderer
+        current = getattr(window, "_telegramPrewarmCurrent", None) or {}
+        renderer = current.get("renderer") if isinstance(current, dict) else None
+        if renderer is not None:
+            renderers[id(renderer)] = renderer
+
+        ready = active = visible = page_visible = 0
+        for item in renderers.values():
+            try:
+                ready += int(bool(getattr(item, "_ready_emitted", False)))
+                visible += int(bool(item.isVisible()))
+                page = item.page()
+                page_visible += int(bool(page.isVisible()))
+                if page.lifecycleState() == QWebEnginePage.LifecycleState.Active:
+                    active += 1
+            except Exception:
+                pass
+        return len(renderers), ready, active, visible, page_visible
+
+    def _sample():
+        _now = time.perf_counter()
+        _elapsed = max(0.001, _now - _last_tick[0])
+        _last_tick[0] = _now
+        _sample_index[0] += 1
+        _loop_lag_ms = max(0.0, (_elapsed - interval_ms / 1000.0) * 1000.0)
+
+        main_cpu = total_cpu = web_cpu = 0.0
+        rss_mb = child_rss_mb = web_rss_mb = 0.0
+        children_count = web_count = 0
+        system_cpu = 0.0
+        top_children = "sampler-unavailable"
+        gpu_cpu = gpu_rss_mb = 0.0
+        gpu_count = renderer_proc_count = 0
+        gpu_processes = "-"
+
+        if _psutil is not None and _process is not None:
+            try:
+                main_cpu = _process.cpu_percent(None)
+                rss_mb = _process.memory_info().rss / (1024 * 1024)
+                _children = _process.children(recursive=True)
+                children_count = len(_children)
+                _child_rows = []
+                for _child in _children:
+                    try:
+                        _name = _child.name()
+                        _cpu = _child.cpu_percent(None)
+                        _mem = _child.memory_info().rss / (1024 * 1024)
+                        _cmdline = " ".join(_child.cmdline()).casefold()
+                        if "qtwebengineprocess" in _name.casefold():
+                            if "--type=gpu-process" in _cmdline:
+                                gpu_count += 1
+                                gpu_cpu += _cpu
+                                gpu_rss_mb += _mem
+                                gpu_processes = f"pid={_child.pid}"
+                            elif "--type=renderer" in _cmdline:
+                                renderer_proc_count += 1
+                        child_rss_mb += _mem
+                        total_cpu += _cpu
+                        if "qtwebengine" in _name.casefold():
+                            web_count += 1
+                            web_cpu += _cpu
+                            web_rss_mb += _mem
+                        if _cpu >= 0.5:
+                            _child_rows.append((_cpu, _name, _child.pid, _mem))
+                    except (_psutil.NoSuchProcess, _psutil.AccessDenied, _psutil.ZombieProcess):
+                        continue
+                total_cpu += main_cpu
+                main_cpu /= _cpu_count
+                total_cpu /= _cpu_count
+                web_cpu /= _cpu_count
+                gpu_cpu /= _cpu_count
+                _child_rows.sort(reverse=True)
+                top_children = ",".join(
+                    f"{name}:{cpu / _cpu_count:.1f}%/{mem:.0f}MB(pid={pid})"
+                    for cpu, name, pid, mem in _child_rows[:4]
+                ) or "-"
+            except Exception as _error:
+                top_children = f"sample-error:{type(_error).__name__}"
+        elif _native is not None:
+            try:
+                native = _native()
+                main_cpu = native["main_cpu"]
+                total_cpu = native["tree_cpu"]
+                web_cpu = native["web_cpu"]
+                rss_mb = native["rss_main"]
+                child_rss_mb = native["rss_children"]
+                web_rss_mb = native["rss_web"]
+                children_count = native["children"]
+                web_count = native["web_count"]
+                top_children = native["top"]
+                system_cpu = native["system_cpu"]
+            except Exception as _error:
+                top_children = f"winapi-sample-error:{type(_error).__name__}"
+
+        renderer_count, renderer_ready, renderer_active, renderer_visible, renderer_page_visible = _renderer_snapshot()
+        current_page = "unknown"
+        try:
+            current = window.pages.currentWidget()
+            current_page = current.objectName() or type(current).__name__
+        except Exception:
+            pass
+        queue_count = len(getattr(window, "_telegramPrewarmQueue", []) or [])
+        prewarm_active = int(bool(getattr(window, "_telegramPrewarmActive", False)))
+        active_timers = fast_timers = 0
+        try:
+            for _timer in window.findChildren(QtCore.QTimer):
+                if _timer.isActive():
+                    active_timers += 1
+                    if 0 < _timer.interval() <= 250:
+                        fast_timers += 1
+        except Exception:
+            pass
+
+        capture_stats = _Q3_TELEGRAM_CAPTURE_STATS
+        capture_count = int(capture_stats["count"])
+        capture_total = float(capture_stats["total_ms"])
+        capture_max = float(capture_stats["max_ms"])
+        capture_avg = capture_total / capture_count if capture_count else 0.0
+        capture_interval = float(capture_stats["last_interval_ms"])
+        capture_stats["count"] = 0
+        capture_stats["total_ms"] = 0.0
+        capture_stats["max_ms"] = 0.0
+
+        line = (
+            f"{datetime.datetime.now().isoformat(timespec='seconds')} "
+            f"sample={_sample_index[0]} page={current_page} "
+            f"cpu_total={total_cpu:.1f}% cpu_python={main_cpu:.1f}% "
+            f"cpu_webengine={web_cpu:.1f}% cpu_gpu_process={gpu_cpu:.1f}% cpu_system={system_cpu:.1f}% "
+            f"webengine_children={web_count} gpu_processes={gpu_count} gpu_rss={gpu_rss_mb:.0f}MB "
+            f"gpu_process={gpu_processes} renderer_processes={renderer_proc_count} children={children_count} "
+            f"rss_python={rss_mb:.0f}MB rss_children={child_rss_mb:.0f}MB "
+            f"rss_webengine={web_rss_mb:.0f}MB "
+            f"renderers={renderer_count}/{renderer_ready}ready/{renderer_active}active/"
+            f"{renderer_visible}view-visible/{renderer_page_visible}page-visible "
+            f"prewarm={prewarm_active} queue={queue_count} timers={active_timers}/{fast_timers}fast "
+            f"snapshots={capture_count} grab_avg={capture_avg:.2f}ms grab_max={capture_max:.2f}ms "
+            f"grab_interval_last={capture_interval:.1f}ms "
+            f"event_loop_lag={_loop_lag_ms:.1f}ms top_children=[{top_children}]"
+        )
+        try:
+            with _profile_file.open("a", encoding="utf-8") as _log:
+                _log.write(line + "\n")
+        except Exception as _error:
+            _q3_runtime_profile_event(
+                f"write_failed error={type(_error).__name__}: {_error}"
+            )
+
+    timer = QtCore.QTimer(window)
+    timer.setTimerType(QtCore.Qt.TimerType.CoarseTimer)
+    timer.setInterval(max(1000, int(interval_ms)))
+    timer.timeout.connect(_sample)
+    window._q3_runtime_profile_timer = timer
+    timer.start()
+    _q3_runtime_profile_event(
+        f"profiler_started interval_ms={timer.interval()} sampler={_sampler}"
+        + (f" sampler_error={_psutil_error!r}" if _psutil_error else "")
+    )
+    return timer
+
+
+
+def _q3_open_chromium_gpu_diagnostics(parent=None):
+    """Open Chromium's internal GPU diagnostics page on explicit request only."""
+    if QWebEngineView is None:
+        print("[GPU] Diagnostics unavailable: QtWebEngine was not imported.", flush=True)
+        _q3_runtime_profile_event("gpu_diagnostics_unavailable=QtWebEngine_not_imported")
+        return None
+
+    try:
+        dialog = QtWidgets.QDialog(parent)
+        dialog.setWindowTitle("Q3Elite – Chromium GPU diagnostics")
+        dialog.resize(1100, 780)
+        layout = QtWidgets.QVBoxLayout(dialog)
+        info = QtWidgets.QLabel(
+            "Loading chrome://gpu…\n"
+            "If this page is unsupported by this QtWebEngine build, the result will be logged."
+        )
+        info.setWordWrap(True)
+        layout.addWidget(info)
+        view = QWebEngineView(dialog)
+        layout.addWidget(view, 1)
+        dialog._q3_gpu_diag_view = view
+
+        def _loaded(ok):
+            _q3_runtime_profile_event(
+                f"gpu_diagnostics_page_loaded={int(bool(ok))} "
+                f"url={view.url().toString()!r} title={view.title()!r}"
+            )
+            if not ok:
+                print("[GPU] ERROR: QtWebEngine could not load chrome://gpu.", flush=True)
+                info.setText(
+                    "QtWebEngine could not load chrome://gpu.\n"
+                    "This build may not expose Chromium's internal diagnostics page. "
+                    "See runtime_profile.log."
+                )
+                return
+
+            def _received(value):
+                try:
+                    value = str(value or "")
+                    print("\n" + "=" * 76, flush=True)
+                    print(" Q3ELITE / CHROMIUM GPU DIAGNOSTICS", flush=True)
+                    print("=" * 76, flush=True)
+                    _q3_runtime_profile_event("gpu_diagnostics_text_begin")
+                    for _line in value.splitlines():
+                        _line = _line.rstrip()
+                        if _line:
+                            print("[GPU] " + _line, flush=True)
+                            _q3_runtime_profile_event("gpu_info=" + _line[:900])
+                    print("=" * 76 + "\n", flush=True)
+                    _q3_runtime_profile_event("gpu_diagnostics_text_end")
+                    info.setText(
+                        "GPU diagnostics loaded. Extracted page text was saved to "
+                        "%APPDATA%\\Q3Elite\\logs\\runtime_profile.log."
+                    )
+                except Exception as error:
+                    _q3_runtime_profile_event(
+                        f"gpu_diagnostics_extract_error={type(error).__name__}:{error}"
+                    )
+
+            view.page().runJavaScript(
+                "document.body ? document.body.innerText : 'No document body'",
+                _received,
+            )
+
+        view.loadFinished.connect(_loaded)
+        view.setUrl(QtCore.QUrl("chrome://gpu"))
+        dialog.show()
+        print("[GPU] Opening Chromium diagnostics: chrome://gpu", flush=True)
+        _q3_runtime_profile_event("gpu_diagnostics_window_opened=1 url='chrome://gpu'")
+        return dialog
+    except Exception as error:
+        print(f"[GPU] Diagnostics error: {type(error).__name__}: {error}", flush=True)
+        _q3_runtime_profile_event(
+            f"gpu_diagnostics_open_error={type(error).__name__}:{error}"
+        )
+        return None
+
+
 def main():
     global app, window, download_timer, ui_theme, instance_server
     global launcher_self_update, q3elite_update, fdownload, q3elite_download, post_update
@@ -24208,16 +25706,25 @@ def main():
         download_timer.timeout.connect(update_download_overlay)
         download_timer.start(200)
 
-        # Low-priority Telegram warm-up: detached top-level WebEngine renderers
-        # load the newest three posts sequentially after the launcher has been
-        # idle for a few seconds. The launcher itself never embeds Chromium; it
-        # receives ordinary Qt pixmap snapshots, avoiding DWM's translucent-HWND
-        # restart/redraw effect while preserving real animated custom emoji.
-        if TELEGRAM_WEBENGINE_AVAILABLE and theme_bool("performance.telegram_webengine_prewarm", True):
+        if _Q3_PROFILE_ENABLED:
+            # Start after the first frame so profiling does not distort startup.
+            QtCore.QTimer.singleShot(3000, lambda: _q3_start_runtime_profiler(window))
+
+        # Optional Chromium GPU diagnostics. This creates one temporary WebEngine
+        # view only when explicitly requested; normal launcher startup is unchanged.
+        if "--gpu-diagnostics" in sys.argv:
             QtCore.QTimer.singleShot(
-                max(1500, theme_int("performance.telegram_webengine_prewarm_delay_ms", 3500)),
-                window._prewarm_latest_telegram_posts,
+                5000, lambda: setattr(
+                    window, "_q3_gpu_diagnostics_dialog",
+                    _q3_open_chromium_gpu_diagnostics(window),
+                )
             )
+
+        # Optional Telegram warm-up. Disabled by default to avoid allocating
+        # several Chromium renderers and hundreds of MB of RAM on launcher startup.
+        # Renderers are created on demand when the user opens a Telegram card.
+        # Telegram WebEngine prewarming is intentionally disabled. A renderer
+        # is created on demand for the single expanded post and destroyed on collapse.
 
         # Check the newest public Q3News post independently from the versioned
         # Changelog feed. This is a lightweight one-page request in the background.

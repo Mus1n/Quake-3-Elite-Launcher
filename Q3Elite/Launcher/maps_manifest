@@ -1,10 +1,334 @@
 {
   "version": 5,
   "paks": {
+    "baseq3/maps/CustomMaps/achromatic.pk3": {
+      "signature": {
+        "size": 39222436,
+        "mtime_ns": 1795488057965325700
+      },
+      "maps": [
+        {
+          "map": "Achromatic",
+          "name": "Achromatic",
+          "pak": "achromatic.pk3",
+          "pak_path": "baseq3/maps/CustomMaps/achromatic.pk3",
+          "pak_size": 39222436,
+          "location": "Preinstalled",
+          "gametype": "FFA / TDM / Duel",
+          "levelshot": "levelshots/Achromatic.jpg"
+        }
+      ]
+    },
+    "baseq3/maps/CustomMaps/aerowalk_QC.pk3": {
+      "signature": {
+        "size": 22795962,
+        "mtime_ns": 1795488058007350300
+      },
+      "maps": [
+        {
+          "map": "aerowalk_QC",
+          "name": "AERO",
+          "pak": "aerowalk_QC.pk3",
+          "pak_path": "baseq3/maps/CustomMaps/aerowalk_QC.pk3",
+          "pak_size": 22795962,
+          "location": "Preinstalled",
+          "gametype": "FFA / TDM / Duel",
+          "levelshot": "levelshots/aerowalk_QC.jpg"
+        }
+      ]
+    },
+    "baseq3/maps/CustomMaps/bloodister.pk3": {
+      "signature": {
+        "size": 14542559,
+        "mtime_ns": 1795488058040941000
+      },
+      "maps": [
+        {
+          "map": "bloodister",
+          "name": "Bloodister",
+          "pak": "bloodister.pk3",
+          "pak_path": "baseq3/maps/CustomMaps/bloodister.pk3",
+          "pak_size": 14542559,
+          "location": "Preinstalled",
+          "gametype": "FFA",
+          "levelshot": "levelshots/bloodister.jpg"
+        }
+      ]
+    },
+    "baseq3/maps/CustomMaps/corrosion.pk3": {
+      "signature": {
+        "size": 18784253,
+        "mtime_ns": 1795488058077776300
+      },
+      "maps": [
+        {
+          "map": "Corrosion",
+          "name": "Corrosion",
+          "pak": "corrosion.pk3",
+          "pak_path": "baseq3/maps/CustomMaps/corrosion.pk3",
+          "pak_size": 18784253,
+          "location": "Preinstalled",
+          "gametype": "FFA / TDM",
+          "levelshot": "levelshots/Corrosion.jpg"
+        }
+      ]
+    },
+    "baseq3/maps/CustomMaps/corruption.pk3": {
+      "signature": {
+        "size": 24117502,
+        "mtime_ns": 1795488058126282600
+      },
+      "maps": [
+        {
+          "map": "corruption",
+          "name": "Corruption",
+          "pak": "corruption.pk3",
+          "pak_path": "baseq3/maps/CustomMaps/corruption.pk3",
+          "pak_size": 24117502,
+          "location": "Preinstalled",
+          "gametype": "FFA",
+          "levelshot": "levelshots/corruption.jpg"
+        }
+      ]
+    },
+    "baseq3/maps/CustomMaps/endurance.pk3": {
+      "signature": {
+        "size": 30535083,
+        "mtime_ns": 1795488058185887100
+      },
+      "maps": [
+        {
+          "map": "Endurance",
+          "name": "Endurance",
+          "pak": "endurance.pk3",
+          "pak_path": "baseq3/maps/CustomMaps/endurance.pk3",
+          "pak_size": 30535083,
+          "location": "Preinstalled",
+          "gametype": "FFA",
+          "levelshot": "levelshots/Endurance.jpg"
+        }
+      ]
+    },
+    "baseq3/maps/CustomMaps/Frantic.pk3": {
+      "signature": {
+        "size": 37045019,
+        "mtime_ns": 1795488058253342100
+      },
+      "maps": [
+        {
+          "map": "Frantic",
+          "name": "Frantic",
+          "pak": "Frantic.pk3",
+          "pak_path": "baseq3/maps/CustomMaps/Frantic.pk3",
+          "pak_size": 37045019,
+          "location": "Preinstalled",
+          "gametype": "Unknown",
+          "levelshot": "levelshots/Frantic.jpg"
+        }
+      ]
+    },
+    "baseq3/maps/CustomMaps/industrial.pk3": {
+      "signature": {
+        "size": 31075282,
+        "mtime_ns": 1795488058311819600
+      },
+      "maps": [
+        {
+          "map": "industrial",
+          "name": "Industrial",
+          "pak": "industrial.pk3",
+          "pak_path": "baseq3/maps/CustomMaps/industrial.pk3",
+          "pak_size": 31075282,
+          "location": "Preinstalled",
+          "gametype": "FFA / TDM",
+          "levelshot": "levelshots/industrial.jpg"
+        }
+      ]
+    },
+    "baseq3/maps/CustomMaps/lithiumflower.pk3": {
+      "signature": {
+        "size": 4698684,
+        "mtime_ns": 1795488058324329100
+      },
+      "maps": [
+        {
+          "map": "Lithiumflower",
+          "name": "Lithium Flower ver.2",
+          "pak": "lithiumflower.pk3",
+          "pak_path": "baseq3/maps/CustomMaps/lithiumflower.pk3",
+          "pak_size": 4698684,
+          "location": "Preinstalled",
+          "gametype": "FFA",
+          "levelshot": "levelshots/Lithiumflower.jpg"
+        }
+      ]
+    },
+    "baseq3/maps/CustomMaps/molten.pk3": {
+      "signature": {
+        "size": 17331477,
+        "mtime_ns": 1795488058358959900
+      },
+      "maps": [
+        {
+          "map": "molten",
+          "name": "Arabian Nights",
+          "pak": "molten.pk3",
+          "pak_path": "baseq3/maps/CustomMaps/molten.pk3",
+          "pak_size": 17331477,
+          "location": "Preinstalled",
+          "gametype": "FFA",
+          "levelshot": "levelshots/molten.jpg"
+        }
+      ]
+    },
+    "baseq3/maps/CustomMaps/pentagram.pk3": {
+      "signature": {
+        "size": 31951711,
+        "mtime_ns": 1795488058468870300
+      },
+      "maps": [
+        {
+          "map": "pentagram",
+          "name": "Pentagram",
+          "pak": "pentagram.pk3",
+          "pak_path": "baseq3/maps/CustomMaps/pentagram.pk3",
+          "pak_size": 31951711,
+          "location": "Preinstalled",
+          "gametype": "FFA",
+          "levelshot": "levelshots/pentagram.jpg"
+        }
+      ]
+    },
+    "baseq3/maps/CustomMaps/phrantic.pk3": {
+      "signature": {
+        "size": 32470608,
+        "mtime_ns": 1795488058534166200
+      },
+      "maps": [
+        {
+          "map": "phrantic",
+          "name": "Phrantic",
+          "pak": "phrantic.pk3",
+          "pak_path": "baseq3/maps/CustomMaps/phrantic.pk3",
+          "pak_size": 32470608,
+          "location": "Preinstalled",
+          "gametype": "FFA",
+          "levelshot": "levelshots/phrantic.jpg"
+        }
+      ]
+    },
+    "baseq3/maps/CustomMaps/rustgrad.pk3": {
+      "signature": {
+        "size": 34780216,
+        "mtime_ns": 1795488058606257100
+      },
+      "maps": [
+        {
+          "map": "rustgrad",
+          "name": "Rustgrad",
+          "pak": "rustgrad.pk3",
+          "pak_path": "baseq3/maps/CustomMaps/rustgrad.pk3",
+          "pak_size": 34780216,
+          "location": "Preinstalled",
+          "gametype": "FFA",
+          "levelshot": "levelshots/rustgrad.jpg"
+        }
+      ]
+    },
+    "baseq3/maps/CustomMaps/terminatria.pk3": {
+      "signature": {
+        "size": 17101967,
+        "mtime_ns": 1795488058641618300
+      },
+      "maps": [
+        {
+          "map": "terminatria",
+          "name": "Terminatria",
+          "pak": "terminatria.pk3",
+          "pak_path": "baseq3/maps/CustomMaps/terminatria.pk3",
+          "pak_size": 17101967,
+          "location": "Preinstalled",
+          "gametype": "FFA / TDM / Duel",
+          "levelshot": "levelshots/terminatria.jpg"
+        }
+      ]
+    },
+    "baseq3/maps/CustomMaps/useandabuse.pk3": {
+      "signature": {
+        "size": 32761400,
+        "mtime_ns": 1795488058705762700
+      },
+      "maps": [
+        {
+          "map": "useAndAbuse",
+          "name": "Use and Abuse by fxr|jude/swelt/obsessed",
+          "pak": "useandabuse.pk3",
+          "pak_path": "baseq3/maps/CustomMaps/useandabuse.pk3",
+          "pak_size": 32761400,
+          "location": "Preinstalled",
+          "gametype": "FFA / Duel",
+          "levelshot": "levelshots/useAndAbuse.jpg"
+        }
+      ]
+    },
+    "baseq3/maps/QLmaps/aerowalk.pk3": {
+      "signature": {
+        "size": 2406347,
+        "mtime_ns": 1795488058712270200
+      },
+      "maps": [
+        {
+          "map": "aerowalk",
+          "name": "Aerowalk",
+          "pak": "aerowalk.pk3",
+          "pak_path": "baseq3/maps/QLmaps/aerowalk.pk3",
+          "pak_size": 2406347,
+          "location": "Preinstalled",
+          "gametype": "FFA / Duel",
+          "levelshot": "levelshots/aerowalk.jpg"
+        }
+      ]
+    },
+    "baseq3/maps/QLmaps/almostlost.pk3": {
+      "signature": {
+        "size": 2507547,
+        "mtime_ns": 1795488058721041500
+      },
+      "maps": [
+        {
+          "map": "almostlost",
+          "name": "Almost Lost",
+          "pak": "almostlost.pk3",
+          "pak_path": "baseq3/maps/QLmaps/almostlost.pk3",
+          "pak_size": 2507547,
+          "location": "Preinstalled",
+          "gametype": "FFA / TDM / Duel",
+          "levelshot": "levelshots/almostlost.jpg"
+        }
+      ]
+    },
+    "baseq3/maps/QLmaps/arcanecitadel.pk3": {
+      "signature": {
+        "size": 9489273,
+        "mtime_ns": 1795488058743252300
+      },
+      "maps": [
+        {
+          "map": "ArcaneCitadel",
+          "name": "Arcane Citadel",
+          "pak": "arcanecitadel.pk3",
+          "pak_path": "baseq3/maps/QLmaps/arcanecitadel.pk3",
+          "pak_size": 9489273,
+          "location": "Preinstalled",
+          "gametype": "FFA / TDM",
+          "levelshot": "levelshots/ArcaneCitadel.jpg"
+        }
+      ]
+    },
     "baseq3/maps/QLmaps/arenagate.pk3": {
       "signature": {
         "size": 1547298,
-        "mtime_ns": 1792155296497681300
+        "mtime_ns": 1795488050628916100
       },
       "maps": [
         {
@@ -19,10 +343,82 @@
         }
       ]
     },
+    "baseq3/maps/QLmaps/arkinholm.pk3": {
+      "signature": {
+        "size": 29333328,
+        "mtime_ns": 1795488058815570000
+      },
+      "maps": [
+        {
+          "map": "Arkinholm",
+          "name": "Arkinholm",
+          "pak": "arkinholm.pk3",
+          "pak_path": "baseq3/maps/QLmaps/arkinholm.pk3",
+          "pak_size": 29333328,
+          "location": "Preinstalled",
+          "gametype": "FFA / TDM",
+          "levelshot": "levelshots/Arkinholm.jpg"
+        }
+      ]
+    },
+    "baseq3/maps/QLmaps/asylum.pk3": {
+      "signature": {
+        "size": 4824411,
+        "mtime_ns": 1795488058828825200
+      },
+      "maps": [
+        {
+          "map": "asylum",
+          "name": "Asylum",
+          "pak": "asylum.pk3",
+          "pak_path": "baseq3/maps/QLmaps/asylum.pk3",
+          "pak_size": 4824411,
+          "location": "Preinstalled",
+          "gametype": "FFA / TDM",
+          "levelshot": "levelshots/asylum.jpg"
+        }
+      ]
+    },
+    "baseq3/maps/QLmaps/basesiege.pk3": {
+      "signature": {
+        "size": 7416576,
+        "mtime_ns": 1795488058843980900
+      },
+      "maps": [
+        {
+          "map": "BaseSiege",
+          "name": "Base Siege",
+          "pak": "basesiege.pk3",
+          "pak_path": "baseq3/maps/QLmaps/basesiege.pk3",
+          "pak_size": 7416576,
+          "location": "Preinstalled",
+          "gametype": "CTF",
+          "levelshot": "levelshots/BaseSiege.jpg"
+        }
+      ]
+    },
+    "baseq3/maps/QLmaps/battleforged.pk3": {
+      "signature": {
+        "size": 3010276,
+        "mtime_ns": 1795488058852735500
+      },
+      "maps": [
+        {
+          "map": "battleforged",
+          "name": "Battleforged",
+          "pak": "battleforged.pk3",
+          "pak_path": "baseq3/maps/QLmaps/battleforged.pk3",
+          "pak_size": 3010276,
+          "location": "Preinstalled",
+          "gametype": "FFA / TDM / Duel",
+          "levelshot": "levelshots/battleforged.jpg"
+        }
+      ]
+    },
     "baseq3/maps/QLmaps/beyondreality.pk3": {
       "signature": {
         "size": 5978475,
-        "mtime_ns": 1792155296510116100
+        "mtime_ns": 1795488050638757600
       },
       "maps": [
         {
@@ -37,10 +433,100 @@
         }
       ]
     },
+    "baseq3/maps/QLmaps/beyondrealityCTF.pk3": {
+      "signature": {
+        "size": 5053907,
+        "mtime_ns": 1795488058867006800
+      },
+      "maps": [
+        {
+          "map": "BeyondRealityCTF",
+          "name": "Beyond Reality CTF",
+          "pak": "beyondrealityCTF.pk3",
+          "pak_path": "baseq3/maps/QLmaps/beyondrealityCTF.pk3",
+          "pak_size": 5053907,
+          "location": "Preinstalled",
+          "gametype": "FFA / TDM / CTF",
+          "levelshot": "levelshots/BeyondRealityCTF.jpg"
+        }
+      ]
+    },
+    "baseq3/maps/QLmaps/blackcathedral.pk3": {
+      "signature": {
+        "size": 8256469,
+        "mtime_ns": 1795488058884295100
+      },
+      "maps": [
+        {
+          "map": "blackcathedral",
+          "name": "Black Cathedral",
+          "pak": "blackcathedral.pk3",
+          "pak_path": "baseq3/maps/QLmaps/blackcathedral.pk3",
+          "pak_size": 8256469,
+          "location": "Preinstalled",
+          "gametype": "FFA / TDM",
+          "levelshot": "levelshots/blackcathedral.jpg"
+        }
+      ]
+    },
+    "baseq3/maps/QLmaps/bloodlust.pk3": {
+      "signature": {
+        "size": 6840544,
+        "mtime_ns": 1795488058901005500
+      },
+      "maps": [
+        {
+          "map": "Bloodlust",
+          "name": "Bloodlust",
+          "pak": "bloodlust.pk3",
+          "pak_path": "baseq3/maps/QLmaps/bloodlust.pk3",
+          "pak_size": 6840544,
+          "location": "Preinstalled",
+          "gametype": "CTF",
+          "levelshot": "levelshots/Bloodlust.jpg"
+        }
+      ]
+    },
+    "baseq3/maps/QLmaps/bloodrun.pk3": {
+      "signature": {
+        "size": 2131225,
+        "mtime_ns": 1795488058908849600
+      },
+      "maps": [
+        {
+          "map": "bloodrun",
+          "name": "Blood Run",
+          "pak": "bloodrun.pk3",
+          "pak_path": "baseq3/maps/QLmaps/bloodrun.pk3",
+          "pak_size": 2131225,
+          "location": "Preinstalled",
+          "gametype": "FFA / TDM / Duel",
+          "levelshot": "levelshots/bloodrun.jpg"
+        }
+      ]
+    },
+    "baseq3/maps/QLmaps/bloodrunintel.pk3": {
+      "signature": {
+        "size": 8780322,
+        "mtime_ns": 1795488058931744700
+      },
+      "maps": [
+        {
+          "map": "BloodrunIntel",
+          "name": "Blood Run Intel",
+          "pak": "bloodrunintel.pk3",
+          "pak_path": "baseq3/maps/QLmaps/bloodrunintel.pk3",
+          "pak_size": 8780322,
+          "location": "Preinstalled",
+          "gametype": "FFA / TDM / Duel",
+          "levelshot": "levelshots/BloodrunIntel.jpg"
+        }
+      ]
+    },
     "baseq3/maps/QLmaps/brimstoneabbey.pk3": {
       "signature": {
         "size": 2173121,
-        "mtime_ns": 1792155296514429400
+        "mtime_ns": 1795488050642737000
       },
       "maps": [
         {
@@ -55,10 +541,28 @@
         }
       ]
     },
+    "baseq3/maps/QLmaps/campercrossings.pk3": {
+      "signature": {
+        "size": 8881032,
+        "mtime_ns": 1795488058952076600
+      },
+      "maps": [
+        {
+          "map": "CamperCrossings",
+          "name": "Camper Crossings",
+          "pak": "campercrossings.pk3",
+          "pak_path": "baseq3/maps/QLmaps/campercrossings.pk3",
+          "pak_size": 8881032,
+          "location": "Preinstalled",
+          "gametype": "CTF",
+          "levelshot": "levelshots/CamperCrossings.jpg"
+        }
+      ]
+    },
     "baseq3/maps/QLmaps/campgrounds.pk3": {
       "signature": {
         "size": 2995265,
-        "mtime_ns": 1792155296518442100
+        "mtime_ns": 1795488050650606100
       },
       "maps": [
         {
@@ -76,7 +580,7 @@
     "baseq3/maps/QLmaps/chemicalreaction.pk3": {
       "signature": {
         "size": 4169509,
-        "mtime_ns": 1792155296524640900
+        "mtime_ns": 1795488050657796000
       },
       "maps": [
         {
@@ -91,10 +595,46 @@
         }
       ]
     },
+    "baseq3/maps/QLmaps/citycrossings.pk3": {
+      "signature": {
+        "size": 12602780,
+        "mtime_ns": 1795488058983069500
+      },
+      "maps": [
+        {
+          "map": "CityCrossings",
+          "name": "City Crossings",
+          "pak": "citycrossings.pk3",
+          "pak_path": "baseq3/maps/QLmaps/citycrossings.pk3",
+          "pak_size": 12602780,
+          "location": "Preinstalled",
+          "gametype": "CTF",
+          "levelshot": "levelshots/CityCrossings.jpg"
+        }
+      ]
+    },
+    "baseq3/maps/QLmaps/cliffside.pk3": {
+      "signature": {
+        "size": 7715810,
+        "mtime_ns": 1795488058999134200
+      },
+      "maps": [
+        {
+          "map": "CliffSide",
+          "name": "Cliffside",
+          "pak": "cliffside.pk3",
+          "pak_path": "baseq3/maps/QLmaps/cliffside.pk3",
+          "pak_size": 7715810,
+          "location": "Preinstalled",
+          "gametype": "FFA / TDM",
+          "levelshot": "levelshots/CliffSide.jpg"
+        }
+      ]
+    },
     "baseq3/maps/QLmaps/cobaltstation.pk3": {
       "signature": {
         "size": 6479717,
-        "mtime_ns": 1792155296535766500
+        "mtime_ns": 1795488050667483500
       },
       "maps": [
         {
@@ -109,10 +649,118 @@
         }
       ]
     },
+    "baseq3/maps/QLmaps/coldcathode.pk3": {
+      "signature": {
+        "size": 12298425,
+        "mtime_ns": 1795488059030157700
+      },
+      "maps": [
+        {
+          "map": "ColdCathode",
+          "name": "Cold Cathode",
+          "pak": "coldcathode.pk3",
+          "pak_path": "baseq3/maps/QLmaps/coldcathode.pk3",
+          "pak_size": 12298425,
+          "location": "Preinstalled",
+          "gametype": "CTF",
+          "levelshot": "levelshots/ColdCathode.jpg"
+        }
+      ]
+    },
+    "baseq3/maps/QLmaps/coldwar.pk3": {
+      "signature": {
+        "size": 7017283,
+        "mtime_ns": 1795488059058788900
+      },
+      "maps": [
+        {
+          "map": "coldwar",
+          "name": "Cold War",
+          "pak": "coldwar.pk3",
+          "pak_path": "baseq3/maps/QLmaps/coldwar.pk3",
+          "pak_size": 7017283,
+          "location": "Preinstalled",
+          "gametype": "FFA / TDM",
+          "levelshot": "levelshots/coldwar.jpg"
+        }
+      ]
+    },
+    "baseq3/maps/QLmaps/courtyard.pk3": {
+      "signature": {
+        "size": 5743795,
+        "mtime_ns": 1795488059082638900
+      },
+      "maps": [
+        {
+          "map": "Courtyard",
+          "name": "Courtyard",
+          "pak": "courtyard.pk3",
+          "pak_path": "baseq3/maps/QLmaps/courtyard.pk3",
+          "pak_size": 5743795,
+          "location": "Preinstalled",
+          "gametype": "CTF",
+          "levelshot": "levelshots/Courtyard.jpg"
+        }
+      ]
+    },
+    "baseq3/maps/QLmaps/cure.pk3": {
+      "signature": {
+        "size": 9591652,
+        "mtime_ns": 1795488059105339600
+      },
+      "maps": [
+        {
+          "map": "cure",
+          "name": "Cure",
+          "pak": "cure.pk3",
+          "pak_path": "baseq3/maps/QLmaps/cure.pk3",
+          "pak_size": 9591652,
+          "location": "Preinstalled",
+          "gametype": "FFA / Duel",
+          "levelshot": "levelshots/cure.jpg"
+        }
+      ]
+    },
+    "baseq3/maps/QLmaps/deepinside.pk3": {
+      "signature": {
+        "size": 2703717,
+        "mtime_ns": 1795488059111918700
+      },
+      "maps": [
+        {
+          "map": "deepinside",
+          "name": "Deep Inside",
+          "pak": "deepinside.pk3",
+          "pak_path": "baseq3/maps/QLmaps/deepinside.pk3",
+          "pak_size": 2703717,
+          "location": "Preinstalled",
+          "gametype": "FFA / TDM",
+          "levelshot": "levelshots/deepinside.jpg"
+        }
+      ]
+    },
+    "baseq3/maps/QLmaps/delirium.pk3": {
+      "signature": {
+        "size": 13552624,
+        "mtime_ns": 1795488059142338000
+      },
+      "maps": [
+        {
+          "map": "Delirium",
+          "name": "Delirium",
+          "pak": "delirium.pk3",
+          "pak_path": "baseq3/maps/QLmaps/delirium.pk3",
+          "pak_size": 13552624,
+          "location": "Preinstalled",
+          "gametype": "FFA / TDM / Duel",
+          "levelshot": "levelshots/Delirium.jpg"
+        }
+      ]
+    },
     "baseq3/maps/QLmaps/demonkeep.pk3": {
       "signature": {
         "size": 3594157,
-        "mtime_ns": 1792155296544303300
+        "mtime_ns": 1795488050674274900
       },
       "maps": [
         {
@@ -127,10 +775,82 @@
         }
       ]
     },
+    "baseq3/maps/QLmaps/destiny.pk3": {
+      "signature": {
+        "size": 18088023,
+        "mtime_ns": 1795488059179940300
+      },
+      "maps": [
+        {
+          "map": "destiny",
+          "name": "Destiny",
+          "pak": "destiny.pk3",
+          "pak_path": "baseq3/maps/QLmaps/destiny.pk3",
+          "pak_size": 18088023,
+          "location": "Preinstalled",
+          "gametype": "Unknown",
+          "levelshot": "levelshots/destiny.jpg"
+        }
+      ]
+    },
+    "baseq3/maps/QLmaps/dividedcrossings.pk3": {
+      "signature": {
+        "size": 8889700,
+        "mtime_ns": 1795488059200306900
+      },
+      "maps": [
+        {
+          "map": "DividedCrossings",
+          "name": "Divided Crossings",
+          "pak": "dividedcrossings.pk3",
+          "pak_path": "baseq3/maps/QLmaps/dividedcrossings.pk3",
+          "pak_size": 8889700,
+          "location": "Preinstalled",
+          "gametype": "TDM / CTF",
+          "levelshot": "levelshots/DividedCrossings.jpg"
+        }
+      ]
+    },
+    "baseq3/maps/QLmaps/divineintermission.pk3": {
+      "signature": {
+        "size": 6108300,
+        "mtime_ns": 1795488059213077000
+      },
+      "maps": [
+        {
+          "map": "DivineIntermission",
+          "name": "Divine Intermission",
+          "pak": "divineintermission.pk3",
+          "pak_path": "baseq3/maps/QLmaps/divineintermission.pk3",
+          "pak_size": 6108300,
+          "location": "Preinstalled",
+          "gametype": "CTF",
+          "levelshot": "levelshots/DivineIntermission.jpg"
+        }
+      ]
+    },
+    "baseq3/maps/QLmaps/dreadfulplace.pk3": {
+      "signature": {
+        "size": 8414346,
+        "mtime_ns": 1795488059235258800
+      },
+      "maps": [
+        {
+          "map": "DreadfulPlace",
+          "name": "Dreadful Place",
+          "pak": "dreadfulplace.pk3",
+          "pak_path": "baseq3/maps/QLmaps/dreadfulplace.pk3",
+          "pak_size": 8414346,
+          "location": "Preinstalled",
+          "gametype": "FFA / TDM",
+          "levelshot": "levelshots/DreadfulPlace.jpg"
+        }
+      ]
+    },
     "baseq3/maps/QLmaps/dredwerkz.pk3": {
       "signature": {
         "size": 4215871,
-        "mtime_ns": 1792155296553255600
+        "mtime_ns": 1795488050681970000
       },
       "maps": [
         {
@@ -145,10 +865,28 @@
         }
       ]
     },
+    "baseq3/maps/QLmaps/duelingkeeps.pk3": {
+      "signature": {
+        "size": 2528303,
+        "mtime_ns": 1795488059240798000
+      },
+      "maps": [
+        {
+          "map": "Duelingkeeps",
+          "name": "Duelingkeeps",
+          "pak": "duelingkeeps.pk3",
+          "pak_path": "baseq3/maps/QLmaps/duelingkeeps.pk3",
+          "pak_size": 2528303,
+          "location": "Preinstalled",
+          "gametype": "Unknown",
+          "levelshot": "levelshots/Duelingkeeps.jpg"
+        }
+      ]
+    },
     "baseq3/maps/QLmaps/eviscerated.pk3": {
       "signature": {
         "size": 2383125,
-        "mtime_ns": 1792155296558173400
+        "mtime_ns": 1795488050686514100
       },
       "maps": [
         {
@@ -166,7 +904,7 @@
     "baseq3/maps/QLmaps/fatalinstinct.pk3": {
       "signature": {
         "size": 1290441,
-        "mtime_ns": 1792155296563084700
+        "mtime_ns": 1795488050690118900
       },
       "maps": [
         {
@@ -181,10 +919,46 @@
         }
       ]
     },
+    "baseq3/maps/QLmaps/finnegans.pk3": {
+      "signature": {
+        "size": 8507799,
+        "mtime_ns": 1795488059262302200
+      },
+      "maps": [
+        {
+          "map": "Finnegans",
+          "name": "Finnegan's",
+          "pak": "finnegans.pk3",
+          "pak_path": "baseq3/maps/QLmaps/finnegans.pk3",
+          "pak_size": 8507799,
+          "location": "Preinstalled",
+          "gametype": "CTF",
+          "levelshot": "levelshots/Finnegans.jpg"
+        }
+      ]
+    },
+    "baseq3/maps/QLmaps/fluorescent.pk3": {
+      "signature": {
+        "size": 17680326,
+        "mtime_ns": 1795488059306423400
+      },
+      "maps": [
+        {
+          "map": "Fluorescent",
+          "name": "Fluorescent Noir",
+          "pak": "fluorescent.pk3",
+          "pak_path": "baseq3/maps/QLmaps/fluorescent.pk3",
+          "pak_size": 17680326,
+          "location": "Preinstalled",
+          "gametype": "CTF",
+          "levelshot": "levelshots/Fluorescent.jpg"
+        }
+      ]
+    },
     "baseq3/maps/QLmaps/forgotten.pk3": {
       "signature": {
         "size": 1901486,
-        "mtime_ns": 1792155296566177000
+        "mtime_ns": 1795488050693768600
       },
       "maps": [
         {
@@ -199,10 +973,64 @@
         }
       ]
     },
+    "baseq3/maps/QLmaps/fuse.pk3": {
+      "signature": {
+        "size": 18393232,
+        "mtime_ns": 1795488059350819600
+      },
+      "maps": [
+        {
+          "map": "fuse",
+          "name": "Fuse",
+          "pak": "fuse.pk3",
+          "pak_path": "baseq3/maps/QLmaps/fuse.pk3",
+          "pak_size": 18393232,
+          "location": "Preinstalled",
+          "gametype": "FFA / TDM / Duel",
+          "levelshot": "levelshots/fuse.jpg"
+        }
+      ]
+    },
+    "baseq3/maps/QLmaps/futurecrossings.pk3": {
+      "signature": {
+        "size": 9433679,
+        "mtime_ns": 1795488059375450300
+      },
+      "maps": [
+        {
+          "map": "FutureCrossings",
+          "name": "Future Crossings",
+          "pak": "futurecrossings.pk3",
+          "pak_path": "baseq3/maps/QLmaps/futurecrossings.pk3",
+          "pak_size": 9433679,
+          "location": "Preinstalled",
+          "gametype": "CTF",
+          "levelshot": "levelshots/FutureCrossings.jpg"
+        }
+      ]
+    },
+    "baseq3/maps/QLmaps/gospelcrossings.pk3": {
+      "signature": {
+        "size": 9989518,
+        "mtime_ns": 1795488059396328400
+      },
+      "maps": [
+        {
+          "map": "GospelCrossings",
+          "name": "Gospel Crossings",
+          "pak": "gospelcrossings.pk3",
+          "pak_path": "baseq3/maps/QLmaps/gospelcrossings.pk3",
+          "pak_size": 9989518,
+          "location": "Preinstalled",
+          "gametype": "CTF",
+          "levelshot": "levelshots/GospelCrossings.jpg"
+        }
+      ]
+    },
     "baseq3/maps/QLmaps/grimdungeons.pk3": {
       "signature": {
         "size": 3490922,
-        "mtime_ns": 1792155296572410800
+        "mtime_ns": 1795488050700281400
       },
       "maps": [
         {
@@ -220,7 +1048,7 @@
     "baseq3/maps/QLmaps/hearth.pk3": {
       "signature": {
         "size": 1805503,
-        "mtime_ns": 1792155296575429000
+        "mtime_ns": 1795488050705142700
       },
       "maps": [
         {
@@ -238,7 +1066,7 @@
     "baseq3/maps/QLmaps/hellsgate.pk3": {
       "signature": {
         "size": 1750230,
-        "mtime_ns": 1792155296577936100
+        "mtime_ns": 1795488050710150300
       },
       "maps": [
         {
@@ -256,7 +1084,7 @@
     "baseq3/maps/QLmaps/heroskeep.pk3": {
       "signature": {
         "size": 3375156,
-        "mtime_ns": 1792155296583097900
+        "mtime_ns": 1795488050717680900
       },
       "maps": [
         {
@@ -271,10 +1099,172 @@
         }
       ]
     },
+    "baseq3/maps/QLmaps/hiddenfortress.pk3": {
+      "signature": {
+        "size": 2815171,
+        "mtime_ns": 1795488059403829800
+      },
+      "maps": [
+        {
+          "map": "hiddenfortress",
+          "name": "Hidden Fortress",
+          "pak": "hiddenfortress.pk3",
+          "pak_path": "baseq3/maps/QLmaps/hiddenfortress.pk3",
+          "pak_size": 2815171,
+          "location": "Preinstalled",
+          "gametype": "FFA / TDM",
+          "levelshot": "levelshots/hiddenfortress.jpg"
+        }
+      ]
+    },
+    "baseq3/maps/QLmaps/industrialaccident.pk3": {
+      "signature": {
+        "size": 8054310,
+        "mtime_ns": 1795488059420192600
+      },
+      "maps": [
+        {
+          "map": "IndustrialAccident",
+          "name": "Industrial Accident",
+          "pak": "industrialaccident.pk3",
+          "pak_path": "baseq3/maps/QLmaps/industrialaccident.pk3",
+          "pak_size": 8054310,
+          "location": "Preinstalled",
+          "gametype": "CTF",
+          "levelshot": "levelshots/IndustrialAccident.jpg"
+        }
+      ]
+    },
+    "baseq3/maps/QLmaps/infinity.pk3": {
+      "signature": {
+        "size": 19554833,
+        "mtime_ns": 1795488059459708200
+      },
+      "maps": [
+        {
+          "map": "Infinity",
+          "name": "Infinity",
+          "pak": "infinity.pk3",
+          "pak_path": "baseq3/maps/QLmaps/infinity.pk3",
+          "pak_size": 19554833,
+          "location": "Preinstalled",
+          "gametype": "CTF",
+          "levelshot": "levelshots/Infinity.jpg"
+        }
+      ]
+    },
+    "baseq3/maps/QLmaps/innersanctums.pk3": {
+      "signature": {
+        "size": 15890699,
+        "mtime_ns": 1795488059492359800
+      },
+      "maps": [
+        {
+          "map": "InnerSanctums",
+          "name": "Inner Sanctums",
+          "pak": "innersanctums.pk3",
+          "pak_path": "baseq3/maps/QLmaps/innersanctums.pk3",
+          "pak_size": 15890699,
+          "location": "Preinstalled",
+          "gametype": "CTF",
+          "levelshot": "levelshots/InnerSanctums.jpg"
+        }
+      ]
+    },
+    "baseq3/maps/QLmaps/ironworks.pk3": {
+      "signature": {
+        "size": 6477655,
+        "mtime_ns": 1795488059507721700
+      },
+      "maps": [
+        {
+          "map": "Ironworks",
+          "name": "Ironworks",
+          "pak": "ironworks.pk3",
+          "pak_path": "baseq3/maps/QLmaps/ironworks.pk3",
+          "pak_size": 6477655,
+          "location": "Preinstalled",
+          "gametype": "CTF",
+          "levelshot": "levelshots/Ironworks.jpg"
+        }
+      ]
+    },
+    "baseq3/maps/QLmaps/japanesecastles.pk3": {
+      "signature": {
+        "size": 8861758,
+        "mtime_ns": 1795488059527325800
+      },
+      "maps": [
+        {
+          "map": "JapaneseCastles",
+          "name": "Japanese Castles",
+          "pak": "japanesecastles.pk3",
+          "pak_path": "baseq3/maps/QLmaps/japanesecastles.pk3",
+          "pak_size": 8861758,
+          "location": "Preinstalled",
+          "gametype": "CTF",
+          "levelshot": "levelshots/JapaneseCastles.jpg"
+        }
+      ]
+    },
+    "baseq3/maps/QLmaps/jumpwerkz.pk3": {
+      "signature": {
+        "size": 19499936,
+        "mtime_ns": 1795488059565259400
+      },
+      "maps": [
+        {
+          "map": "Jumpwerkz",
+          "name": "Jumpwerkz",
+          "pak": "jumpwerkz.pk3",
+          "pak_path": "baseq3/maps/QLmaps/jumpwerkz.pk3",
+          "pak_size": 19499936,
+          "location": "Preinstalled",
+          "gametype": "CTF",
+          "levelshot": "levelshots/Jumpwerkz.jpg"
+        }
+      ]
+    },
+    "baseq3/maps/QLmaps/leviathan.pk3": {
+      "signature": {
+        "size": 9167807,
+        "mtime_ns": 1795488059586043100
+      },
+      "maps": [
+        {
+          "map": "leviathan",
+          "name": "Leviathan",
+          "pak": "leviathan.pk3",
+          "pak_path": "baseq3/maps/QLmaps/leviathan.pk3",
+          "pak_size": 9167807,
+          "location": "Preinstalled",
+          "gametype": "FFA / TDM",
+          "levelshot": "levelshots/leviathan.jpg"
+        }
+      ]
+    },
+    "baseq3/maps/QLmaps/limbus.pk3": {
+      "signature": {
+        "size": 14865150,
+        "mtime_ns": 1795488059615242000
+      },
+      "maps": [
+        {
+          "map": "Limbus",
+          "name": "Limbus",
+          "pak": "limbus.pk3",
+          "pak_path": "baseq3/maps/QLmaps/limbus.pk3",
+          "pak_size": 14865150,
+          "location": "Preinstalled",
+          "gametype": "FFA / TDM",
+          "levelshot": "levelshots/Limbus.jpg"
+        }
+      ]
+    },
     "baseq3/maps/QLmaps/longestyard.pk3": {
       "signature": {
         "size": 7605524,
-        "mtime_ns": 1792155296595324900
+        "mtime_ns": 1795488050732222900
       },
       "maps": [
         {
@@ -289,10 +1279,28 @@
         }
       ]
     },
+    "baseq3/maps/QLmaps/lostparadise.pk3": {
+      "signature": {
+        "size": 29397880,
+        "mtime_ns": 1795488059687537500
+      },
+      "maps": [
+        {
+          "map": "lostparadise",
+          "name": "Lost Paradise",
+          "pak": "lostparadise.pk3",
+          "pak_path": "baseq3/maps/QLmaps/lostparadise.pk3",
+          "pak_size": 29397880,
+          "location": "Preinstalled",
+          "gametype": "CTF",
+          "levelshot": "levelshots/lostparadise.jpg"
+        }
+      ]
+    },
     "baseq3/maps/QLmaps/lostworld.pk3": {
       "signature": {
         "size": 2048561,
-        "mtime_ns": 1792155296599583800
+        "mtime_ns": 1795488050738831400
       },
       "maps": [
         {
@@ -307,10 +1315,28 @@
         }
       ]
     },
+    "baseq3/maps/QLmaps/mcsarges.pk3": {
+      "signature": {
+        "size": 46802747,
+        "mtime_ns": 1795488059781914400
+      },
+      "maps": [
+        {
+          "map": "mcsarges",
+          "name": "McSarge's",
+          "pak": "mcsarges.pk3",
+          "pak_path": "baseq3/maps/QLmaps/mcsarges.pk3",
+          "pak_size": 46802747,
+          "location": "Preinstalled",
+          "gametype": "FFA / TDM / Duel",
+          "levelshot": "levelshots/mcsarges.jpg"
+        }
+      ]
+    },
     "baseq3/maps/QLmaps/namelessplace.pk3": {
       "signature": {
         "size": 2433470,
-        "mtime_ns": 1792155296604920000
+        "mtime_ns": 1795488050746629700
       },
       "maps": [
         {
@@ -325,10 +1351,46 @@
         }
       ]
     },
+    "baseq3/maps/QLmaps/overgrowth.pk3": {
+      "signature": {
+        "size": 29059411,
+        "mtime_ns": 1795488059836561800
+      },
+      "maps": [
+        {
+          "map": "overgrowth",
+          "name": "Over Growth",
+          "pak": "overgrowth.pk3",
+          "pak_path": "baseq3/maps/QLmaps/overgrowth.pk3",
+          "pak_size": 29059411,
+          "location": "Preinstalled",
+          "gametype": "CTF",
+          "levelshot": "levelshots/overgrowth.jpg"
+        }
+      ]
+    },
+    "baseq3/maps/QLmaps/overkill.pk3": {
+      "signature": {
+        "size": 2437377,
+        "mtime_ns": 1795488059844346700
+      },
+      "maps": [
+        {
+          "map": "Overkill",
+          "name": "Overkill",
+          "pak": "overkill.pk3",
+          "pak_path": "baseq3/maps/QLmaps/overkill.pk3",
+          "pak_size": 2437377,
+          "location": "Preinstalled",
+          "gametype": "FFA / TDM",
+          "levelshot": "levelshots/Overkill.jpg"
+        }
+      ]
+    },
     "baseq3/maps/QLmaps/powerstation.pk3": {
       "signature": {
         "size": 2086957,
-        "mtime_ns": 1792155296609069200
+        "mtime_ns": 1795488050754158600
       },
       "maps": [
         {
@@ -346,7 +1408,7 @@
     "baseq3/maps/QLmaps/provinggrounds.pk3": {
       "signature": {
         "size": 2904554,
-        "mtime_ns": 1792155296612756300
+        "mtime_ns": 1795488050762378300
       },
       "maps": [
         {
@@ -361,10 +1423,100 @@
         }
       ]
     },
+    "baseq3/maps/QLmaps/purgatory.pk3": {
+      "signature": {
+        "size": 6813645,
+        "mtime_ns": 1795488059857333300
+      },
+      "maps": [
+        {
+          "map": "purgatory",
+          "name": "Purgatory",
+          "pak": "purgatory.pk3",
+          "pak_path": "baseq3/maps/QLmaps/purgatory.pk3",
+          "pak_size": 6813645,
+          "location": "Preinstalled",
+          "gametype": "FFA / TDM",
+          "levelshot": "levelshots/purgatory.jpg"
+        }
+      ]
+    },
+    "baseq3/maps/QLmaps/quarantine.pk3": {
+      "signature": {
+        "size": 4575338,
+        "mtime_ns": 1795488059869996500
+      },
+      "maps": [
+        {
+          "map": "quarantine",
+          "name": "Quarantine",
+          "pak": "quarantine.pk3",
+          "pak_path": "baseq3/maps/QLmaps/quarantine.pk3",
+          "pak_size": 4575338,
+          "location": "Preinstalled",
+          "gametype": "FFA / TDM",
+          "levelshot": "levelshots/quarantine.jpg"
+        }
+      ]
+    },
+    "baseq3/maps/QLmaps/ragnarok.pk3": {
+      "signature": {
+        "size": 44137569,
+        "mtime_ns": 1795488059953770000
+      },
+      "maps": [
+        {
+          "map": "ragnarok",
+          "name": "ragnarok",
+          "pak": "ragnarok.pk3",
+          "pak_path": "baseq3/maps/QLmaps/ragnarok.pk3",
+          "pak_size": 44137569,
+          "location": "Preinstalled",
+          "gametype": "Unknown",
+          "levelshot": "levelshots/ragnarok.jpg"
+        }
+      ]
+    },
+    "baseq3/maps/QLmaps/railyard.pk3": {
+      "signature": {
+        "size": 15310806,
+        "mtime_ns": 1795488059985851800
+      },
+      "maps": [
+        {
+          "map": "Railyard",
+          "name": "Rail yard",
+          "pak": "railyard.pk3",
+          "pak_path": "baseq3/maps/QLmaps/railyard.pk3",
+          "pak_size": 15310806,
+          "location": "Preinstalled",
+          "gametype": "TDM / CTF",
+          "levelshot": "levelshots/Railyard.jpg"
+        }
+      ]
+    },
+    "baseq3/maps/QLmaps/repent.pk3": {
+      "signature": {
+        "size": 24596920,
+        "mtime_ns": 1795488060036887200
+      },
+      "maps": [
+        {
+          "map": "Repent",
+          "name": "Repent",
+          "pak": "repent.pk3",
+          "pak_path": "baseq3/maps/QLmaps/repent.pk3",
+          "pak_size": 24596920,
+          "location": "Preinstalled",
+          "gametype": "FFA / TDM",
+          "levelshot": "levelshots/Repent.jpg"
+        }
+      ]
+    },
     "baseq3/maps/QLmaps/retribution.pk3": {
       "signature": {
         "size": 2981097,
-        "mtime_ns": 1792155296618347200
+        "mtime_ns": 1795488050769973500
       },
       "maps": [
         {
@@ -379,10 +1531,100 @@
         }
       ]
     },
+    "baseq3/maps/QLmaps/satanic.pk3": {
+      "signature": {
+        "size": 18275976,
+        "mtime_ns": 1795488060077255800
+      },
+      "maps": [
+        {
+          "map": "satanic",
+          "name": "Satanic",
+          "pak": "satanic.pk3",
+          "pak_path": "baseq3/maps/QLmaps/satanic.pk3",
+          "pak_size": 18275976,
+          "location": "Preinstalled",
+          "gametype": "FFA / TDM",
+          "levelshot": "levelshots/satanic.jpg"
+        }
+      ]
+    },
+    "baseq3/maps/QLmaps/shiningforces.pk3": {
+      "signature": {
+        "size": 5605170,
+        "mtime_ns": 1795488060091173100
+      },
+      "maps": [
+        {
+          "map": "ShiningForces",
+          "name": "Shining Forces",
+          "pak": "shiningforces.pk3",
+          "pak_path": "baseq3/maps/QLmaps/shiningforces.pk3",
+          "pak_size": 5605170,
+          "location": "Preinstalled",
+          "gametype": "CTF",
+          "levelshot": "levelshots/ShiningForces.jpg"
+        }
+      ]
+    },
+    "baseq3/maps/QLmaps/siberia.pk3": {
+      "signature": {
+        "size": 6646990,
+        "mtime_ns": 1795488060105992400
+      },
+      "maps": [
+        {
+          "map": "Siberia",
+          "name": "Siberia",
+          "pak": "siberia.pk3",
+          "pak_path": "baseq3/maps/QLmaps/siberia.pk3",
+          "pak_size": 6646990,
+          "location": "Preinstalled",
+          "gametype": "CTF",
+          "levelshot": "levelshots/Siberia.jpg"
+        }
+      ]
+    },
+    "baseq3/maps/QLmaps/sinister.pk3": {
+      "signature": {
+        "size": 5992304,
+        "mtime_ns": 1795488060119721500
+      },
+      "maps": [
+        {
+          "map": "sinister",
+          "name": "Sinister",
+          "pak": "sinister.pk3",
+          "pak_path": "baseq3/maps/QLmaps/sinister.pk3",
+          "pak_size": 5992304,
+          "location": "Preinstalled",
+          "gametype": "FFA / Duel",
+          "levelshot": "levelshots/sinister.jpg"
+        }
+      ]
+    },
+    "baseq3/maps/QLmaps/skyward.pk3": {
+      "signature": {
+        "size": 8391941,
+        "mtime_ns": 1795488060139900100
+      },
+      "maps": [
+        {
+          "map": "Skyward",
+          "name": "Skyward",
+          "pak": "skyward.pk3",
+          "pak_path": "baseq3/maps/QLmaps/skyward.pk3",
+          "pak_size": 8391941,
+          "location": "Preinstalled",
+          "gametype": "CTF",
+          "levelshot": "levelshots/Skyward.jpg"
+        }
+      ]
+    },
     "baseq3/maps/QLmaps/spacechamber.pk3": {
       "signature": {
         "size": 7499542,
-        "mtime_ns": 1792155296627880000
+        "mtime_ns": 1795488050787179900
       },
       "maps": [
         {
@@ -397,10 +1639,64 @@
         }
       ]
     },
+    "baseq3/maps/QLmaps/spaceCTF.pk3": {
+      "signature": {
+        "size": 4910159,
+        "mtime_ns": 1795488060151563100
+      },
+      "maps": [
+        {
+          "map": "SpaceCTF",
+          "name": "Space CTF",
+          "pak": "spaceCTF.pk3",
+          "pak_path": "baseq3/maps/QLmaps/spaceCTF.pk3",
+          "pak_size": 4910159,
+          "location": "Preinstalled",
+          "gametype": "CTF",
+          "levelshot": "levelshots/SpaceCTF.jpg"
+        }
+      ]
+    },
+    "baseq3/maps/QLmaps/speedycrossings.pk3": {
+      "signature": {
+        "size": 11714391,
+        "mtime_ns": 1795488060179125800
+      },
+      "maps": [
+        {
+          "map": "SpeedyCrossings",
+          "name": "Speedy Crossings",
+          "pak": "speedycrossings.pk3",
+          "pak_path": "baseq3/maps/QLmaps/speedycrossings.pk3",
+          "pak_size": 11714391,
+          "location": "Preinstalled",
+          "gametype": "CTF",
+          "levelshot": "levelshots/SpeedyCrossings.jpg"
+        }
+      ]
+    },
+    "baseq3/maps/QLmaps/spidercrossings.pk3": {
+      "signature": {
+        "size": 9593899,
+        "mtime_ns": 1795488060204674200
+      },
+      "maps": [
+        {
+          "map": "SpiderCrossings",
+          "name": "Spider Crossings",
+          "pak": "spidercrossings.pk3",
+          "pak_path": "baseq3/maps/QLmaps/spidercrossings.pk3",
+          "pak_size": 9593899,
+          "location": "Preinstalled",
+          "gametype": "CTF",
+          "levelshot": "levelshots/SpiderCrossings.jpg"
+        }
+      ]
+    },
     "baseq3/maps/QLmaps/spillway.pk3": {
       "signature": {
         "size": 1566693,
-        "mtime_ns": 1792155296630398900
+        "mtime_ns": 1795488050793414200
       },
       "maps": [
         {
@@ -415,10 +1711,64 @@
         }
       ]
     },
+    "baseq3/maps/QLmaps/stonekeep.pk3": {
+      "signature": {
+        "size": 12967986,
+        "mtime_ns": 1795488060237223400
+      },
+      "maps": [
+        {
+          "map": "Stonekeep",
+          "name": "Stonekeep",
+          "pak": "stonekeep.pk3",
+          "pak_path": "baseq3/maps/QLmaps/stonekeep.pk3",
+          "pak_size": 12967986,
+          "location": "Preinstalled",
+          "gametype": "CTF",
+          "levelshot": "levelshots/Stonekeep.jpg"
+        }
+      ]
+    },
+    "baseq3/maps/QLmaps/stronghold.pk3": {
+      "signature": {
+        "size": 6583985,
+        "mtime_ns": 1795488060250668200
+      },
+      "maps": [
+        {
+          "map": "Stronghold",
+          "name": "Stronghold",
+          "pak": "stronghold.pk3",
+          "pak_path": "baseq3/maps/QLmaps/stronghold.pk3",
+          "pak_size": 6583985,
+          "location": "Preinstalled",
+          "gametype": "CTF",
+          "levelshot": "levelshots/Stronghold.jpg"
+        }
+      ]
+    },
+    "baseq3/maps/QLmaps/superspace.pk3": {
+      "signature": {
+        "size": 13527601,
+        "mtime_ns": 1795488060278692800
+      },
+      "maps": [
+        {
+          "map": "superspace",
+          "name": "Super Space",
+          "pak": "superspace.pk3",
+          "pak_path": "baseq3/maps/QLmaps/superspace.pk3",
+          "pak_size": 13527601,
+          "location": "Preinstalled",
+          "gametype": "FFA / TDM",
+          "levelshot": "levelshots/superspace.jpg"
+        }
+      ]
+    },
     "baseq3/maps/QLmaps/terminalheights.pk3": {
       "signature": {
         "size": 5523494,
-        "mtime_ns": 1792155296637688300
+        "mtime_ns": 1795488050808997000
       },
       "maps": [
         {
@@ -433,10 +1783,64 @@
         }
       ]
     },
+    "baseq3/maps/QLmaps/theatreofpain.pk3": {
+      "signature": {
+        "size": 7129137,
+        "mtime_ns": 1795488060292735200
+      },
+      "maps": [
+        {
+          "map": "TheatreOfPain",
+          "name": "Theatre of Pain",
+          "pak": "theatreofpain.pk3",
+          "pak_path": "baseq3/maps/QLmaps/theatreofpain.pk3",
+          "pak_size": 7129137,
+          "location": "Preinstalled",
+          "gametype": "FFA / TDM",
+          "levelshot": "levelshots/TheatreOfPain.jpg"
+        }
+      ]
+    },
+    "baseq3/maps/QLmaps/thedukesgarden.pk3": {
+      "signature": {
+        "size": 10320051,
+        "mtime_ns": 1795488060314240700
+      },
+      "maps": [
+        {
+          "map": "TheDukesGarden",
+          "name": "The Duke's Garden",
+          "pak": "thedukesgarden.pk3",
+          "pak_path": "baseq3/maps/QLmaps/thedukesgarden.pk3",
+          "pak_size": 10320051,
+          "location": "Preinstalled",
+          "gametype": "CTF",
+          "levelshot": "levelshots/TheDukesGarden.jpg"
+        }
+      ]
+    },
+    "baseq3/maps/QLmaps/theedge.pk3": {
+      "signature": {
+        "size": 16166359,
+        "mtime_ns": 1795488060345190000
+      },
+      "maps": [
+        {
+          "map": "theedge",
+          "name": "The Edge",
+          "pak": "theedge.pk3",
+          "pak_path": "baseq3/maps/QLmaps/theedge.pk3",
+          "pak_size": 16166359,
+          "location": "Preinstalled",
+          "gametype": "FFA / TDM / Duel",
+          "levelshot": "levelshots/theedge.jpg"
+        }
+      ]
+    },
     "baseq3/maps/QLmaps/theepicenter.pk3": {
       "signature": {
         "size": 3283528,
-        "mtime_ns": 1792155296643285000
+        "mtime_ns": 1795488050817195000
       },
       "maps": [
         {
@@ -451,10 +1855,64 @@
         }
       ]
     },
+    "baseq3/maps/QLmaps/toxicity.pk3": {
+      "signature": {
+        "size": 8303584,
+        "mtime_ns": 1795488060362061700
+      },
+      "maps": [
+        {
+          "map": "Toxicity",
+          "name": "Toxicity",
+          "pak": "toxicity.pk3",
+          "pak_path": "baseq3/maps/QLmaps/toxicity.pk3",
+          "pak_size": 8303584,
+          "location": "Preinstalled",
+          "gametype": "FFA / Duel",
+          "levelshot": "levelshots/Toxicity.jpg"
+        }
+      ]
+    },
+    "baseq3/maps/QLmaps/trinity.pk3": {
+      "signature": {
+        "size": 5025111,
+        "mtime_ns": 1795488060375151000
+      },
+      "maps": [
+        {
+          "map": "Trinity",
+          "name": "Trinity",
+          "pak": "trinity.pk3",
+          "pak_path": "baseq3/maps/QLmaps/trinity.pk3",
+          "pak_size": 5025111,
+          "location": "Preinstalled",
+          "gametype": "FFA / TDM",
+          "levelshot": "levelshots/Trinity.jpg"
+        }
+      ]
+    },
+    "baseq3/maps/QLmaps/troubledwaters.pk3": {
+      "signature": {
+        "size": 3897161,
+        "mtime_ns": 1795488060382060800
+      },
+      "maps": [
+        {
+          "map": "Troubledwaters",
+          "name": "Troubled Waters",
+          "pak": "troubledwaters.pk3",
+          "pak_path": "baseq3/maps/QLmaps/troubledwaters.pk3",
+          "pak_size": 3897161,
+          "location": "Preinstalled",
+          "gametype": "CTF",
+          "levelshot": "levelshots/Troubledwaters.jpg"
+        }
+      ]
+    },
     "baseq3/maps/QLmaps/verticalvengeance.pk3": {
       "signature": {
         "size": 1937245,
-        "mtime_ns": 1792155296646182300
+        "mtime_ns": 1795488050823231400
       },
       "maps": [
         {
@@ -469,38 +1927,28 @@
         }
       ]
     },
-    "baseq3/mods/baseq3/16+.pk3": {
+    "baseq3/maps/QLmaps/zen.pk3": {
       "signature": {
-        "size": 1507078,
-        "mtime_ns": 1794151391099896000
+        "size": 45760438,
+        "mtime_ns": 1795488060476879900
       },
       "maps": [
         {
-          "map": "16+",
-          "name": "Bouncy Bouncy",
-          "pak": "16+.pk3",
-          "pak_path": "baseq3/mods/baseq3/16+.pk3",
-          "pak_size": 1507078,
-          "location": "Downloaded",
-          "gametype": "FFA / TDM",
-          "levelshot": "levelshots/16.jpg"
-        },
-        {
-          "map": "16++",
-          "name": "Bounce Bounce Bang!",
-          "pak": "16+.pk3",
-          "pak_path": "baseq3/mods/baseq3/16+.pk3",
-          "pak_size": 1507078,
-          "location": "Downloaded",
-          "gametype": "FFA / TDM",
-          "levelshot": "levelshots/16.jpg"
+          "map": "zen",
+          "name": "Zen",
+          "pak": "zen.pk3",
+          "pak_path": "baseq3/maps/QLmaps/zen.pk3",
+          "pak_size": 45760438,
+          "location": "Preinstalled",
+          "gametype": "CTF",
+          "levelshot": "levelshots/zen.jpg"
         }
       ]
     },
     "baseq3/mods/baseq3/6++.pk3": {
       "signature": {
         "size": 705999,
-        "mtime_ns": 1792180405548640200
+        "mtime_ns": 1795555196060572300
       },
       "maps": [
         {
@@ -515,28 +1963,10 @@
         }
       ]
     },
-    "baseq3/mods/baseq3/akutadm1.pk3": {
-      "signature": {
-        "size": 12720743,
-        "mtime_ns": 1794349788806665600
-      },
-      "maps": [
-        {
-          "map": "akutadm1",
-          "name": "ALIEN",
-          "pak": "akutadm1.pk3",
-          "pak_path": "baseq3/mods/baseq3/akutadm1.pk3",
-          "pak_size": 12720743,
-          "location": "Downloaded",
-          "gametype": "FFA / Duel",
-          "levelshot": "levelshots/akutadm1.tga"
-        }
-      ]
-    },
     "baseq3/mods/baseq3/almostlost.pk3": {
       "signature": {
         "size": 2377525,
-        "mtime_ns": 1792506631744496400
+        "mtime_ns": 1795651433753254800
       },
       "maps": [
         {
@@ -551,118 +1981,10 @@
         }
       ]
     },
-    "baseq3/mods/baseq3/arcanecitadel.pk3": {
-      "signature": {
-        "size": 9489001,
-        "mtime_ns": 1793731685743638100
-      },
-      "maps": [
-        {
-          "map": "ArcaneCitadel",
-          "name": "ArcaneCitadel",
-          "pak": "arcanecitadel.pk3",
-          "pak_path": "baseq3/mods/baseq3/arcanecitadel.pk3",
-          "pak_size": 9489001,
-          "location": "Downloaded",
-          "gametype": "Unknown",
-          "levelshot": "levelshots/ArcaneCitadel.jpg"
-        }
-      ]
-    },
-    "baseq3/mods/baseq3/arkinholm.pk3": {
-      "signature": {
-        "size": 29335453,
-        "mtime_ns": 1792504499055688700
-      },
-      "maps": [
-        {
-          "map": "Arkinholm",
-          "name": "Arkinholm",
-          "pak": "arkinholm.pk3",
-          "pak_path": "baseq3/mods/baseq3/arkinholm.pk3",
-          "pak_size": 29335453,
-          "location": "Downloaded",
-          "gametype": "Unknown",
-          "levelshot": "levelshots/Arkinholm.jpg"
-        }
-      ]
-    },
-    "baseq3/mods/baseq3/bal3dm3.pk3": {
-      "signature": {
-        "size": 4207696,
-        "mtime_ns": 1792604658938559500
-      },
-      "maps": [
-        {
-          "map": "bal3dm3",
-          "name": "Disinformation",
-          "pak": "bal3dm3.pk3",
-          "pak_path": "baseq3/mods/baseq3/bal3dm3.pk3",
-          "pak_size": 4207696,
-          "location": "Downloaded",
-          "gametype": "FFA / Duel",
-          "levelshot": "levelshots/bal3dm3.jpg"
-        }
-      ]
-    },
-    "baseq3/mods/baseq3/BardoK-CPMA2.pk3": {
-      "signature": {
-        "size": 1976380,
-        "mtime_ns": 1793136820114621500
-      },
-      "maps": [
-        {
-          "map": "BardoK-CPMA2",
-          "name": "BardoK-CPMA2",
-          "pak": "BardoK-CPMA2.pk3",
-          "pak_path": "baseq3/mods/baseq3/BardoK-CPMA2.pk3",
-          "pak_size": 1976380,
-          "location": "Downloaded",
-          "gametype": "Unknown",
-          "levelshot": "levelshots/BardoK-CPMA2.jpg"
-        }
-      ]
-    },
-    "baseq3/mods/baseq3/battleforged.pk3": {
-      "signature": {
-        "size": 3396213,
-        "mtime_ns": 1792178699976093700
-      },
-      "maps": [
-        {
-          "map": "battleforged",
-          "name": "battleforged",
-          "pak": "battleforged.pk3",
-          "pak_path": "baseq3/mods/baseq3/battleforged.pk3",
-          "pak_size": 3396213,
-          "location": "Downloaded",
-          "gametype": "Unknown",
-          "levelshot": "levelshots/battleforged.jpg"
-        }
-      ]
-    },
-    "baseq3/mods/baseq3/bloodister-v2.pk3": {
-      "signature": {
-        "size": 15324633,
-        "mtime_ns": 1794338296374655400
-      },
-      "maps": [
-        {
-          "map": "bloodister",
-          "name": "Bloodister by 'rOxXz'",
-          "pak": "bloodister-v2.pk3",
-          "pak_path": "baseq3/mods/baseq3/bloodister-v2.pk3",
-          "pak_size": 15324633,
-          "location": "Downloaded",
-          "gametype": "FFA / TDM / Duel",
-          "levelshot": "levelshots/bloodister.jpg"
-        }
-      ]
-    },
     "baseq3/mods/baseq3/BloodrunIntel.pk3": {
       "signature": {
         "size": 9334324,
-        "mtime_ns": 1792182440653587900
+        "mtime_ns": 1795552879963276600
       },
       "maps": [
         {
@@ -677,28 +1999,10 @@
         }
       ]
     },
-    "baseq3/mods/baseq3/ca-tamb.pk3": {
-      "signature": {
-        "size": 3422328,
-        "mtime_ns": 1794339447782700100
-      },
-      "maps": [
-        {
-          "map": "ca-tamb",
-          "name": "ca-tamb",
-          "pak": "ca-tamb.pk3",
-          "pak_path": "baseq3/mods/baseq3/ca-tamb.pk3",
-          "pak_size": 3422328,
-          "location": "Downloaded",
-          "gametype": "FFA / TDM",
-          "levelshot": "levelshots/ca-tamb.jpg"
-        }
-      ]
-    },
     "baseq3/mods/baseq3/campgrounds.pk3": {
       "signature": {
         "size": 3465002,
-        "mtime_ns": 1792182003496631800
+        "mtime_ns": 1795488178798122500
       },
       "maps": [
         {
@@ -713,118 +2017,28 @@
         }
       ]
     },
-    "baseq3/mods/baseq3/charon3dm12.pk3": {
+    "baseq3/mods/baseq3/cliffside.pk3": {
       "signature": {
-        "size": 2691561,
-        "mtime_ns": 1793475779779118400
+        "size": 7715554,
+        "mtime_ns": 1795652596214370000
       },
       "maps": [
         {
-          "map": "charon3dm12",
-          "name": "stir fried rockss attack",
-          "pak": "charon3dm12.pk3",
-          "pak_path": "baseq3/mods/baseq3/charon3dm12.pk3",
-          "pak_size": 2691561,
-          "location": "Downloaded",
-          "gametype": "FFA / Duel",
-          "levelshot": "levelshots/charon3dm12.jpg"
-        }
-      ]
-    },
-    "baseq3/mods/baseq3/chemicalreaction.pk3": {
-      "signature": {
-        "size": 4169235,
-        "mtime_ns": 1793994224498051100
-      },
-      "maps": [
-        {
-          "map": "Chemicalreaction",
-          "name": "Chemicalreaction",
-          "pak": "chemicalreaction.pk3",
-          "pak_path": "baseq3/mods/baseq3/chemicalreaction.pk3",
-          "pak_size": 4169235,
+          "map": "CliffSide",
+          "name": "CliffSide",
+          "pak": "cliffside.pk3",
+          "pak_path": "baseq3/mods/baseq3/cliffside.pk3",
+          "pak_size": 7715554,
           "location": "Downloaded",
           "gametype": "Unknown",
-          "levelshot": "levelshots/Chemicalreaction.jpg"
-        }
-      ]
-    },
-    "baseq3/mods/baseq3/ct3ctf1.pk3": {
-      "signature": {
-        "size": 11702534,
-        "mtime_ns": 1792524866433998800
-      },
-      "maps": [
-        {
-          "map": "ct3ctf1",
-          "name": "noneyet",
-          "pak": "ct3ctf1.pk3",
-          "pak_path": "baseq3/mods/baseq3/ct3ctf1.pk3",
-          "pak_size": 11702534,
-          "location": "Downloaded",
-          "gametype": "CTF",
-          "levelshot": "levelshots/ct3ctf1.jpg"
-        }
-      ]
-    },
-    "baseq3/mods/baseq3/ctf1+.pk3": {
-      "signature": {
-        "size": 1586448,
-        "mtime_ns": 1792700425477877600
-      },
-      "maps": [
-        {
-          "map": "ctf1+",
-          "name": "So Long And Thanks For All The Frags",
-          "pak": "ctf1+.pk3",
-          "pak_path": "baseq3/mods/baseq3/ctf1+.pk3",
-          "pak_size": 1586448,
-          "location": "Downloaded",
-          "gametype": "CTF",
-          "levelshot": "levelshots/ctf1.jpg"
-        }
-      ]
-    },
-    "baseq3/mods/baseq3/dreadfulplace.pk3": {
-      "signature": {
-        "size": 8414075,
-        "mtime_ns": 1792689822150321200
-      },
-      "maps": [
-        {
-          "map": "DreadfulPlace",
-          "name": "DreadfulPlace",
-          "pak": "dreadfulplace.pk3",
-          "pak_path": "baseq3/mods/baseq3/dreadfulplace.pk3",
-          "pak_size": 8414075,
-          "location": "Downloaded",
-          "gametype": "Unknown",
-          "levelshot": "levelshots/DreadfulPlace.jpg"
-        }
-      ]
-    },
-    "baseq3/mods/baseq3/el3dm1.pk3": {
-      "signature": {
-        "size": 2945254,
-        "mtime_ns": 1794150922342331400
-      },
-      "maps": [
-        {
-          "map": "el3dm1",
-          "name": "[ evilspace ]",
-          "pak": "el3dm1.pk3",
-          "pak_path": "baseq3/mods/baseq3/el3dm1.pk3",
-          "pak_size": 2945254,
-          "location": "Downloaded",
-          "gametype": "FFA / TDM / Duel",
-          "levelshot": "levelshots/el3dm1.jpg"
+          "levelshot": "levelshots/CliffSide.jpg"
         }
       ]
     },
     "baseq3/mods/baseq3/firstrebirth.pk3": {
       "signature": {
         "size": 27569893,
-        "mtime_ns": 1792685764438533600
+        "mtime_ns": 1795643464499288300
       },
       "maps": [
         {
@@ -839,28 +2053,10 @@
         }
       ]
     },
-    "baseq3/mods/baseq3/focal_p132.pk3": {
-      "signature": {
-        "size": 8422010,
-        "mtime_ns": 1794243347239481600
-      },
-      "maps": [
-        {
-          "map": "focal_p132",
-          "name": "Focal Point",
-          "pak": "focal_p132.pk3",
-          "pak_path": "baseq3/mods/baseq3/focal_p132.pk3",
-          "pak_size": 8422010,
-          "location": "Downloaded",
-          "gametype": "FFA / TDM / Duel",
-          "levelshot": "levelshots/focal_p132.jpg"
-        }
-      ]
-    },
     "baseq3/mods/baseq3/furiousheights.pk3": {
       "signature": {
         "size": 5715275,
-        "mtime_ns": 1792762528402491200
+        "mtime_ns": 1795520915801305800
       },
       "maps": [
         {
@@ -875,28 +2071,10 @@
         }
       ]
     },
-    "baseq3/mods/baseq3/hektik.pk3": {
-      "signature": {
-        "size": 6029375,
-        "mtime_ns": 1794350266399215000
-      },
-      "maps": [
-        {
-          "map": "hektik",
-          "name": "hektik",
-          "pak": "hektik.pk3",
-          "pak_path": "baseq3/mods/baseq3/hektik.pk3",
-          "pak_size": 6029375,
-          "location": "Downloaded",
-          "gametype": "Unknown",
-          "levelshot": "levelshots/hektik.jpg"
-        }
-      ]
-    },
     "baseq3/mods/baseq3/jaxdm8.pk3": {
       "signature": {
         "size": 2353027,
-        "mtime_ns": 1792435510446751500
+        "mtime_ns": 1795520863478661600
       },
       "maps": [
         {
@@ -911,28 +2089,10 @@
         }
       ]
     },
-    "baseq3/mods/baseq3/jaxtourney1.pk3": {
-      "signature": {
-        "size": 681598,
-        "mtime_ns": 1794768465637085300
-      },
-      "maps": [
-        {
-          "map": "jaxtourney1",
-          "name": "Stranglehold Tourney Version",
-          "pak": "jaxtourney1.pk3",
-          "pak_path": "baseq3/mods/baseq3/jaxtourney1.pk3",
-          "pak_size": 681598,
-          "location": "Downloaded",
-          "gametype": "FFA / Duel",
-          "levelshot": "levelshots/jaxtourney1.jpg"
-        }
-      ]
-    },
     "baseq3/mods/baseq3/leviathan.pk3": {
       "signature": {
         "size": 9790939,
-        "mtime_ns": 1792586769799205900
+        "mtime_ns": 1795550809368989800
       },
       "maps": [
         {
@@ -950,7 +2110,7 @@
     "baseq3/mods/baseq3/longestyard.pk3": {
       "signature": {
         "size": 7605273,
-        "mtime_ns": 1793368959446577300
+        "mtime_ns": 1795652285653891100
       },
       "maps": [
         {
@@ -968,7 +2128,7 @@
     "baseq3/mods/baseq3/map-13death_xt_b1.pk3": {
       "signature": {
         "size": 4028382,
-        "mtime_ns": 1792588431780607300
+        "mtime_ns": 1795644591092163100
       },
       "maps": [
         {
@@ -986,7 +2146,7 @@
     "baseq3/mods/baseq3/map-13excave.pk3": {
       "signature": {
         "size": 2249751,
-        "mtime_ns": 1792507822003879700
+        "mtime_ns": 1795555950387875800
       },
       "maps": [
         {
@@ -1001,28 +2161,10 @@
         }
       ]
     },
-    "baseq3/mods/baseq3/map-13matrix.pk3": {
-      "signature": {
-        "size": 1413816,
-        "mtime_ns": 1793384778881332900
-      },
-      "maps": [
-        {
-          "map": "13matrix",
-          "name": "The Campgrounds - Matrix Edition (by sst13)",
-          "pak": "map-13matrix.pk3",
-          "pak_path": "baseq3/mods/baseq3/map-13matrix.pk3",
-          "pak_size": 1413816,
-          "location": "Downloaded",
-          "gametype": "FFA / TDM / Duel",
-          "levelshot": "levelshots/13matrix.tga"
-        }
-      ]
-    },
     "baseq3/mods/baseq3/map-blackcathedral.pk3": {
       "signature": {
         "size": 16503149,
-        "mtime_ns": 1792181943763977100
+        "mtime_ns": 1795633094149956700
       },
       "maps": [
         {
@@ -1040,7 +2182,7 @@
     "baseq3/mods/baseq3/map-coldwar.pk3": {
       "signature": {
         "size": 6338421,
-        "mtime_ns": 1792620426373428900
+        "mtime_ns": 1795631873301973000
       },
       "maps": [
         {
@@ -1055,64 +2197,10 @@
         }
       ]
     },
-    "baseq3/mods/baseq3/map-dishdm3.pk3": {
-      "signature": {
-        "size": 4153266,
-        "mtime_ns": 1793490871494078000
-      },
-      "maps": [
-        {
-          "map": "dishdm3",
-          "name": "Place Of Guilt",
-          "pak": "map-dishdm3.pk3",
-          "pak_path": "baseq3/mods/baseq3/map-dishdm3.pk3",
-          "pak_size": 4153266,
-          "location": "Downloaded",
-          "gametype": "FFA / Duel",
-          "levelshot": "levelshots/dishdm3.jpg"
-        }
-      ]
-    },
-    "baseq3/mods/baseq3/map-monastery.pk3": {
-      "signature": {
-        "size": 9354328,
-        "mtime_ns": 1792434498058819200
-      },
-      "maps": [
-        {
-          "map": "monastery",
-          "name": "Monastery",
-          "pak": "map-monastery.pk3",
-          "pak_path": "baseq3/mods/baseq3/map-monastery.pk3",
-          "pak_size": 9354328,
-          "location": "Downloaded",
-          "gametype": "FFA / TDM",
-          "levelshot": "levelshots/monastery.jpg"
-        }
-      ]
-    },
-    "baseq3/mods/baseq3/map_oxodm15.pk3": {
-      "signature": {
-        "size": 6312870,
-        "mtime_ns": 1792926825739997300
-      },
-      "maps": [
-        {
-          "map": "oxodm15",
-          "name": "Purgatory for Quake3 from Quake Live",
-          "pak": "map_oxodm15.pk3",
-          "pak_path": "baseq3/mods/baseq3/map_oxodm15.pk3",
-          "pak_size": 6312870,
-          "location": "Downloaded",
-          "gametype": "FFA / TDM",
-          "levelshot": "levelshots/oxodm15.jpg"
-        }
-      ]
-    },
     "baseq3/mods/baseq3/map_oxodm17.pk3": {
       "signature": {
         "size": 1801987,
-        "mtime_ns": 1792509170353443100
+        "mtime_ns": 1795488488201458300
       },
       "maps": [
         {
@@ -1127,46 +2215,10 @@
         }
       ]
     },
-    "baseq3/mods/baseq3/map_oxodm19.pk3": {
-      "signature": {
-        "size": 4209452,
-        "mtime_ns": 1794352054814529500
-      },
-      "maps": [
-        {
-          "map": "oxodm19",
-          "name": "asylum for Quake 3 from Quake Live",
-          "pak": "map_oxodm19.pk3",
-          "pak_path": "baseq3/mods/baseq3/map_oxodm19.pk3",
-          "pak_size": 4209452,
-          "location": "Downloaded",
-          "gametype": "FFA / TDM / Duel",
-          "levelshot": "levelshots/oxodm19.jpg"
-        }
-      ]
-    },
-    "baseq3/mods/baseq3/map_oxodm54.pk3": {
-      "signature": {
-        "size": 2508757,
-        "mtime_ns": 1792328027210734000
-      },
-      "maps": [
-        {
-          "map": "oxodm54",
-          "name": "hiddenfortress for Quake 3 from Quake Live",
-          "pak": "map_oxodm54.pk3",
-          "pak_path": "baseq3/mods/baseq3/map_oxodm54.pk3",
-          "pak_size": 2508757,
-          "location": "Downloaded",
-          "gametype": "FFA / TDM / Duel",
-          "levelshot": "levelshots/oxodm54.jpg"
-        }
-      ]
-    },
     "baseq3/mods/baseq3/map_oxodm68.pk3": {
       "signature": {
         "size": 3928763,
-        "mtime_ns": 1792181394884859600
+        "mtime_ns": 1795628950401766500
       },
       "maps": [
         {
@@ -1181,136 +2233,10 @@
         }
       ]
     },
-    "baseq3/mods/baseq3/molten_compressed.pk3": {
-      "signature": {
-        "size": 33370523,
-        "mtime_ns": 1794170960665413500
-      },
-      "maps": [
-        {
-          "map": "molten",
-          "name": "Arabian Night",
-          "pak": "molten_compressed.pk3",
-          "pak_path": "baseq3/mods/baseq3/molten_compressed.pk3",
-          "pak_size": 33370523,
-          "location": "Downloaded",
-          "gametype": "FFA / TDM / Duel",
-          "levelshot": "levelshots/molten.jpg"
-        }
-      ]
-    },
-    "baseq3/mods/baseq3/ospdm10.pk3": {
-      "signature": {
-        "size": 2075052,
-        "mtime_ns": 1794865321354912100
-      },
-      "maps": [
-        {
-          "map": "ospdm10",
-          "name": "Apologie",
-          "pak": "ospdm10.pk3",
-          "pak_path": "baseq3/mods/baseq3/ospdm10.pk3",
-          "pak_size": 2075052,
-          "location": "Downloaded",
-          "gametype": "FFA / Duel",
-          "levelshot": "levelshots/ospdm10.jpg"
-        }
-      ]
-    },
-    "baseq3/mods/baseq3/ospdm7.pk3": {
-      "signature": {
-        "size": 652495,
-        "mtime_ns": 1794528893940956800
-      },
-      "maps": [
-        {
-          "map": "ospdm7",
-          "name": "The Dancehall",
-          "pak": "ospdm7.pk3",
-          "pak_path": "baseq3/mods/baseq3/ospdm7.pk3",
-          "pak_size": 652495,
-          "location": "Downloaded",
-          "gametype": "FFA / Duel",
-          "levelshot": "levelshots/ospdm7.jpg"
-        }
-      ]
-    },
-    "baseq3/mods/baseq3/ospdm8.pk3": {
-      "signature": {
-        "size": 1226072,
-        "mtime_ns": 1794864822159651000
-      },
-      "maps": [
-        {
-          "map": "ospdm8",
-          "name": "The Chastity Belt Duel (Orange remix)",
-          "pak": "ospdm8.pk3",
-          "pak_path": "baseq3/mods/baseq3/ospdm8.pk3",
-          "pak_size": 1226072,
-          "location": "Downloaded",
-          "gametype": "FFA / TDM / Duel",
-          "levelshot": "levelshots/ospdm8.jpg"
-        }
-      ]
-    },
-    "baseq3/mods/baseq3/ospdm9.pk3": {
-      "signature": {
-        "size": 1709194,
-        "mtime_ns": 1794529338066305300
-      },
-      "maps": [
-        {
-          "map": "ospdm9",
-          "name": "Anticipating Oblivion - Tourney Edition -",
-          "pak": "ospdm9.pk3",
-          "pak_path": "baseq3/mods/baseq3/ospdm9.pk3",
-          "pak_size": 1709194,
-          "location": "Downloaded",
-          "gametype": "FFA / TDM / Duel",
-          "levelshot": "levelshots/ospdm9.jpg"
-        }
-      ]
-    },
-    "baseq3/mods/baseq3/ospra3map1.pk3": {
-      "signature": {
-        "size": 2243604,
-        "mtime_ns": 1793564762086045700
-      },
-      "maps": [
-        {
-          "map": "ospra3map1",
-          "name": "ospra3map1",
-          "pak": "ospra3map1.pk3",
-          "pak_path": "baseq3/mods/baseq3/ospra3map1.pk3",
-          "pak_size": 2243604,
-          "location": "Downloaded",
-          "gametype": "Unknown",
-          "levelshot": "levelshots/ospra3map1.jpg"
-        }
-      ]
-    },
-    "baseq3/mods/baseq3/overek.pk3": {
-      "signature": {
-        "size": 983756,
-        "mtime_ns": 1792328294472389900
-      },
-      "maps": [
-        {
-          "map": "overek",
-          "name": "overek",
-          "pak": "overek.pk3",
-          "pak_path": "baseq3/mods/baseq3/overek.pk3",
-          "pak_size": 983756,
-          "location": "Downloaded",
-          "gametype": "Unknown",
-          "levelshot": "levelshots/overek.jpg"
-        }
-      ]
-    },
     "baseq3/mods/baseq3/overkill_QL.pk3": {
       "signature": {
         "size": 2937038,
-        "mtime_ns": 1792177275209875100
+        "mtime_ns": 1795557316986177600
       },
       "maps": [
         {
@@ -1325,28 +2251,10 @@
         }
       ]
     },
-    "baseq3/mods/baseq3/p1rate-overek.pk3": {
-      "signature": {
-        "size": 1733972,
-        "mtime_ns": 1793810977152246700
-      },
-      "maps": [
-        {
-          "map": "p1rate-overek",
-          "name": "Cut em' Hard",
-          "pak": "p1rate-overek.pk3",
-          "pak_path": "baseq3/mods/baseq3/p1rate-overek.pk3",
-          "pak_size": 1733972,
-          "location": "Downloaded",
-          "gametype": "FFA / TDM / Duel",
-          "levelshot": "levelshots/p1rate-overek.jpg"
-        }
-      ]
-    },
     "baseq3/mods/baseq3/phantq3dm3_rev.pk3": {
       "signature": {
         "size": 15786595,
-        "mtime_ns": 1792416557640300700
+        "mtime_ns": 1795549602492781200
       },
       "maps": [
         {
@@ -1361,64 +2269,28 @@
         }
       ]
     },
-    "baseq3/mods/baseq3/pro-q3t6ctf.pk3": {
+    "baseq3/mods/baseq3/provinggrounds.pk3": {
       "signature": {
-        "size": 2332609,
-        "mtime_ns": 1793491678539868900
+        "size": 3447784,
+        "mtime_ns": 1795652579271846600
       },
       "maps": [
         {
-          "map": "pro-q3t6ctf",
-          "name": "pro-q3t6ctf",
-          "pak": "pro-q3t6ctf.pk3",
-          "pak_path": "baseq3/mods/baseq3/pro-q3t6ctf.pk3",
-          "pak_size": 2332609,
+          "map": "provinggrounds",
+          "name": "provinggrounds",
+          "pak": "provinggrounds.pk3",
+          "pak_path": "baseq3/mods/baseq3/provinggrounds.pk3",
+          "pak_size": 3447784,
           "location": "Downloaded",
           "gametype": "Unknown",
-          "levelshot": "levelshots/pro-q3t6ctf.jpg"
-        }
-      ]
-    },
-    "baseq3/mods/baseq3/PrOverek.pk3": {
-      "signature": {
-        "size": 1375216,
-        "mtime_ns": 1794339219002450500
-      },
-      "maps": [
-        {
-          "map": "proverek",
-          "name": "Projectile Vomiting",
-          "pak": "PrOverek.pk3",
-          "pak_path": "baseq3/mods/baseq3/PrOverek.pk3",
-          "pak_size": 1375216,
-          "location": "Downloaded",
-          "gametype": "FFA",
-          "levelshot": "levelshots/proverek.jpg"
-        }
-      ]
-    },
-    "baseq3/mods/baseq3/pukka3tourney7.pk3": {
-      "signature": {
-        "size": 18502862,
-        "mtime_ns": 1792424794343033400
-      },
-      "maps": [
-        {
-          "map": "pukka3tourney7",
-          "name": "Tortured [by thefury]",
-          "pak": "pukka3tourney7.pk3",
-          "pak_path": "baseq3/mods/baseq3/pukka3tourney7.pk3",
-          "pak_size": 18502862,
-          "location": "Downloaded",
-          "gametype": "FFA / TDM / Duel",
-          "levelshot": "levelshots/pukka3tourney7.jpg"
+          "levelshot": "levelshots/provinggrounds.jpg"
         }
       ]
     },
     "baseq3/mods/baseq3/purgatory.pk3": {
       "signature": {
         "size": 6836634,
-        "mtime_ns": 1792674697272150200
+        "mtime_ns": 1795556635391659000
       },
       "maps": [
         {
@@ -1436,7 +2308,7 @@
     "baseq3/mods/baseq3/q3shw14.pk3": {
       "signature": {
         "size": 4132428,
-        "mtime_ns": 1792178756344765900
+        "mtime_ns": 1795621236821811500
       },
       "maps": [
         {
@@ -1451,492 +2323,10 @@
         }
       ]
     },
-    "baseq3/mods/baseq3/q3ufc2.pk3": {
-      "signature": {
-        "size": 5281128,
-        "mtime_ns": 1794524112508886800
-      },
-      "maps": [
-        {
-          "map": "q3ufc2",
-          "name": "PIG SKIN",
-          "pak": "q3ufc2.pk3",
-          "pak_path": "baseq3/mods/baseq3/q3ufc2.pk3",
-          "pak_size": 5281128,
-          "location": "Downloaded",
-          "gametype": "FFA / TDM / Duel / CTF",
-          "levelshot": "levelshots/q3ufc2.jpg"
-        }
-      ]
-    },
-    "baseq3/mods/baseq3/q3ufc8.pk3": {
-      "signature": {
-        "size": 24020432,
-        "mtime_ns": 1792868782274969700
-      },
-      "maps": [
-        {
-          "map": "q3ufc8",
-          "name": "PIG SKIN",
-          "pak": "q3ufc8.pk3",
-          "pak_path": "baseq3/mods/baseq3/q3ufc8.pk3",
-          "pak_size": 24020432,
-          "location": "Downloaded",
-          "gametype": "FFA / TDM / Duel / CTF",
-          "levelshot": "levelshots/q3ufc8.jpg"
-        }
-      ]
-    },
-    "baseq3/mods/baseq3/q3ufc9.pk3": {
-      "signature": {
-        "size": 9373130,
-        "mtime_ns": 1793137060815936400
-      },
-      "maps": [
-        {
-          "map": "q3ufc9",
-          "name": "PIG SKIN",
-          "pak": "q3ufc9.pk3",
-          "pak_path": "baseq3/mods/baseq3/q3ufc9.pk3",
-          "pak_size": 9373130,
-          "location": "Downloaded",
-          "gametype": "FFA / TDM / Duel / CTF",
-          "levelshot": "levelshots/q3ufc9.jpg"
-        }
-      ]
-    },
-    "baseq3/mods/baseq3/q3utc17.pk3": {
-      "signature": {
-        "size": 34467827,
-        "mtime_ns": 1794361265085147400
-      },
-      "maps": [
-        {
-          "map": "q3utc17",
-          "name": "Vale off",
-          "pak": "q3utc17.pk3",
-          "pak_path": "baseq3/mods/baseq3/q3utc17.pk3",
-          "pak_size": 34467827,
-          "location": "Downloaded",
-          "gametype": "FFA / Duel",
-          "levelshot": "levelshots/q3utc17.jpg"
-        }
-      ]
-    },
-    "baseq3/mods/baseq3/q3utc7.pk3": {
-      "signature": {
-        "size": 8900348,
-        "mtime_ns": 1794361228993103300
-      },
-      "maps": [
-        {
-          "map": "q3utc7",
-          "name": "q3utc7",
-          "pak": "q3utc7.pk3",
-          "pak_path": "baseq3/mods/baseq3/q3utc7.pk3",
-          "pak_size": 8900348,
-          "location": "Downloaded",
-          "gametype": "Unknown",
-          "levelshot": "levelshots/q3utc7.jpg"
-        }
-      ]
-    },
-    "baseq3/mods/baseq3/q3wpak0.pk3": {
-      "signature": {
-        "size": 23749579,
-        "mtime_ns": 1792871251159494100
-      },
-      "maps": [
-        {
-          "map": "q3wcp7",
-          "name": "Dynatron - 3W",
-          "pak": "q3wpak0.pk3",
-          "pak_path": "baseq3/mods/baseq3/q3wpak0.pk3",
-          "pak_size": 23749579,
-          "location": "Downloaded",
-          "gametype": "CTF",
-          "levelshot": "levelshots/q3wcp7.tga"
-        },
-        {
-          "map": "q3wcp8",
-          "name": "Harsh Grounds - 3W",
-          "pak": "q3wpak0.pk3",
-          "pak_path": "baseq3/mods/baseq3/q3wpak0.pk3",
-          "pak_size": 23749579,
-          "location": "Downloaded",
-          "gametype": "CTF",
-          "levelshot": "levelshots/q3wcp8.tga"
-        },
-        {
-          "map": "q3wcp5",
-          "name": "Shinning Forces - 3W",
-          "pak": "q3wpak0.pk3",
-          "pak_path": "baseq3/mods/baseq3/q3wpak0.pk3",
-          "pak_size": 23749579,
-          "location": "Downloaded",
-          "gametype": "CTF",
-          "levelshot": "levelshots/q3wcp5.tga"
-        },
-        {
-          "map": "q3wcp6",
-          "name": "Devolved CTF - 3W",
-          "pak": "q3wpak0.pk3",
-          "pak_path": "baseq3/mods/baseq3/q3wpak0.pk3",
-          "pak_size": 23749579,
-          "location": "Downloaded",
-          "gametype": "CTF",
-          "levelshot": "levelshots/q3wcp6.tga"
-        },
-        {
-          "map": "q3wcp4",
-          "name": "Schadenfreude 2001 - 3W",
-          "pak": "q3wpak0.pk3",
-          "pak_path": "baseq3/mods/baseq3/q3wpak0.pk3",
-          "pak_size": 23749579,
-          "location": "Downloaded",
-          "gametype": "CTF",
-          "levelshot": "levelshots/q3wcp4.tga"
-        },
-        {
-          "map": "q3wcp2",
-          "name": "Cold Crossings - 3W",
-          "pak": "q3wpak0.pk3",
-          "pak_path": "baseq3/mods/baseq3/q3wpak0.pk3",
-          "pak_size": 23749579,
-          "location": "Downloaded",
-          "gametype": "CTF",
-          "levelshot": "levelshots/q3wcp2.tga"
-        },
-        {
-          "map": "q3wcp1",
-          "name": "Japanese Castles - 3w",
-          "pak": "q3wpak0.pk3",
-          "pak_path": "baseq3/mods/baseq3/q3wpak0.pk3",
-          "pak_size": 23749579,
-          "location": "Downloaded",
-          "gametype": "CTF",
-          "levelshot": "levelshots/q3wcp1.tga"
-        },
-        {
-          "map": "q3wxs1",
-          "name": "q3wxs1",
-          "pak": "q3wpak0.pk3",
-          "pak_path": "baseq3/mods/baseq3/q3wpak0.pk3",
-          "pak_size": 23749579,
-          "location": "Downloaded",
-          "gametype": "Unknown",
-          "levelshot": "levelshots/q3wxs1.tga"
-        },
-        {
-          "map": "q3wcp3",
-          "name": "Hot Crossings - 3W",
-          "pak": "q3wpak0.pk3",
-          "pak_path": "baseq3/mods/baseq3/q3wpak0.pk3",
-          "pak_size": 23749579,
-          "location": "Downloaded",
-          "gametype": "CTF",
-          "levelshot": "levelshots/q3wcp3.tga"
-        }
-      ]
-    },
-    "baseq3/mods/baseq3/q3wpak1.pk3": {
-      "signature": {
-        "size": 32039184,
-        "mtime_ns": 1794339923262361300
-      },
-      "maps": [
-        {
-          "map": "q3wcp1",
-          "name": "q3wcp1",
-          "pak": "q3wpak1.pk3",
-          "pak_path": "baseq3/mods/baseq3/q3wpak1.pk3",
-          "pak_size": 32039184,
-          "location": "Downloaded",
-          "gametype": "Unknown",
-          "levelshot": "levelshots/q3wcp1.tga"
-        },
-        {
-          "map": "q3wcp10",
-          "name": "Crude Crossings",
-          "pak": "q3wpak1.pk3",
-          "pak_path": "baseq3/mods/baseq3/q3wpak1.pk3",
-          "pak_size": 32039184,
-          "location": "Downloaded",
-          "gametype": "CTF",
-          "levelshot": "levelshots/q3wcp10.tga"
-        },
-        {
-          "map": "q3wcp11",
-          "name": "Industrial Accident",
-          "pak": "q3wpak1.pk3",
-          "pak_path": "baseq3/mods/baseq3/q3wpak1.pk3",
-          "pak_size": 32039184,
-          "location": "Downloaded",
-          "gametype": "CTF",
-          "levelshot": "levelshots/q3wcp11.tga"
-        },
-        {
-          "map": "q3wcp12",
-          "name": "Mostly Harmless",
-          "pak": "q3wpak1.pk3",
-          "pak_path": "baseq3/mods/baseq3/q3wpak1.pk3",
-          "pak_size": 32039184,
-          "location": "Downloaded",
-          "gametype": "CTF",
-          "levelshot": "levelshots/q3wcp12.tga"
-        },
-        {
-          "map": "q3wcp13",
-          "name": "funk dat!",
-          "pak": "q3wpak1.pk3",
-          "pak_path": "baseq3/mods/baseq3/q3wpak1.pk3",
-          "pak_size": 32039184,
-          "location": "Downloaded",
-          "gametype": "CTF",
-          "levelshot": "levelshots/q3wcp13.tga"
-        },
-        {
-          "map": "q3wcp14",
-          "name": "Camper Crossings",
-          "pak": "q3wpak1.pk3",
-          "pak_path": "baseq3/mods/baseq3/q3wpak1.pk3",
-          "pak_size": 32039184,
-          "location": "Downloaded",
-          "gametype": "CTF",
-          "levelshot": "levelshots/q3wcp14.tga"
-        },
-        {
-          "map": "q3wcp15",
-          "name": "Industrial Revolution",
-          "pak": "q3wpak1.pk3",
-          "pak_path": "baseq3/mods/baseq3/q3wpak1.pk3",
-          "pak_size": 32039184,
-          "location": "Downloaded",
-          "gametype": "CTF",
-          "levelshot": "levelshots/q3wcp15.tga"
-        },
-        {
-          "map": "q3wcp16",
-          "name": "Coral CTF",
-          "pak": "q3wpak1.pk3",
-          "pak_path": "baseq3/mods/baseq3/q3wpak1.pk3",
-          "pak_size": 32039184,
-          "location": "Downloaded",
-          "gametype": "CTF",
-          "levelshot": "levelshots/q3wcp16.tga"
-        },
-        {
-          "map": "q3wcp9",
-          "name": "Spider Crossings",
-          "pak": "q3wpak1.pk3",
-          "pak_path": "baseq3/mods/baseq3/q3wpak1.pk3",
-          "pak_size": 32039184,
-          "location": "Downloaded",
-          "gametype": "CTF",
-          "levelshot": "levelshots/q3wcp9.tga"
-        },
-        {
-          "map": "q3wxs2",
-          "name": "Silly Shootings",
-          "pak": "q3wpak1.pk3",
-          "pak_path": "baseq3/mods/baseq3/q3wpak1.pk3",
-          "pak_size": 32039184,
-          "location": "Downloaded",
-          "gametype": "CTF",
-          "levelshot": "levelshots/q3wxs2.tga"
-        }
-      ]
-    },
-    "baseq3/mods/baseq3/q3wpak3.pk3": {
-      "signature": {
-        "size": 32900423,
-        "mtime_ns": 1792869975850448500
-      },
-      "maps": [
-        {
-          "map": "q3w1",
-          "name": "Bloodlust - 3W",
-          "pak": "q3wpak3.pk3",
-          "pak_path": "baseq3/mods/baseq3/q3wpak3.pk3",
-          "pak_size": 32900423,
-          "location": "Downloaded",
-          "gametype": "CTF",
-          "levelshot": "levelshots/q3w1.tga"
-        },
-        {
-          "map": "q3w2",
-          "name": "Courtyard Conundrum",
-          "pak": "q3wpak3.pk3",
-          "pak_path": "baseq3/mods/baseq3/q3wpak3.pk3",
-          "pak_size": 32900423,
-          "location": "Downloaded",
-          "gametype": "CTF",
-          "levelshot": "levelshots/q3w2.tga"
-        },
-        {
-          "map": "q3w3",
-          "name": "Finnegans Revenge",
-          "pak": "q3wpak3.pk3",
-          "pak_path": "baseq3/mods/baseq3/q3wpak3.pk3",
-          "pak_size": 32900423,
-          "location": "Downloaded",
-          "gametype": "CTF",
-          "levelshot": "levelshots/q3w3.tga"
-        },
-        {
-          "map": "q3w4",
-          "name": "Bitter Dungeons",
-          "pak": "q3wpak3.pk3",
-          "pak_path": "baseq3/mods/baseq3/q3wpak3.pk3",
-          "pak_size": 32900423,
-          "location": "Downloaded",
-          "gametype": "CTF",
-          "levelshot": "levelshots/q3w4.tga"
-        },
-        {
-          "map": "q3w5",
-          "name": "Gospel Crossings - 3W",
-          "pak": "q3wpak3.pk3",
-          "pak_path": "baseq3/mods/baseq3/q3wpak3.pk3",
-          "pak_size": 32900423,
-          "location": "Downloaded",
-          "gametype": "CTF",
-          "levelshot": "levelshots/q3w5.tga"
-        },
-        {
-          "map": "q3w6",
-          "name": "Black Sky Mining Company",
-          "pak": "q3wpak3.pk3",
-          "pak_path": "baseq3/mods/baseq3/q3wpak3.pk3",
-          "pak_size": 32900423,
-          "location": "Downloaded",
-          "gametype": "CTF",
-          "levelshot": "levelshots/q3w6.tga"
-        },
-        {
-          "map": "q3w7",
-          "name": "City Crossings",
-          "pak": "q3wpak3.pk3",
-          "pak_path": "baseq3/mods/baseq3/q3wpak3.pk3",
-          "pak_size": 32900423,
-          "location": "Downloaded",
-          "gametype": "CTF",
-          "levelshot": "levelshots/q3w7.tga"
-        },
-        {
-          "map": "q3w8",
-          "name": "Denali Base",
-          "pak": "q3wpak3.pk3",
-          "pak_path": "baseq3/mods/baseq3/q3wpak3.pk3",
-          "pak_size": 32900423,
-          "location": "Downloaded",
-          "gametype": "CTF",
-          "levelshot": "levelshots/q3w8.tga"
-        },
-        {
-          "map": "q3wxs3",
-          "name": "Silly CTF",
-          "pak": "q3wpak3.pk3",
-          "pak_path": "baseq3/mods/baseq3/q3wpak3.pk3",
-          "pak_size": 32900423,
-          "location": "Downloaded",
-          "gametype": "CTF",
-          "levelshot": "levelshots/q3wxs3.tga"
-        }
-      ]
-    },
-    "baseq3/mods/baseq3/q3wpak4.pk3": {
-      "signature": {
-        "size": 45550632,
-        "mtime_ns": 1792871276288164500
-      },
-      "maps": [
-        {
-          "map": "q3wcp18",
-          "name": "Future Crossings",
-          "pak": "q3wpak4.pk3",
-          "pak_path": "baseq3/mods/baseq3/q3wpak4.pk3",
-          "pak_size": 45550632,
-          "location": "Downloaded",
-          "gametype": "CTF",
-          "levelshot": "levelshots/q3wcp18.jpg"
-        },
-        {
-          "map": "q3wcp20",
-          "name": "Vampire Crossings",
-          "pak": "q3wpak4.pk3",
-          "pak_path": "baseq3/mods/baseq3/q3wpak4.pk3",
-          "pak_size": 45550632,
-          "location": "Downloaded",
-          "gametype": "CTF",
-          "levelshot": "levelshots/q3wcp20.jpg"
-        },
-        {
-          "map": "q3wcp19",
-          "name": "Lunar Crossings",
-          "pak": "q3wpak4.pk3",
-          "pak_path": "baseq3/mods/baseq3/q3wpak4.pk3",
-          "pak_size": 45550632,
-          "location": "Downloaded",
-          "gametype": "CTF",
-          "levelshot": "levelshots/q3wcp19.jpg"
-        },
-        {
-          "map": "q3wcp22",
-          "name": "Des Hertogens Hove",
-          "pak": "q3wpak4.pk3",
-          "pak_path": "baseq3/mods/baseq3/q3wpak4.pk3",
-          "pak_size": 45550632,
-          "location": "Downloaded",
-          "gametype": "CTF",
-          "levelshot": "levelshots/q3wcp22.jpg"
-        },
-        {
-          "map": "q3wcp23",
-          "name": "The Vast and Furious",
-          "pak": "q3wpak4.pk3",
-          "pak_path": "baseq3/mods/baseq3/q3wpak4.pk3",
-          "pak_size": 45550632,
-          "location": "Downloaded",
-          "gametype": "CTF",
-          "levelshot": "levelshots/q3wcp23.jpg"
-        },
-        {
-          "map": "q3wcp24",
-          "name": "Newcropolis",
-          "pak": "q3wpak4.pk3",
-          "pak_path": "baseq3/mods/baseq3/q3wpak4.pk3",
-          "pak_size": 45550632,
-          "location": "Downloaded",
-          "gametype": "CTF",
-          "levelshot": "levelshots/q3wcp24.jpg"
-        },
-        {
-          "map": "q3wcp17",
-          "name": "Divided Crossings",
-          "pak": "q3wpak4.pk3",
-          "pak_path": "baseq3/mods/baseq3/q3wpak4.pk3",
-          "pak_size": 45550632,
-          "location": "Downloaded",
-          "gametype": "CTF",
-          "levelshot": "levelshots/q3wcp17.jpg"
-        },
-        {
-          "map": "q3wcp21",
-          "name": "La Bastir",
-          "pak": "q3wpak4.pk3",
-          "pak_path": "baseq3/mods/baseq3/q3wpak4.pk3",
-          "pak_size": 45550632,
-          "location": "Downloaded",
-          "gametype": "CTF",
-          "levelshot": "levelshots/q3wcp21.jpg"
-        }
-      ]
-    },
     "baseq3/mods/baseq3/ql_asylum.pk3": {
       "signature": {
         "size": 4167560,
-        "mtime_ns": 1792677764372394300
+        "mtime_ns": 1795648547723078100
       },
       "maps": [
         {
@@ -1954,7 +2344,7 @@
     "baseq3/mods/baseq3/ql_cure.pk3": {
       "signature": {
         "size": 9228623,
-        "mtime_ns": 1792328278655785100
+        "mtime_ns": 1795649751465776700
       },
       "maps": [
         {
@@ -1972,7 +2362,7 @@
     "baseq3/mods/baseq3/ql_deepinside.pk3": {
       "signature": {
         "size": 1815975,
-        "mtime_ns": 1792527084620905100
+        "mtime_ns": 1795554583089227300
       },
       "maps": [
         {
@@ -1987,28 +2377,10 @@
         }
       ]
     },
-    "baseq3/mods/baseq3/ql_hellsgate.pk3": {
-      "signature": {
-        "size": 3051484,
-        "mtime_ns": 1794349035049776700
-      },
-      "maps": [
-        {
-          "map": "hellsgate",
-          "name": "hellsgate",
-          "pak": "ql_hellsgate.pk3",
-          "pak_path": "baseq3/mods/baseq3/ql_hellsgate.pk3",
-          "pak_size": 3051484,
-          "location": "Downloaded",
-          "gametype": "Unknown",
-          "levelshot": "levelshots/Hellsgate.jpg"
-        }
-      ]
-    },
     "baseq3/mods/baseq3/ql_hiddenfortress.pk3": {
       "signature": {
         "size": 2325150,
-        "mtime_ns": 1792604682080456800
+        "mtime_ns": 1795555969078639900
       },
       "maps": [
         {
@@ -2026,7 +2398,7 @@
     "baseq3/mods/baseq3/ql_lostworld.pk3": {
       "signature": {
         "size": 1709323,
-        "mtime_ns": 1792183059756067100
+        "mtime_ns": 1795652121528155800
       },
       "maps": [
         {
@@ -2044,7 +2416,7 @@
     "baseq3/mods/baseq3/ql_servitude.pk3": {
       "signature": {
         "size": 6285984,
-        "mtime_ns": 1792180380010090400
+        "mtime_ns": 1795653056144324000
       },
       "maps": [
         {
@@ -2059,28 +2431,10 @@
         }
       ]
     },
-    "baseq3/mods/baseq3/ragnarok.pk3": {
-      "signature": {
-        "size": 44137569,
-        "mtime_ns": 1794349505006778700
-      },
-      "maps": [
-        {
-          "map": "ragnarok",
-          "name": "ragnarok",
-          "pak": "ragnarok.pk3",
-          "pak_path": "baseq3/mods/baseq3/ragnarok.pk3",
-          "pak_size": 44137569,
-          "location": "Downloaded",
-          "gametype": "Unknown",
-          "levelshot": "levelshots/ragnarok.jpg"
-        }
-      ]
-    },
     "baseq3/mods/baseq3/repent.pk3": {
       "signature": {
         "size": 24596673,
-        "mtime_ns": 1792505611740966900
+        "mtime_ns": 1795627398373935000
       },
       "maps": [
         {
@@ -2095,100 +2449,10 @@
         }
       ]
     },
-    "baseq3/mods/baseq3/scorn-void2.pk3": {
-      "signature": {
-        "size": 3312956,
-        "mtime_ns": 1793490771690212300
-      },
-      "maps": [
-        {
-          "map": "void2",
-          "name": "void2 by OXOTHuK and SCORN(samuel de cruz)",
-          "pak": "scorn-void2.pk3",
-          "pak_path": "baseq3/mods/baseq3/scorn-void2.pk3",
-          "pak_size": 3312956,
-          "location": "Downloaded",
-          "gametype": "FFA / TDM / Duel",
-          "levelshot": "levelshots/void2.jpg"
-        }
-      ]
-    },
-    "baseq3/mods/baseq3/sinister.pk3": {
-      "signature": {
-        "size": 5992052,
-        "mtime_ns": 1792506007562200000
-      },
-      "maps": [
-        {
-          "map": "sinister",
-          "name": "sinister",
-          "pak": "sinister.pk3",
-          "pak_path": "baseq3/mods/baseq3/sinister.pk3",
-          "pak_size": 5992052,
-          "location": "Downloaded",
-          "gametype": "Unknown",
-          "levelshot": "levelshots/sinister.jpg"
-        }
-      ]
-    },
-    "baseq3/mods/baseq3/sleep.pk3": {
-      "signature": {
-        "size": 1611077,
-        "mtime_ns": 1794349020487700900
-      },
-      "maps": [
-        {
-          "map": "sleep",
-          "name": "Troubled Sleep",
-          "pak": "sleep.pk3",
-          "pak_path": "baseq3/mods/baseq3/sleep.pk3",
-          "pak_size": 1611077,
-          "location": "Downloaded",
-          "gametype": "FFA / TDM",
-          "levelshot": "levelshots/sleep.jpg"
-        }
-      ]
-    },
-    "baseq3/mods/baseq3/solitude.pk3": {
-      "signature": {
-        "size": 17789650,
-        "mtime_ns": 1793491256454566900
-      },
-      "maps": [
-        {
-          "map": "solitude",
-          "name": "Solitude",
-          "pak": "solitude.pk3",
-          "pak_path": "baseq3/mods/baseq3/solitude.pk3",
-          "pak_size": 17789650,
-          "location": "Downloaded",
-          "gametype": "Duel",
-          "levelshot": "levelshots/solitude.jpg"
-        }
-      ]
-    },
-    "baseq3/mods/baseq3/speedyctf.pk3": {
-      "signature": {
-        "size": 4627573,
-        "mtime_ns": 1792525665945263500
-      },
-      "maps": [
-        {
-          "map": "speedyctf",
-          "name": "speedy ctf (by agent orange)",
-          "pak": "speedyctf.pk3",
-          "pak_path": "baseq3/mods/baseq3/speedyctf.pk3",
-          "pak_size": 4627573,
-          "location": "Downloaded",
-          "gametype": "CTF",
-          "levelshot": "levelshots/speedyctf.jpg"
-        }
-      ]
-    },
     "baseq3/mods/baseq3/spirit3t1.pk3": {
       "signature": {
         "size": 2214979,
-        "mtime_ns": 1792434453809578800
+        "mtime_ns": 1795622798245938800
       },
       "maps": [
         {
@@ -2203,118 +2467,10 @@
         }
       ]
     },
-    "baseq3/mods/baseq3/storm3tourney5.pk3": {
-      "signature": {
-        "size": 3697205,
-        "mtime_ns": 1794361841479041900
-      },
-      "maps": [
-        {
-          "map": "storm3tourney5",
-          "name": "Cajun Hell",
-          "pak": "storm3tourney5.pk3",
-          "pak_path": "baseq3/mods/baseq3/storm3tourney5.pk3",
-          "pak_size": 3697205,
-          "location": "Downloaded",
-          "gametype": "FFA / TDM / Duel",
-          "levelshot": "levelshots/storm3tourney5.jpg"
-        }
-      ]
-    },
-    "baseq3/mods/baseq3/storm3tourney8.pk3": {
-      "signature": {
-        "size": 5202864,
-        "mtime_ns": 1792676230896847700
-      },
-      "maps": [
-        {
-          "map": "storm3tourney8",
-          "name": "Devilish",
-          "pak": "storm3tourney8.pk3",
-          "pak_path": "baseq3/mods/baseq3/storm3tourney8.pk3",
-          "pak_size": 5202864,
-          "location": "Downloaded",
-          "gametype": "FFA / TDM / Duel",
-          "levelshot": "levelshots/storm3tourney8.jpg"
-        }
-      ]
-    },
-    "baseq3/mods/baseq3/stormatordm1.pk3": {
-      "signature": {
-        "size": 10226232,
-        "mtime_ns": 1792434999640931100
-      },
-      "maps": [
-        {
-          "map": "stormatordm1",
-          "name": "Stormatorium",
-          "pak": "stormatordm1.pk3",
-          "pak_path": "baseq3/mods/baseq3/stormatordm1.pk3",
-          "pak_size": 10226232,
-          "location": "Downloaded",
-          "gametype": "FFA / Duel",
-          "levelshot": "levelshots/stormatordm1.jpg"
-        }
-      ]
-    },
-    "baseq3/mods/baseq3/terminatria.pk3": {
-      "signature": {
-        "size": 17101967,
-        "mtime_ns": 1792688812088279900
-      },
-      "maps": [
-        {
-          "map": "terminatria",
-          "name": "Terminatria",
-          "pak": "terminatria.pk3",
-          "pak_path": "baseq3/mods/baseq3/terminatria.pk3",
-          "pak_size": 17101967,
-          "location": "Downloaded",
-          "gametype": "FFA / TDM / Duel",
-          "levelshot": "levelshots/terminatria.jpg"
-        }
-      ]
-    },
-    "baseq3/mods/baseq3/test_nabnab.pk3": {
-      "signature": {
-        "size": 254076,
-        "mtime_ns": 1793279881103363000
-      },
-      "maps": [
-        {
-          "map": "test_nabnab",
-          "name": "bounce ctf",
-          "pak": "test_nabnab.pk3",
-          "pak_path": "baseq3/mods/baseq3/test_nabnab.pk3",
-          "pak_size": 254076,
-          "location": "Downloaded",
-          "gametype": "CTF",
-          "levelshot": "levelshots/test_nabnab.jpg"
-        }
-      ]
-    },
-    "baseq3/mods/baseq3/tfzij4.pk3": {
-      "signature": {
-        "size": 2969741,
-        "mtime_ns": 1793386144889691300
-      },
-      "maps": [
-        {
-          "map": "tfzij4",
-          "name": "cellblock: Q3",
-          "pak": "tfzij4.pk3",
-          "pak_path": "baseq3/mods/baseq3/tfzij4.pk3",
-          "pak_size": 2969741,
-          "location": "Downloaded",
-          "gametype": "FFA / Duel",
-          "levelshot": "levelshots/tfzij4.jpg"
-        }
-      ]
-    },
     "baseq3/mods/baseq3/theatrumdoloris.pk3": {
       "signature": {
         "size": 6675920,
-        "mtime_ns": 1792351433670189200
+        "mtime_ns": 1795642025817660300
       },
       "maps": [
         {
@@ -2329,64 +2485,10 @@
         }
       ]
     },
-    "baseq3/mods/baseq3/thunderstruck.pk3": {
-      "signature": {
-        "size": 1776552,
-        "mtime_ns": 1794351898094334100
-      },
-      "maps": [
-        {
-          "map": "thunderstruck",
-          "name": "thunderstruck",
-          "pak": "thunderstruck.pk3",
-          "pak_path": "baseq3/mods/baseq3/thunderstruck.pk3",
-          "pak_size": 1776552,
-          "location": "Downloaded",
-          "gametype": "FFA / TDM / Duel",
-          "levelshot": "levelshots/thunderstruck.jpg"
-        }
-      ]
-    },
-    "baseq3/mods/baseq3/tm3_myth.pk3": {
-      "signature": {
-        "size": 1300397,
-        "mtime_ns": 1794360930653389400
-      },
-      "maps": [
-        {
-          "map": "TM3_Myth",
-          "name": "Free spirit",
-          "pak": "tm3_myth.pk3",
-          "pak_path": "baseq3/mods/baseq3/tm3_myth.pk3",
-          "pak_size": 1300397,
-          "location": "Downloaded",
-          "gametype": "FFA / Duel",
-          "levelshot": "levelshots/TM3_Myth.jpg"
-        }
-      ]
-    },
-    "baseq3/mods/baseq3/trinity.pk3": {
-      "signature": {
-        "size": 5331029,
-        "mtime_ns": 1792351446661735800
-      },
-      "maps": [
-        {
-          "map": "trinity",
-          "name": "trinity",
-          "pak": "trinity.pk3",
-          "pak_path": "baseq3/mods/baseq3/trinity.pk3",
-          "pak_size": 5331029,
-          "location": "Downloaded",
-          "gametype": "Unknown",
-          "levelshot": "levelshots/trinity.jpg"
-        }
-      ]
-    },
     "baseq3/mods/baseq3/ts_ca1.pk3": {
       "signature": {
         "size": 1055803,
-        "mtime_ns": 1794091691325705600
+        "mtime_ns": 1795549742622864500
       },
       "maps": [
         {
@@ -2404,7 +2506,7 @@
     "baseq3/mods/baseq3/ts_dm5.pk3": {
       "signature": {
         "size": 2147455,
-        "mtime_ns": 1792433724800666900
+        "mtime_ns": 1795646136183073500
       },
       "maps": [
         {
@@ -2422,7 +2524,7 @@
     "baseq3/mods/baseq3/ts_dm5tmp.pk3": {
       "signature": {
         "size": 2757918,
-        "mtime_ns": 1792605174608562200
+        "mtime_ns": 1795558758278250500
       },
       "maps": [
         {
@@ -2437,28 +2539,10 @@
         }
       ]
     },
-    "baseq3/mods/baseq3/turboctf01.pk3": {
-      "signature": {
-        "size": 3353856,
-        "mtime_ns": 1793136841121591100
-      },
-      "maps": [
-        {
-          "map": "turboctf01",
-          "name": "Green Nightmare",
-          "pak": "turboctf01.pk3",
-          "pak_path": "baseq3/mods/baseq3/turboctf01.pk3",
-          "pak_size": 3353856,
-          "location": "Downloaded",
-          "gametype": "CTF",
-          "levelshot": "levelshots/turboctf01.tga"
-        }
-      ]
-    },
     "baseq3/mods/baseq3/uberkill.pk3": {
       "signature": {
         "size": 1847101,
-        "mtime_ns": 1792525879825489000
+        "mtime_ns": 1795553524134298600
       },
       "maps": [
         {
@@ -2473,28 +2557,10 @@
         }
       ]
     },
-    "baseq3/mods/baseq3/vdamaged.pk3": {
-      "signature": {
-        "size": 1428458,
-        "mtime_ns": 1792927404528588200
-      },
-      "maps": [
-        {
-          "map": "vdamaged",
-          "name": "vdamaged",
-          "pak": "vdamaged.pk3",
-          "pak_path": "baseq3/mods/baseq3/vdamaged.pk3",
-          "pak_size": 1428458,
-          "location": "Downloaded",
-          "gametype": "Unknown",
-          "levelshot": "levelshots/vdamaged.jpg"
-        }
-      ]
-    },
     "baseq3/mods/baseq3/verticalvengeance.pk3": {
       "signature": {
         "size": 2307847,
-        "mtime_ns": 1793490707268466800
+        "mtime_ns": 1795651697089005600
       },
       "maps": [
         {
@@ -2512,7 +2578,7 @@
     "baseq3/mods/baseq3/windsongkeep.pk3": {
       "signature": {
         "size": 14994161,
-        "mtime_ns": 1792181977936551700
+        "mtime_ns": 1795646954150675100
       },
       "maps": [
         {
@@ -2527,49 +2593,10 @@
         }
       ]
     },
-    "baseq3/mods/baseq3/xsounds.pk3": {
-      "signature": {
-        "size": 2839081,
-        "mtime_ns": 1793474859254909600
-      },
-      "maps": []
-    },
-    "baseq3/mods/baseq3/zih_gaj.pk3": {
-      "signature": {
-        "size": 12761531,
-        "mtime_ns": 1792927007263662200
-      },
-      "maps": [
-        {
-          "map": "ZIH_GAJ",
-          "name": "Gajapoor by Zihaben",
-          "pak": "zih_gaj.pk3",
-          "pak_path": "baseq3/mods/baseq3/zih_gaj.pk3",
-          "pak_size": 12761531,
-          "location": "Downloaded",
-          "gametype": "FFA",
-          "levelshot": "levelshots/ZIH_GAJ.jpg"
-        }
-      ]
-    },
-    "baseq3/mods/baseq3/zzz-a51-gfx.pk3": {
-      "signature": {
-        "size": 2323049,
-        "mtime_ns": 1794524113428117500
-      },
-      "maps": []
-    },
-    "baseq3/mods/baseq3/zzz-a51-sounds.pk3": {
-      "signature": {
-        "size": 343493,
-        "mtime_ns": 1794524112745849000
-      },
-      "maps": []
-    },
     "baseq3/pak0.pk3": {
       "signature": {
         "size": 479493658,
-        "mtime_ns": 1791056022081042200
+        "mtime_ns": 1794944304116009900
       },
       "maps": [
         {
@@ -2887,14 +2914,14 @@
     "baseq3/pak1.pk3": {
       "signature": {
         "size": 374405,
-        "mtime_ns": 1791056025826609900
+        "mtime_ns": 1794944308553955700
       },
       "maps": []
     },
     "baseq3/pak2.pk3": {
       "signature": {
         "size": 7511182,
-        "mtime_ns": 1791056029044150600
+        "mtime_ns": 1794944312301285200
       },
       "maps": [
         {
@@ -2922,28 +2949,28 @@
     "baseq3/pak3.pk3": {
       "signature": {
         "size": 276305,
-        "mtime_ns": 1791056031414638500
+        "mtime_ns": 1794944314703273100
       },
       "maps": []
     },
     "baseq3/pak4.pk3": {
       "signature": {
         "size": 9600350,
-        "mtime_ns": 1791056034822333400
+        "mtime_ns": 1794944318976344900
       },
       "maps": []
     },
     "baseq3/pak5.pk3": {
       "signature": {
         "size": 191872,
-        "mtime_ns": 1791056037037728300
+        "mtime_ns": 1794944321207610100
       },
       "maps": []
     },
     "baseq3/pak6.pk3": {
       "signature": {
         "size": 7346884,
-        "mtime_ns": 1791056040214018700
+        "mtime_ns": 1794944324695925300
       },
       "maps": [
         {
@@ -2991,14 +3018,14 @@
     "baseq3/pak7.pk3": {
       "signature": {
         "size": 320873,
-        "mtime_ns": 1791056042579679200
+        "mtime_ns": 1794944327111541500
       },
       "maps": []
     },
     "baseq3/pak8.pk3": {
       "signature": {
         "size": 454478,
-        "mtime_ns": 1791056045077559900
+        "mtime_ns": 1794944329777019300
       },
       "maps": []
     }

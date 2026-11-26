@@ -27,7 +27,7 @@ if /I not "%SCRIPT_DIR%"=="%TARGET_FOLDER%" (
         pause
         exit /b 1
     )
-    set "TARGET_SCRIPT=%TARGET_FOLDER%\Q3Elite_Setup.bat"
+    set "TARGET_SCRIPT=%TARGET_FOLDER%\Q3Elite Installer.bat"
     copy /Y "%~f0" "!TARGET_SCRIPT!" >nul
     if not exist "!TARGET_SCRIPT!" (
         echo ERROR: Could not copy setup script to the destination folder.
@@ -35,7 +35,7 @@ if /I not "%SCRIPT_DIR%"=="%TARGET_FOLDER%" (
         exit /b 1
     )
     echo Setup copied. Restarting from the destination folder...
-    start "Q3Elite Setup" "%ComSpec%" /d /k ""!TARGET_SCRIPT!""
+    start "Q3Elite Installer" "%ComSpec%" /d /k ""!TARGET_SCRIPT!""
     exit /b 0
 )
 
@@ -43,7 +43,7 @@ set "ROOT=%TARGET_FOLDER%\"
 set "INSTALL_DIR=%ROOT%Q3Elite"
 set "LAUNCHER=%INSTALL_DIR%\Launcher"
 set "REPO_ZIP=https://github.com/Mus1n/Quake-3-Elite-Launcher/archive/refs/heads/main.zip"
-set "TEMP_DIR=%TEMP%\Q3Elite_Setup"
+set "TEMP_DIR=%TEMP%\Q3Elite Installer"
 set "ZIP_FILE=%TEMP_DIR%\Q3Elite.zip"
 set "EXTRACT_DIR=%TEMP_DIR%\Extracted"
 
@@ -61,7 +61,7 @@ if errorlevel 1 (
     exit /b 1
 )
 
-if exist "%LAUNCHER%\launch.bat" if exist "%LAUNCHER%\modules\launch.pyw" if exist "%LAUNCHER%\modules\python\setup_python.bat" if exist "%LAUNCHER%\modules\python\requirements.txt" (
+if exist "%LAUNCHER%\Q3Elite_Launch.bat" if exist "%LAUNCHER%\modules\launch.pyw" if exist "%LAUNCHER%\modules\python\setup_python.bat" if exist "%LAUNCHER%\modules\python\requirements.txt" (
     echo Existing Q3Elite Launcher detected. Skipping launcher download.
     goto INSTALL
 )
@@ -90,9 +90,9 @@ if errorlevel 1 (
 )
 
 set "SOURCE=%EXTRACT_DIR%\Quake-3-Elite-Launcher-main\Q3Elite"
-if not exist "%SOURCE%\Launcher\launch.bat" (
+if not exist "%SOURCE%\Launcher\Q3Elite_Launch.bat" (
     echo ERROR: Invalid Q3Elite package. Expected:
-    echo "%SOURCE%\Launcher\launch.bat"
+    echo "%SOURCE%\Launcher\Q3Elite_Launch.bat"
     pause
     exit /b 1
 )
@@ -117,7 +117,7 @@ if exist "%LAUNCHER%\mod_tree\branch.txt" (
 
 set "DESKTOP_SHORTCUT=%USERPROFILE%\Desktop\Q3Elite.lnk"
 set "LOCAL_SHORTCUT=%ROOT%Q3Elite.lnk"
-set "TARGET=%LAUNCHER%\launch.bat"
+set "TARGET=%LAUNCHER%\Q3Elite_Launch.bat"
 set "ICON=%LAUNCHER%\assets\icons\favicon.ico"
 set "WORKDIR=%LAUNCHER%"
 
@@ -167,20 +167,20 @@ if not exist "%INSTALL_DIR%\Tools\" (
     echo WARNING: Could not create Tools folder. Setup files remain in their current location.
     goto SETUP_DONE
 )
-set "TOOLS_EXE=%INSTALL_DIR%\Tools\Q3Elite_Setup.exe"
-set "TOOLS_BAT=%INSTALL_DIR%\Tools\Q3Elite_Setup.bat"
-if exist "%~dp0Q3Elite_Setup.exe" (
-    if /I not "%~dp0Q3Elite_Setup.exe"=="%TOOLS_EXE%" (
-        copy /Y "%~dp0Q3Elite_Setup.exe" "%TOOLS_EXE%" >nul
-        if errorlevel 1 echo WARNING: Could not copy Q3Elite_Setup.exe to Tools.
+set "TOOLS_EXE=%INSTALL_DIR%\Tools\Q3Elite Installer.exe"
+set "TOOLS_BAT=%INSTALL_DIR%\Tools\Q3Elite Installer.bat"
+if exist "%~dp0Q3Elite Installer.exe" (
+    if /I not "%~dp0Q3Elite Installer.exe"=="%TOOLS_EXE%" (
+        copy /Y "%~dp0Q3Elite Installer.exe" "%TOOLS_EXE%" >nul
+        if errorlevel 1 echo WARNING: Could not copy Q3Elite Installer.exe to Tools.
     )
 )
 if /I not "%~f0"=="%TOOLS_BAT%" (
     copy /Y "%~f0" "%TOOLS_BAT%" >nul
-    if errorlevel 1 echo WARNING: Could not copy Q3Elite_Setup.bat to Tools.
+    if errorlevel 1 echo WARNING: Could not copy Q3Elite Installer.bat to Tools.
 )
 if defined SETUP_PID (
-    set "ORIGINAL_EXE=%~dp0Q3Elite_Setup.exe"
+    set "ORIGINAL_EXE=%~dp0Q3Elite Installer.exe"
     set "ORIGINAL_BAT=%~f0"
     start "" /min powershell.exe -NoProfile -WindowStyle Hidden -Command ^
       "$pidToWait=[int]$env:SETUP_PID; $exe=$env:ORIGINAL_EXE; $bat=$env:ORIGINAL_BAT; while(Get-Process -Id $pidToWait -ErrorAction SilentlyContinue){Start-Sleep -Seconds 1}; Start-Sleep -Milliseconds 800; if($exe -and (Test-Path -LiteralPath $exe)){Remove-Item -LiteralPath $exe -Force -ErrorAction SilentlyContinue}; if($bat -and (Test-Path -LiteralPath $bat)){Remove-Item -LiteralPath $bat -Force -ErrorAction SilentlyContinue}"
