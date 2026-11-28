@@ -12,8 +12,6 @@ import urllib.parse
 import urllib.request
 from pathlib import Path
 
-import ssl_config
-
 APPDATA = Path(os.environ.get("APPDATA", Path.home() / "AppData" / "Roaming"))
 CONFIG_PATH = APPDATA / "Quake 3 Elite" / "Launcher" / "network_proxy.json"
 
@@ -114,12 +112,17 @@ def proxy_url() -> str | None:
 
 
 def build_opener():
-    """Build a proxy-aware opener using the launcher's shared strict TLS context."""
-    return ssl_config.build_opener(proxy=proxy_url())
+    proxy = proxy_url()
+    if not proxy:
+        return None
+    return urllib.request.build_opener(urllib.request.ProxyHandler({"http": proxy, "https": proxy}))
 
 
 def open_url(request, timeout=30):
-    return ssl_config.open_url(request, timeout=timeout, proxy=proxy_url())
+    opener = build_opener()
+    if opener is None:
+        return urllib.request.urlopen(request, timeout=timeout)
+    return opener.open(request, timeout=timeout)
 
 
 def test_connection(url: str, username: str = "", password: str = "", timeout: int = 15) -> tuple[bool, str]:
@@ -146,7 +149,9 @@ def test_connection(url: str, username: str = "", password: str = "", timeout: i
             host = f"[{host}]"
         proxy = f"{parsed.scheme}://{user}:{pwd}@{host}:{parsed.port}"
 
-    opener = ssl_config.build_opener(proxy=proxy)
+    opener = urllib.request.build_opener(
+        urllib.request.ProxyHandler({"http": proxy, "https": proxy})
+    )
     request = urllib.request.Request(
         "https://eapi.pcloud.com/getapiserver",
         headers={

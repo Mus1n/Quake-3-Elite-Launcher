@@ -19,7 +19,6 @@ import shutil
 import sys
 import urllib.parse
 import urllib.request
-import network_proxy
 from pathlib import Path, PurePosixPath
 
 from base_methods import LAUNCHER_DIR, MODULES_DIR, Q3ELITE_LAUNCHER_DATA_DIR
@@ -67,7 +66,7 @@ def _read_text_url(url, timeout=10):
             "Cache-Control": "no-cache",
         },
     )
-    with network_proxy.open_url(request, timeout=timeout) as response:
+    with urllib.request.urlopen(request, timeout=timeout) as response:
         return response.read().decode("utf-8-sig").strip()
 
 

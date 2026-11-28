@@ -77,17 +77,34 @@ from collections import OrderedDict, deque
 
 from pathlib import Path
 
+# Qt's FFmpeg backend prints verbose stream-probing metadata for local OGG
+# interface sounds. Keep multimedia playback enabled, but disable that noisy
+# diagnostic category before Qt is imported.
+_q3_qt_logging_rules = os.environ.get("QT_LOGGING_RULES", "").strip()
+_q3_ffmpeg_rule = "qt.multimedia.ffmpeg.*=false"
+if _q3_ffmpeg_rule not in _q3_qt_logging_rules:
+    os.environ["QT_LOGGING_RULES"] = (
+        f"{_q3_qt_logging_rules};{_q3_ffmpeg_rule}".strip(";")
+    )
+
 from PyQt6 import QtCore, QtGui, QtWidgets, QtNetwork
 
 
-# Suppress only the repetitive Qt FFmpeg disconnect warning emitted during
-# multimedia object destruction. Keep every other Qt message visible in the
-# debug console.
+# Suppress repetitive Qt FFmpeg teardown warnings and OGG stream-probing
+# metadata. Real multimedia errors and unrelated Qt diagnostics remain visible.
 def _q3elite_qt_message_handler(mode, context, message):
     try:
         if message.startswith(
             "QObject::disconnect: wildcard call disconnects from destroyed signal of QFFmpeg::"
         ):
+            return
+        _q3_multimedia_probe_noise = (
+            "Input #0, ogg, from '",
+            "Duration:",
+            "Stream #0:",
+            "Audio: vorbis",
+        )
+        if any(marker in message for marker in _q3_multimedia_probe_noise):
             return
     except Exception:
         pass
@@ -3239,8 +3256,13 @@ def show_download_controls():
 
 
 def hide_download_controls():
-    pause_button.hide()
-    download_info.hide()
+    """Hide optional legacy download-overlay widgets when they exist."""
+    pause = globals().get("pause_button")
+    info = globals().get("download_info")
+    if pause is not None:
+        pause.hide()
+    if info is not None:
+        info.hide()
 
 
 def position_download_controls():

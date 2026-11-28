@@ -33,6 +33,7 @@ STATE_FILE = APPDATA / "Quake 3 Elite" / "Launcher" / "components.json"
 CACHE_DIR = APPDATA / "Quake 3 Elite" / "Launcher" / "cache"
 TEMP_DIR = APPDATA / "Quake 3 Elite" / "Launcher" / "temp"
 BASIC_ZIP = CACHE_DIR / "Q3Elite_Basic.zip"
+LEGACY_CORE_ZIP = CACHE_DIR / "Q3Elite Core.zip"
 BASIC_MAPS_ZIP = CACHE_DIR / "Q3Elite_Basic_Maps.zip"
 MAPS_ZIP = CACHE_DIR / "Q3Elite_Maps.zip"
 
@@ -129,11 +130,19 @@ def save_state(state):
 
 
 def fetch_json(remote):
+    """Fetch release metadata through the launcher's proxy-aware strict-TLS transport."""
     info = pcloud.resolve(pcloud.remote_for(remote))
     import urllib.request
-    req = urllib.request.Request(info["url"], headers={"User-Agent": "Q3Elite-18B"})
-    with network_proxy.open_url(req, timeout=30) as r:
-        return json.loads(r.read().decode("utf-8-sig"))
+    req = urllib.request.Request(
+        info["url"],
+        headers={
+            "User-Agent": "Q3Elite-Launcher/0.21",
+            "Accept": "application/json",
+            "Cache-Control": "no-cache",
+        },
+    )
+    with network_proxy.open_url(req, timeout=30) as response:
+        return json.loads(response.read().decode("utf-8-sig"))
 
 
 def remote_release():
@@ -261,7 +270,7 @@ def _download_managed(rel, digest, control=None, progress_callback=None):
     print(f"[download] {rel} ({human(info['size'])})")
     result = downloader(
         info["url"], str(dest.parent), dest.name,
-        skip=True, control=control, progress_callback=progress_callback,
+        skip=False, control=control, progress_callback=progress_callback,
         expected_size=info["size"], use_part_file=True, timeout_value=30,
     )
     if not result:
@@ -358,7 +367,7 @@ def _zip_member_to_basic_path(member_name):
 
 def _extract_basic_zip(zip_path, group=None, control=None, progress_callback=None,
                        autoexec_update=False):
-    """Extract the complete Basic payload; Manifest hashes are verified later."""
+    """Extract the local Core baseline; Manifest hashes are verified afterwards."""
     extracted = set()
     root_resolved = ROOT.resolve()
 
@@ -405,6 +414,50 @@ def _extract_basic_zip(zip_path, group=None, control=None, progress_callback=Non
 
     print(f"[bulk] Extracted complete payload: {len(extracted)} files")
     return len(extracted)
+
+
+
+
+def _core_files_out_of_date(group, control=None, autoexec_update=False):
+    """Return Core manifest entries missing or different on disk."""
+    stale = {}
+    for rel, digest in group.items():
+        dest = ROOT / Path(rel)
+        if is_user_config(rel) and dest.is_file():
+            continue
+        if (not autoexec_update and rel.casefold() == AUTOEXEC.casefold()
+                and dest.is_file()):
+            continue
+        if not dest.is_file():
+            stale[rel] = digest
+            continue
+        if sha256_file(dest, control=control).casefold() != str(digest).casefold():
+            stale[rel] = digest
+    return stale
+
+
+def _download_and_apply_core_updates(group, control=None, progress_callback=None,
+                                     autoexec_update=False):
+    """Download only Core files whose on-disk SHA-256 differs from the manifest.
+
+    No update ZIP is generated or cached. Each stale file is resolved through
+    pCloud and downloaded individually using its manifest SHA-256 and metadata
+    size. This keeps a one-file update (for example Roamer+.cfg) to one small
+    file transfer instead of rebuilding/downloading the full Basic archive.
+    """
+    stale = _core_files_out_of_date(
+        group, control=control, autoexec_update=autoexec_update
+    )
+    if not stale:
+        print("[core update] All cached Basic files match the current SHA-256 manifest.")
+        return 0
+
+    print(
+        f"[core update] {len(stale)} Basic file(s) are missing or outdated. "
+        "Downloading only those individual files from pCloud...",
+        flush=True,
+    )
+    return _install_group(stale, control, progress_callback)
 
 
 def _bulk_install_basic_core(files, control=None, progress_callback=None, autoexec_update=False):
@@ -771,6 +824,22 @@ $link.Save()
         return False
 
 
+def _prepare_basic_cache_path():
+    """Keep the established Q3Elite_Basic.zip cache name.
+
+    Migrate the temporary name introduced by the previous build only when the
+    established cache does not already exist, avoiding an unnecessary 1 GB
+    redownload for users who already have that archive.
+    """
+    CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    if not BASIC_ZIP.exists() and LEGACY_CORE_ZIP.is_file():
+        try:
+            os.replace(LEGACY_CORE_ZIP, BASIC_ZIP)
+            print(f"[bulk cache] Migrated legacy cache name to {BASIC_ZIP.name}.")
+        except OSError as exc:
+            print(f"[bulk cache] Could not rename legacy cache: {exc}")
+
+
 def install_basic(external_maps=False, music_playlist=False, autoexec_update=False,
                   control=None, progress_callback=None):
     control = control or DownloadControl()
@@ -826,30 +895,57 @@ def install_basic(external_maps=False, music_playlist=False, autoexec_update=Fal
     downloaded = 0
     bulk_extracted = 0
 
-    if not was_complete or force_bulk_recovery:
-        # A first install/recovery is a transaction. Creating Q3Elite/Engines halfway through
-        # must NOT turn it into an update/repair installation.
+    _prepare_basic_cache_path()
+
+    # Always restore the local Basic baseline first, even when components.json
+    # claims that Basic was already installed. The manifest is authoritative:
+    # any stale files restored from this cache are replaced from one remote ZIP.
+    if BASIC_ZIP.is_file() and zipfile.is_zipfile(BASIC_ZIP):
+        print(
+            f"[baseline] Extracting local Q3Elite_Basic.zip "
+            f"({human(BASIC_ZIP.stat().st_size)}).",
+            flush=True,
+        )
+        bulk_extracted = _extract_basic_zip(
+            BASIC_ZIP, _basic_core_group(files), control,
+            progress_callback, autoexec_update=autoexec_update,
+        )
+    else:
+        if BASIC_ZIP.exists():
+            print("[baseline] Local Q3Elite_Basic.zip is invalid; replacing it.")
+        else:
+            print("[baseline] Local Q3Elite_Basic.zip not found; downloading the initial Basic archive.")
         bulk_extracted = _bulk_install_basic_core(
             files, control, progress_callback,
             autoexec_update=autoexec_update,
         )
-        print("[stage] Basic ZIP extraction finished.", flush=True)
 
-        # Required Singleplayer maps are a second bulk archive, never 26 individual
-        # downloads on first install.
+    print("[stage] Local Basic baseline extraction finished.", flush=True)
+
+    # Required Singleplayer maps are stored separately from CORE.
+    if not was_complete or force_bulk_recovery:
         print("[stage] Starting required Basic Maps ZIP.", flush=True)
         _bulk_install_basic_maps(files, control, progress_callback)
         print("[stage] Basic Maps ZIP finished.", flush=True)
 
-        # One normal manifest verification pass AFTER both bulk archives are
-        # extracted. This is the same proven model used by the old launcher:
-        # fast ZIP extraction first, then hash/repair the installed tree once.
-        if progress_callback:
-            progress_callback(0, None, 0.0, "Verifying Q3Elite Basic...")
-        downloaded += _install_group(verify_basic, control, progress_callback)
-    else:
-        # Existing installation: normal manifest repair is appropriate.
-        downloaded += _install_group(verify_basic, control, progress_callback)
+    core_group = _basic_core_group(files)
+    downloaded += _download_and_apply_core_updates(
+        core_group, control, progress_callback,
+        autoexec_update=autoexec_update,
+    )
+
+    # Only non-Core Basic entries remain here (the required QL map set and
+    # the separately hosted base music files). Core itself is never repaired
+    # through thousands of individual getpublinkdownload requests.
+    # Build the Core lookup once. Rebuilding this set inside the dictionary
+    # comprehension made the filter O(n^2) and caused a noticeable UI stall
+    # after the final Core file download on large manifests.
+    core_keys = {norm(path).casefold() for path in core_group}
+    non_core_basic = {
+        rel: digest for rel, digest in verify_basic.items()
+        if norm(rel).casefold() not in core_keys
+    }
+    downloaded += _install_group(non_core_basic, control, progress_callback)
 
     if external_maps:
         downloaded += _install_group(selected_map_files(files), control, progress_callback)
